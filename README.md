@@ -1,6 +1,6 @@
-# 👮‍♂️ `moderate` - Moderate and block bad words from your Rails app
+# 👮‍♂️ `moderate` - Block profanities in text fields
 
-`moderate` is a Ruby gem that moderates user-generated text content by adding a simple validation to block bad words in any text field.
+`moderate` is a Ruby gem that moderates user-generated text content by adding a simple validation to block bad words in any text field (profanities, cussing, swearing, obscenity, etc.)
 
 Simply add this to your model:
 

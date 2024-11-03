@@ -9,7 +9,7 @@ Gem::Specification.new do |spec|
   spec.email = ["rubygems@rameerez.com"]
 
   spec.summary = "Moderate and block bad words from your Rails app"
-  spec.description = "Moderate user-generated content by adding a simple validation to block bad words in any text field. Good for applications where you need to maintain a clean and respectful environment in comments, posts, or any other user input."
+  spec.description = "Moderate user-generated content by adding a simple validation to block bad words in any text field. Good for applications where you need to maintain a clean and respectful environment in comments, posts, or any other user input. It blocks common profanity, cussing, swearing, obscenity and other bad words."
   spec.homepage = "https://github.com/rameerez/moderate"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.0.0"
