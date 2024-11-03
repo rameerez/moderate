@@ -12,15 +12,26 @@ module Moderate
 
       private
 
-      DEFAULT_BAD_WORDS = Set.new(["asdf"]).freeze
-
       def compute_word_list
-        (DEFAULT_BAD_WORDS + Moderate.configuration.additional_words -
-         Moderate.configuration.excluded_words).to_set
+        @default_words ||= begin
+          words = WordList.load
+          logger.info("[moderate gem] Loaded #{words.size} words from word list")
+          words
+        end
+
+        result = (@default_words + Moderate.configuration.additional_words -
+                 Moderate.configuration.excluded_words).to_set
+        logger.debug("[moderate gem] Final word list size: #{result.size}")
+        result
       end
 
       def reset_word_list!
         @words_set = nil
+        @default_words = nil
+      end
+
+      def logger
+        @logger ||= defined?(Rails) ? Rails.logger : Logger.new($stdout)
       end
     end
   end

@@ -3,6 +3,7 @@
 require_relative "moderate/version"
 require_relative "moderate/text"
 require_relative "moderate/text_validator"
+require_relative "moderate/word_list"
 
 module Moderate
   class Error < StandardError; end
