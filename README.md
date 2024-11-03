@@ -11,7 +11,7 @@ validates :text_field, moderate: true
 That's it! You're done. `moderate` will work seamlessly with your existing validations and error messages.
 
 > [!WARNING]
-> This gem is under development. It currently only supports a limited set of English profanity words. Word matching is very basic now, and it may be prone to false positives, and false negatives. I use it for very simple things like preventing new submissions if they contain bad words, but the gem can be improved for more complex use cases and sophisticated matching and content moderation. Please consider contributing if you have good ideas for additional features.
+> This gem is under development. It currently only supports a limited set of English profanity words. Word matching is very basic now, and it may be prone to false positives, and false negatives. I use it for very simple things like preventing new submissions if they contain bad words, but the gem can be improved for more complex use cases and sophisticated matching and content moderation. Please consider contributing if you can improve the gem, or have good ideas for additional features.
 
 # Why
 
