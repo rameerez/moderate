@@ -23,12 +23,13 @@ module Moderate
   end
 
   class Configuration
-    attr_accessor :error_message, :additional_words, :excluded_words
+    attr_accessor :error_message, :additional_words, :excluded_words, :regexp_pattern
 
     def initialize
       @error_message = "contains moderatable content (bad words)"
       @additional_words = []
       @excluded_words = []
+      @regexp_pattern = nil
     end
   end
 end

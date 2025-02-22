@@ -60,6 +60,9 @@ Moderate.configure do |config|
 
   # Exclude words from the default list (false positives)
   config.excluded_words = ["good"]
+
+  # Matchind text_field with regexp pattern
+  config.regexp_pattern = /.*bad_pattern.*/
 end
 ```
 
