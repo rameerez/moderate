@@ -6,6 +6,9 @@ module Moderate
       def bad_words?(text)
         return false if text.blank?
 
+        return true if match_blacklist_regexp_pattern?(text)
+        return true if not_match_whitelist_regexp_pattern?(text)
+
         @words_set ||= Set.new(compute_word_list)
         text.downcase.split(/\W+/).any? { |word| @words_set.include?(word) }
       end
@@ -19,8 +22,8 @@ module Moderate
           words
         end
 
-        result = (@default_words + Moderate.configuration.additional_words -
-                 Moderate.configuration.excluded_words).to_set
+        result = (@default_words + configuration.additional_words -
+                 configuration.excluded_words).to_set
         logger.debug("[moderate gem] Final word list size: #{result.size}")
         result
       end
@@ -32,6 +35,22 @@ module Moderate
 
       def logger
         @logger ||= defined?(Rails) ? Rails.logger : Logger.new($stdout)
+      end
+
+      def configuration
+        @configuration ||= Moderate.configuration
+      end
+
+      def match_blacklist_regexp_pattern?(text)
+        pattern = configuration.blacklist_regexp_pattern
+
+        pattern.is_a?(Regexp) && pattern.match?(text)
+      end
+
+      def not_match_whitelist_regexp_pattern?(text)
+        pattern = configuration.whitelist_regexp_pattern
+
+        pattern.is_a?(Regexp) && !pattern.match?(text)
       end
     end
   end
