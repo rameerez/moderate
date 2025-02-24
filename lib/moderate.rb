@@ -23,13 +23,18 @@ module Moderate
   end
 
   class Configuration
-    attr_accessor :error_message, :additional_words, :excluded_words, :regexp_pattern
+    ACCESSORS = %i[
+      error_message additional_words excluded_words blacklist_regexp_pattern whitelist_regexp_pattern
+    ].freeze
+
+    attr_accessor(*ACCESSORS)
 
     def initialize
       @error_message = "contains moderatable content (bad words)"
       @additional_words = []
       @excluded_words = []
-      @regexp_pattern = nil
+      @blacklist_regexp_pattern = nil
+      @whitelist_regexp_pattern = nil
     end
   end
 end

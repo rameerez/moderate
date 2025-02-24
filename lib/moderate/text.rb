@@ -6,7 +6,8 @@ module Moderate
       def bad_words?(text)
         return false if text.blank?
 
-        return true if match_regexp_pattern?(text)
+        return true if match_blacklist_regexp_pattern?(text)
+        return true if not_match_whitelist_regexp_pattern?(text)
 
         @words_set ||= Set.new(compute_word_list)
         text.downcase.split(/\W+/).any? { |word| @words_set.include?(word) }
@@ -40,8 +41,16 @@ module Moderate
         @configuration ||= Moderate.configuration
       end
 
-      def match_regexp_pattern?(text)
-        configuration.regexp_pattern.is_a?(Regexp) && configuration.regexp_pattern.match?(text)
+      def match_blacklist_regexp_pattern?(text)
+        pattern = configuration.blacklist_regexp_pattern
+
+        pattern.is_a?(Regexp) && pattern.match?(text)
+      end
+
+      def not_match_whitelist_regexp_pattern?(text)
+        pattern = configuration.whitelist_regexp_pattern
+
+        pattern.is_a?(Regexp) && !pattern.match?(text)
       end
     end
   end
