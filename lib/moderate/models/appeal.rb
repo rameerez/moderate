@@ -18,13 +18,14 @@ module Moderate
   class Appeal < ApplicationRecord
     self.table_name = "moderate_appeals"
 
-    # Mirrors the `moderate_appeals_status_check` DB constraint. `upheld` overturns
-    # the original decision; `rejected` confirms it.
+    # Validated by the `validates :status, inclusion` below — NOT a DB constraint, so
+    # the vocabulary can grow without a host migration. `upheld` overturns the original
+    # decision; `rejected` confirms it.
     STATUSES = %w[open upheld rejected].freeze
 
     # Who lodged the complaint. `notifier` = the person who filed the original
     # notice; `affected_user` = the content owner whose content was actioned; the
-    # rest are operational. Mirrors the `moderate_appeals_source_check` constraint.
+    # rest are operational. Validated by the model (inclusion), not a DB constraint.
     SOURCES = %w[notifier affected_user admin other].freeze
 
     belongs_to :report, class_name: "Moderate::Report"
@@ -54,7 +55,7 @@ module Moderate
     validates :status, inclusion: { in: STATUSES }
     validates :source, inclusion: { in: SOURCES }
     # Reuse the Report's message length cap so a complaint and a notice share one
-    # limit (and one DB constraint shape).
+    # limit (a model-level length validation; `reason` carries no DB constraint).
     validates :reason, presence: true, length: { maximum: Report::MESSAGE_MAX_LENGTH }
     # The complainant must be reachable to receive the appeal decision (Art. 20
     # requires informing them of the outcome), so an email is mandatory here even

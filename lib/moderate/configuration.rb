@@ -47,6 +47,15 @@ module Moderate
     attr_accessor :additional_words, :excluded_words
     attr_reader :adapters, :filters
 
+    # --- Taxonomy (host-customizable) -----------------------------------------
+    # Override the in-app COMMUNITY report category list. nil ⇒ the gem default
+    # (Moderate::Report::DEFAULT_CATEGORIES). Adding a category here requires NO
+    # migration: `category` is validated in the model (Moderate::Report), not by a DB
+    # check constraint. (The DSA legal-reason/country taxonomies are regulator-defined
+    # and NOT overridable.) A plain accessor — any value here is coerced to strings and
+    # compared at validation time by Report.report_categories.
+    attr_accessor :report_categories
+
     # --- Hooks (all no-op by default) ----------------------------------------
     attr_accessor :audit, :notify, :on_block, :ban_handler
 
@@ -56,9 +65,14 @@ module Moderate
     # --- DSA notice form ------------------------------------------------------
     # Documented in docs/dsa-notice-form.md. Held here so the engine/controller
     # (written by other components) read them off the same Configuration object.
+    # `notice_guard` is the gem-absent fallback bot gate (see
+    # app/controllers/moderate/notices_controller.rb#verify_human!): a proc that
+    # receives the controller and returns truthy to allow the POST. nil/no-op ⇒ the
+    # form just works (the default). When the host installs `rails_cloudflare_turnstile`,
+    # the controller auto-uses Turnstile instead and this proc is bypassed.
     attr_accessor :notice_form_enabled, :notice_parent_controller, :notice_rate_limit,
                   :notice_turnstile_site_key, :notice_turnstile_secret_key,
-                  :notice_captcha_verifier, :signed_gid_purposes
+                  :notice_captcha_verifier, :notice_guard, :signed_gid_purposes
 
     def initialize
       # Identity. "User" is the overwhelmingly common case; the host overrides it
@@ -72,16 +86,22 @@ module Moderate
       @additional_words = []
       @excluded_words = []
 
+      # Community report category override. nil ⇒ Moderate::Report::DEFAULT_CATEGORIES.
+      # No migration needed to add a category — `category` is validated in the model.
+      @report_categories = nil
+
       # Adapters registry: name (Symbol) => adapter (an object responding to
       # `classify`, OR a String class name to constantize lazily at use time, so we
       # don't force the built-in adapter files to be loaded before the initializer
-      # runs). Seeded with the two built-ins the README documents.
+      # runs). Seeded with the ONE built-in (the offline :wordlist) the README
+      # documents; OpenAI/Rekognition/etc. are reference adapters in examples/ a host
+      # copies in and registers — they are not shipped, loaded, or a dependency.
       #
-      # The objects/classes behind these names are the gem's own adapters; we
-      # reference them by string to keep this file decoupled from their load order.
+      # The class behind this name is the gem's own adapter; we reference it by string
+      # to keep this file decoupled from its load order (and there is no
+      # `Moderate::Adapters` alias namespace — point straight at the Filters class).
       @adapters = {
-        wordlist: "Moderate::Adapters::Wordlist",
-        image: "Moderate::Adapters::Image"
+        wordlist: "Moderate::Filters::Wordlist"
       }
 
       # Per-field filter policies, keyed by [class_name_string, field_string].
@@ -109,6 +129,9 @@ module Moderate
       @notice_turnstile_site_key = nil
       @notice_turnstile_secret_key = nil
       @notice_captcha_verifier = nil
+      # Gem-absent fallback bot gate. nil ⇒ no extra gate (the form just works); the
+      # controller only consults it when rails_cloudflare_turnstile is NOT installed.
+      @notice_guard = nil
       @signed_gid_purposes = %i[appeal confirm_notice unsubscribe]
     end
 
@@ -228,7 +251,7 @@ module Moderate
       return if adapter_registered?(name)
 
       raise ArgumentError,
-        "unknown filter adapter #{name.inspect} for #{context} — built-ins are :wordlist, :image; " \
+        "unknown filter adapter #{name.inspect} for #{context} — the only built-in is :wordlist; " \
         "register your own with `config.register_adapter #{name.inspect}, MyAdapter.new`"
     end
 

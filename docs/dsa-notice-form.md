@@ -2,12 +2,12 @@
 
 The EU **Digital Services Act, Article 16 ("Notice and action")** says every hosting service that serves EU users must offer a **public, electronic** way for *anyone* — not just logged-in users — to flag illegal content, and must **acknowledge receipt** of that notice. This is the form you see at the bottom of X, YouTube, Reddit: "Report illegal content (EU)". It is a hard requirement, it is separate from your in-app "Report" button, and it is exactly the kind of legally-loaded plumbing `moderate` exists to take off your plate.
 
-So `moderate` ships it as a **mountable Rails engine**: one line in your routes and you have a compliant, public notice form live at `/legal/notices/new`. The form, the controller, the model, the Turnstile gate, the rate-limit, and the confirmation-of-receipt are all done for you. The default view is plain, accessible, and CSS-framework-agnostic — and it's **overridable the way Devise does it**: run one generator to eject the templates into your app and style them to match your brand.
+So `moderate` ships it as a **mountable Rails engine**: one line in your routes and you have a compliant, public notice form. The form, the controller, the model, the bot gate, the rate-limit, and the confirmation-of-receipt are all done for you. The default view is plain, accessible, and CSS-framework-agnostic — and it's **overridable the way Devise does it**: run one generator to eject the templates into your app and style them to match your brand.
 
-It is also **completely optional**. If you'd rather build the public notice page yourself (you already have a design system, you want it inside an existing `/legal` controller, whatever), don't mount the engine — use `Moderate::Notice` directly and skip everything below. The engine is a convenience, not a dependency.
+It is also **completely optional**. If you'd rather build the public notice page yourself (you already have a design system, you want it inside an existing controller, whatever), don't mount the engine — use `Moderate::Report` (with `intake_kind: "dsa"`) directly and skip everything below. The engine is a convenience, not a dependency.
 
 > [!NOTE]
-> This is the **public, regulator-facing** form (DSA Art. 16). It is *not* the in-app "Report this comment" button (that's `current_user.report!(...)` from [the Actors section](../README.md#-actors-report--block)) and it is *not* the admin moderation queue (that's BYOUI — `moderate` gives you the primitives). Two intakes, one `moderate_reports` table, distinguished by `kind`. See [why the models](../README.md#-why-the-models).
+> This is the **public, regulator-facing** form (DSA Art. 16). It is *not* the in-app "Report this comment" button (that's `current_user.report!(...)` from [the Actors section](../README.md#-actors-report--block)) and it is *not* the admin moderation queue (that's BYOUI — `moderate` gives you the primitives). Two intakes, one `moderate_reports` table, distinguished by `intake_kind`. See [why the models](../README.md#-why-the-models).
 
 ---
 
@@ -15,20 +15,24 @@ It is also **completely optional**. If you'd rather build the public notice page
 
 ```ruby
 # config/routes.rb
-mount Moderate::Engine => "/legal"
+# The engine's routes are RELATIVE — YOU choose the mount path. The gem hardcodes no
+# prefix; pick whatever reads right for your app (/trust, /moderation, /dsa, …).
+mount Moderate::Engine => "/trust"   # => form at /trust/notices/new
 ```
 
 ```ruby
 # config/initializers/moderate.rb
 Moderate.configure do |config|
-  config.notice_form_enabled = true               # default; flip to false to hard-disable the engine
-  config.notice_turnstile_site_key   = ENV["TURNSTILE_SITE_KEY"]    # optional bot gate
-  config.notice_turnstile_secret_key = ENV["TURNSTILE_SECRET_KEY"]
-  config.notice_rate_limit = { max: 5, within: 1.hour }            # per-IP throttle
+  config.notice_form_enabled = true                # default; flip to false to hard-disable the engine
+  config.notice_rate_limit   = { max: 5, within: 1.hour }   # per-IP throttle
+  # Bot gate: install the rails_cloudflare_turnstile gem (below) and it auto-integrates —
+  # nothing to set here. Or wire any other check with config.notice_guard.
 end
 ```
 
-That's it — `GET /legal/notices/new` renders the form, `POST /legal/notices` validates + persists a `Moderate::Notice`, fires the `notice_received` notification (your confirmation-of-receipt email + admin alert), and shows the submitter a receipt with a reference number.
+That's it — `GET /trust/notices/new` renders the form, `POST /trust/notices` validates + persists a `Moderate::Report` with `intake_kind: "dsa"`, fires the `notice_received` notification (your confirmation-of-receipt email + admin alert), and redirects back with a confirmation message. The durable, on-record proof of receipt (Art. 16(4)) is the report's `acknowledged_at` timestamp.
+
+The form also **prefills and partially locks** itself from the request (see [Prefill & lock](#prefill--lock-art-162b-c)), and **auto-uses the `rails_cloudflare_turnstile` gem** as a bot gate when it's installed (see [The bot gate](#the-bot-gate-auto-integrates-rails_cloudflare_turnstile)) — both with zero extra wiring.
 
 Want to restyle it? Eject the views, then edit them:
 
@@ -51,7 +55,7 @@ That third point is the **Devise pattern**, and we copy it on purpose because ev
 
 | Devise | `moderate` |
 | --- | --- |
-| `mount` is implicit via `devise_for` | `mount Moderate::Engine => "/legal"` |
+| `mount` is implicit via `devise_for` | `mount Moderate::Engine => "/<your-path>"` |
 | Views ship inside the gem | Views ship inside the engine (`app/views/moderate/notices/`) |
 | `rails g devise:views` copies them to your app | `rails g moderate:views` copies them to your app |
 | `config.parent_controller` | `config.notice_parent_controller` |
@@ -64,22 +68,23 @@ The magic in both is the same boring Rails fact: **the host app's `app/views` si
 
 ## How it mounts
 
-`Moderate::Engine` is an **isolated** engine (`isolate_namespace Moderate`), so its routes, controllers, helpers, and table prefixes never collide with your app. You mount it wherever you want the public form to live:
+`Moderate::Engine` is an **isolated** engine (`isolate_namespace Moderate`), so its routes, controllers, helpers, and table prefixes never collide with your app. Its routes are declared **relative** — the engine only owns `resources :notices` (and a root that redirects to the form) — so **you choose the mount path**; the gem hardcodes nothing:
 
 ```ruby
 # config/routes.rb
 Rails.application.routes.draw do
-  mount Moderate::Engine => "/legal"     # form at /legal/notices/new
+  mount Moderate::Engine => "/trust"     # form at /trust/notices/new
   # ...your app routes
 end
 ```
 
-Common mount points:
+Pick whatever path reads right for your app — there is no special "/legal" prefix baked in:
 
 ```ruby
-mount Moderate::Engine => "/legal"        # → /legal/notices/new   (recommended)
+mount Moderate::Engine => "/trust"        # → /trust/notices/new
+mount Moderate::Engine => "/moderation"   # → /moderation/notices/new
 mount Moderate::Engine => "/dsa"          # → /dsa/notices/new
-mount Moderate::Engine => "/report"       # → /report/notices/new
+mount Moderate::Engine => "/legal"        # → /legal/notices/new   (also fine — your call)
 ```
 
 The engine's routes (in the gem, you never write these):
@@ -87,15 +92,16 @@ The engine's routes (in the gem, you never write these):
 ```ruby
 # config/routes.rb inside the engine
 Moderate::Engine.routes.draw do
-  resources :notices, only: [:new, :create, :show], path: "notices"
+  resources :notices, only: %i[new create]
   root to: "notices#new"
 end
 ```
 
-- `GET  /legal/notices/new` — the form
-- `POST /legal/notices` — submit
-- `GET  /legal/notices/:reference` — the public receipt (looked up by opaque `reference`, never by sequential `id`)
-- `GET  /legal` — the engine root redirects to the form
+- `GET  <mount>/notices/new` — the form
+- `POST <mount>/notices` — submit (validate + persist + confirm receipt); on success it redirects back to the form with a confirmation flash
+- `GET  <mount>` — the engine root redirects to the form
+
+There is no per-notice `show`/receipt page: a notice is a `Moderate::Report` with no public, enumerable identifier, so we never expose one over a guessable URL. The confirmation of receipt is delivered out-of-band through the `notice_received` notify hook (your email), and the durable proof is the report's `acknowledged_at` timestamp.
 
 Link to it from your footer using the engine's named routes (mounted engines expose a helper named after the mount, here `moderate`):
 
@@ -104,7 +110,39 @@ Link to it from your footer using the engine's named routes (mounted engines exp
 ```
 
 > [!TIP]
-> Want the canonical "DSA point of contact" page the regulation also asks for (Art. 11/12)? The same engine root is a fine place to host a short page that links to the form and lists your contact address — but that's content, not code, so we leave the copy to you. Eject the views and edit `new.html.erb`'s intro block.
+> Want the canonical "DSA point of contact" page the regulation also asks for (Art. 11/12)? The engine root is a fine place to host a short page that links to the form and lists your contact address — but that's content, not code, so we leave the copy to you. Eject the views and edit `new.html.erb`'s intro block.
+
+---
+
+## Prefill & lock (Art. 16(2)(b)/(c))
+
+The form **prefills itself from the request**, X-style, so a notifier doesn't have to copy-paste what they're flagging — and it **locks the fields it shouldn't let them edit**.
+
+### Reported-content prefill (from the query string, stays editable)
+
+Deep-link to the form from any piece of content and pass the details in the query string. The param names are the gem's documented contract:
+
+| Query param | Prefills | Maps to (Report column) | DSA |
+| --- | --- | --- | --- |
+| `content_url` | the exact URL field | `subject_url` | Art. 16(2)(b) — "the exact electronic location" |
+| `content_type` | the content-type select | `content_type` | the host-agnostic bucket for the snapshot/queue |
+| `content_author` | the account/handle field | `reported_account_identifier` | optional host-side identity of the content |
+| `content_id` | the account/handle field (fallback if no `content_author`) | `reported_account_identifier` | optional host-side identifier |
+
+```erb
+<%= link_to "Report this (EU notice)",
+      moderate.new_notice_path(
+        content_url:    request.original_url,
+        content_type:   "message",
+        content_author: @author.username
+      ) %>
+```
+
+These are the **reported-content** fields, so they stay fully **editable** — the notifier may correct the URL, change the content type, etc. `content_type` is only echoed when the query value is one the model would actually accept (a crafted `?content_type=<script>` is ignored), so a query param can't pre-poison the select.
+
+### Identity prefill + lock (from Devise `current_user`, locked)
+
+The form is public and anonymous-friendly, but when someone **is** logged in we prefill their **name/email** from `current_user` (detected safely — the gem never hard-depends on Devise; it checks `respond_to?(:current_user)`). Those **identity** fields are then rendered **readonly (locked)** so a logged-in notifier can't put someone else's name/email on a legal notice — and the controller **re-asserts identity server-side** on submit, so even a tampered request that re-enables the field can't spoof it. For an anonymous notifier (no `current_user`) the name/email fields are blank and editable — they're the only identity there is.
 
 ---
 
@@ -112,89 +150,95 @@ Link to it from your footer using the engine's named routes (mounted engines exp
 
 We keep the split clean and obvious — the controller does HTTP, the model does Trust & Safety.
 
-### `Moderate::Notice` — the model (does the real work)
+### `Moderate::Report` (intake_kind: "dsa") — the model (does the real work)
 
-`Moderate::Notice` is **not a fourth table**. It's a thin, kind-scoped wrapper over `moderate_reports` (the same table that backs in-app reports), distinguished by `kind: "dsa_notice"`. This is on purpose: a notice and a report share the same decision workflow, the same evidence snapshot, the same appeal window, the same transparency counters. One queue, one statement-of-reasons path, one Art. 24 aggregation — whether the flag came from a logged-in user tapping "Report" or an anonymous lawyer filling in the public form.
+A notice is **not a fourth table**. It's a `Moderate::Report` distinguished by `intake_kind: "dsa"` — the same table that backs in-app reports. This is on purpose: a notice and a report share the same decision workflow, the same evidence snapshot, the same appeal window, the same transparency counters. One queue, one statement-of-reasons path, one Art. 24 aggregation — whether the flag came from a logged-in user tapping "Report" or an anonymous lawyer filling in the public form. The `Moderate::Services::IntakeNotice` service forces that DSA shape and runs the shared intake (save + acknowledge + audit + the `notice_received` event).
 
 ```ruby
-# Conceptually (the real model lives in the gem; this is the contract you rely on):
-notice = Moderate::Notice.new(
-  legal_reason:     "ip_infringement",     # from the DSA taxonomy (see below)
-  content_url:      "https://yourapp.com/p/123",
-  explanation:      "This post reproduces my copyrighted photo without licence.",
-  notifier_name:    "Jane Doe",
-  notifier_email:   "jane@example.com",
-  member_state:     "ES",                   # ISO-3166 EU/EEA selector
-  good_faith:       true                    # the Art. 16(2)(d) attestation, must be checked
+# Conceptually (the real model/service live in the gem; this is the contract you rely on):
+intake = Moderate::Services::IntakeNotice.new(
+  attributes: {
+    legal_reason:        "intellectual_property",   # from the DSA taxonomy (see below)
+    legal_country_code:  "ES",                        # ISO-3166 EU/EEA selector
+    content_type:        "message",                   # host-agnostic CONTENT_TYPES bucket
+    subject_url:         "https://yourapp.com/p/123", # Art. 16(2)(b) exact location
+    message:             "This post reproduces my copyrighted photo without licence.",
+    notifier_name:       "Jane Doe",
+    notifier_email:      "jane@example.com",
+    good_faith_confirmed: "1"                          # Art. 16(2)(d), must be checked
+  }
 )
-notice.save!     # → persisted as a moderate_reports row, kind: "dsa_notice", status: :pending
-notice.reference # => "DSA-7Q2K-9F3X"  (opaque, shown on the receipt, emailed to the notifier)
+intake.save                # → persisted as a moderate_reports row, intake_kind: "dsa", status: "open"
+intake.report.acknowledged_at   # → set; the durable Art. 16(4) proof of receipt
 ```
 
-The model owns: validations (every required DSA field, a real email, a same-origin/`http(s)` URL check, the good-faith checkbox being true), the evidence snapshot (it tries to resolve `content_url` to a reportable record and snapshot it, so evidence survives edits/deletes), `reference` generation, and dropping into `Moderate::Report.pending` so your admins act on it exactly like any other report. It fires the `notice_received` event through `config.notify` — that's your confirmation-of-receipt to the notifier **and** your admin alert, from one hook.
+The model owns: validations (every required DSA field, a real email, an `http(s)`-URL check, the good-faith attestation being true, the narrow `protection_of_minors` anonymity carve-out), the immutable evidence snapshot (it tries to resolve `subject_url` to a reportable record and snapshot it, so evidence survives edits/deletes), and dropping into `Moderate::Report.pending` so your admins act on it exactly like any other report. The service fires the `notice_received` event through `config.notify` — that's your confirmation-of-receipt to the notifier **and** your admin alert, from one hook.
 
 > [!NOTE]
-> "Confirmation of receipt without undue delay" (Art. 16(4)) is satisfied by the `notice_received` event → your mailer. The gem emits the event; you wire it to [`goodmail`](https://github.com/rameerez/goodmail) (or any mailer) once, the same way you wire `report_received`. See [Notifications](../README.md#-notifications---audit--one-hook-each).
+> "Confirmation of receipt without undue delay" (Art. 16(4)) is satisfied two ways: the durable record is `acknowledged_at` (a database fact, set before any email is attempted), and the human-facing confirmation is the `notice_received` event → your mailer. The gem emits the event; you wire it to [`goodmail`](https://github.com/rameerez/goodmail) (or any mailer) once, the same way you wire `report_received`. See [Notifications](../README.md#-notifications---audit--one-hook-each).
 
 ### `Moderate::NoticesController` — the controller (does HTTP only)
 
-The controller is intentionally boring. It builds a blank `Moderate::Notice` for `new`, strong-params it on `create`, runs the **Turnstile gate** and the **rate-limit** as `before_action`s, and on success redirects to the receipt. On failure it re-renders `new` with `422` and the model's validation errors — standard Rails.
+The controller is intentionally boring. It builds a prefilled (and partially locked) `Moderate::Report` for `new`, strong-params it on `create`, runs the **bot gate** and the **rate-limit** as `before_action`s, and on success redirects back to the form with a confirmation flash. On failure it re-renders `new` with `422` and the model's validation errors — standard Rails.
 
 ```ruby
 # Conceptually (lives in the gem):
 module Moderate
   class NoticesController < Moderate::ApplicationController
     before_action :enforce_notice_enabled!
-    before_action :throttle_notices!,  only: :create   # config.notice_rate_limit
-    before_action :verify_turnstile!,  only: :create   # config.notice_turnstile_* (no-ops if unconfigured)
+    before_action :throttle_notices!, only: :create   # config.notice_rate_limit
+    before_action :verify_human!,     only: :create   # auto-Turnstile, else config.notice_guard
 
-    def new     = (@notice = Moderate::Notice.new)
-    def show    = (@notice = Moderate::Notice.find_by!(reference: params[:id]))
-
-    def create
-      @notice = Moderate::Notice.new(notice_params)
-      if @notice.save
-        redirect_to notice_path(@notice.reference), notice: t("moderate.notices.received")
-      else
-        render :new, status: :unprocessable_entity
-      end
+    def new
+      @report = Moderate::Report.new(prefill_attributes)   # query-param + current_user prefill
+      @identity_locked = identity_locked?                  # lock name/email when signed in
     end
 
-    private
-
-    def notice_params
-      params.require(:notice).permit(
-        :legal_reason, :content_url, :explanation,
-        :notifier_name, :notifier_email, :member_state, :good_faith
-      )
+    def create
+      intake = Moderate::Services::IntakeNotice.new(attributes: notice_params, reporter: current_notifier)
+      if intake.save
+        redirect_to new_notice_path, notice: t("moderate.notices.received"), status: :see_other
+      else
+        @report = intake.report
+        render :new, status: :unprocessable_entity
+      end
     end
   end
 end
 ```
 
-`Moderate::ApplicationController` (the engine's base) inherits from `config.notice_parent_controller.constantize` (default `"::ActionController::Base"` so it works even on API-only apps, with `protect_from_forgery` applied when available) — exactly the `config.parent_controller` indirection `api_keys` and Devise use, so you can point it at your own base controller to inherit your layout, locale-setting, etc.
+`Moderate::ApplicationController` (the engine's base) inherits from `config.notice_parent_controller.constantize` (default `"::ActionController::Base"` so it works even on API-only apps, with `protect_from_forgery` applied when available) — exactly the `config.parent_controller` indirection Devise uses, so you can point it at your own base controller to inherit your layout, locale-setting, and `current_user`.
 
-#### The Turnstile-gate hook
+#### The bot gate (auto-integrates `rails_cloudflare_turnstile`)
 
-A public, unauthenticated form is a spam magnet. `moderate` ships a **Cloudflare Turnstile** gate as a `before_action` that:
+A public, unauthenticated form is a spam magnet. `moderate` ships a **single, request-time bot gate** (`verify_human!`) that auto-adapts to your bundle — with **zero wiring**:
 
-- **No-ops when unconfigured.** If `notice_turnstile_site_key`/`secret_key` are blank, the gate is skipped entirely and the form just works (great for dev/test and for apps that gate at the edge instead).
-- **Renders the widget** in the default view when the site key is present (the view checks `Moderate.configuration.notice_turnstile_site_key.present?`).
-- **Verifies server-side** on `create` by POSTing the response token to Turnstile's `siteverify`; a failed/missing token re-renders `new` with `422` and a friendly error.
-- **Is pluggable.** Prefer hCaptcha, reCAPTCHA, or your own check? Set `config.notice_captcha_verifier = ->(controller) { ... boolean ... }` and the built-in Turnstile path steps aside.
+- **If the [`rails_cloudflare_turnstile`](https://github.com/instrumentl/rails-cloudflare-turnstile) gem is installed**, the gate uses it automatically. That gem mixes its helpers in for you, so:
+  - the **view renders the widget** (`cloudflare_turnstile` + `cloudflare_turnstile_script_tag`), and
+  - the **controller verifies the challenge server-side** (`validate_cloudflare_turnstile`); a failed challenge (the gem's `RailsCloudflareTurnstile::Forbidden`) is turned into a friendly `422` so the submitter can retry.
 
-We default to Turnstile (not reCAPTCHA) because it's privacy-friendly, free, and the RailsFast house default — but the verifier is just a lambda, so you're never locked in.
+  You add the gem and its keys (its own `config/initializers/cloudflare_turnstile.rb`) — `moderate` needs **no env var and no config** to pick it up. Detection is via `defined?`/`respond_to?`, and `rails_cloudflare_turnstile` is **not** a dependency of `moderate`.
+- **Otherwise**, the gate falls back to a configurable proc, `config.notice_guard` (no-op by default, so the form just works in dev/test and for apps that gate at the edge). The proc receives the controller and returns a boolean:
+
+  ```ruby
+  # Use hCaptcha / reCAPTCHA / your own check instead of Turnstile:
+  config.notice_guard = ->(controller) { MyCaptcha.verify(controller.params["my-token"]) }
+  ```
+
+  An exception in the guard is treated as "failed closed" (re-render the form so the submitter retries) — a flaky bot service must never 500 a legal notice form.
+
+We default to recommending Turnstile (privacy-friendly, free, the RailsFast house default), but you're never locked in: the guard is just a lambda.
 
 #### The rate-limit hook
 
-On Rails 7.2+ the controller uses the built-in `rate_limit` API; on 7.1 it falls back to a tiny cache-backed counter (`Rails.cache`, per-IP). Configure it once:
+On Rails 7.2+ you could use the built-in `rate_limit` API; `moderate` instead implements a tiny per-IP, cache-backed counter (`Rails.cache`) as a `before_action`, so it honors your **runtime** `config.notice_rate_limit` (the class-level macro is evaluated at class load, before your initializer has run). Configure it once:
 
 ```ruby
 config.notice_rate_limit = { max: 5, within: 1.hour }   # default
 config.notice_rate_limit = false                        # disable (you throttle at the edge)
 ```
 
-When tripped, `create` responds `429 Too Many Requests` with a retry-after message, rendered through the same (overridable) view. Both gates are deliberately **defense in depth** and both degrade to "off" gracefully, so the form never becomes a support burden in environments where you don't need them.
+When tripped, `create` responds `429 Too Many Requests` with a retry message, rendered through the same (overridable) view. Both gates are deliberately **defense in depth** and both degrade to "off" gracefully, so the form never becomes a support burden in environments where you don't need them.
 
 ---
 
@@ -202,23 +246,27 @@ When tripped, `create` responds `429 Too Many Requests` with a retry-after messa
 
 These are the fields the regulation requires, mirrored on the X / YouTube public forms. The default view renders exactly this set; if you eject and customize, **keep all of them** — they're what makes the notice legally valid (and they map 1:1 to the model's validations).
 
-| Field | Param | Required | Notes |
+| Field | Param (`notice[...]`) | Required | Notes |
 | --- | --- | --- | --- |
-| **Legal reason** | `legal_reason` | yes | A `<select>` from the **DSA statement-of-reasons taxonomy** (see below). This is the regulator-aligned set, *not* your in-app community-report categories. |
-| **Exact URL** | `content_url` | yes | "the exact electronic location of that information" — Art. 16(2)(b). Validated as an `http(s)` URL; the model tries to resolve it to a reportable record for the evidence snapshot. |
-| **Explanation** | `explanation` | yes | The "sufficiently substantiated explanation of the reasons why the individual or entity alleges the information to be illegal" — Art. 16(2)(a). Free text. |
-| **Your name** | `notifier_name` | yes* | Art. 16(2)(c). *Optional only for notices alleging certain offences against minors, where the DSA permits anonymity — the view exposes this carve-out via a checkbox that hides the name field. |
-| **Your email** | `notifier_email` | yes | Art. 16(2)(c) — where the confirmation of receipt and the decision go. Validated as a real address. |
-| **EU member state** | `member_state` | yes | ISO-3166 `<select>` of EU/EEA states — establishes jurisdiction and routing. |
-| **Good-faith statement** | `good_faith` | yes | A checkbox attesting "the information and allegations are accurate and complete" — Art. 16(2)(d). Must be checked; the model rejects the save otherwise. |
+| **Legal reason** | `legal_reason` | yes | A `<select>` from the **DSA statement-of-reasons taxonomy** (`Moderate::Report::DSA_LEGAL_REASONS`). This is the regulator-aligned set, *not* your in-app community-report categories. |
+| **Exact URL** | `subject_url` | yes | "the exact electronic location of that information" — Art. 16(2)(b). Validated as an `http(s)` URL; the model tries to resolve it to a reportable record for the evidence snapshot. Prefillable via `?content_url=`. |
+| **Content type** | `content_type` | yes | A `<select>` from the host-agnostic `Moderate::Report::CONTENT_TYPES` bucket — keeps the snapshot/queue tidy. Prefillable via `?content_type=`. |
+| **Account/handle** | `reported_account_identifier` | no | Optional host-side identity of the content (a username). Prefillable via `?content_author=` / `?content_id=`. |
+| **Explanation** | `message` | yes | The "sufficiently substantiated explanation … why the individual or entity alleges the information to be illegal" — Art. 16(2)(a). Free text. |
+| **Your name** | `notifier_name` | yes* | Art. 16(2)(c). *Optional only for `protection_of_minors` notices, where the DSA permits anonymity. Prefilled + **locked** from `current_user` when signed in. |
+| **Your email** | `notifier_email` | yes | Art. 16(2)(c) — where the confirmation of receipt and the decision go. Validated as a real address. Prefilled + **locked** from `current_user` when signed in. |
+| **EU member state** | `legal_country_code` | yes | ISO-3166 `<select>` of EU/EEA states (`Moderate::Report::EU_COUNTRY_CODES`) — establishes jurisdiction and routing. |
+| **Good-faith statement** | `good_faith_confirmed` | yes | A checkbox attesting "the information and allegations are accurate and complete" — Art. 16(2)(d). Must be checked; the model rejects the save otherwise. |
 
 The legal-reason `<select>` is driven by a single constant so the taxonomy stays consistent across the form, the model, and the Art. 17 statement-of-reasons and Art. 24 transparency counters:
 
 ```ruby
-Moderate::DSA_LEGAL_REASONS
-# => [:illegal_hate_speech, :terrorism, :csam, :ip_infringement,
-#     :data_protection, :consumer_protection, :defamation,
-#     :counterfeit, :scams_fraud, :other_illegal_content]  # regulator-aligned
+Moderate::Report::DSA_LEGAL_REASONS
+# => ["animal_welfare", "consumer_information", "cyber_violence", "data_protection_privacy",
+#     "illegal_or_harmful_speech", "civic_elections", "non_consensual_behavior",
+#     "pornography_sexualized_content", "protection_of_minors", "public_security",
+#     "scams_fraud", "scope_of_platform_service", "self_harm", "unsafe_illegal_products",
+#     "violence", "intellectual_property", "other"]   # the EU Transparency Database vocabulary
 ```
 
 > [!NOTE]
@@ -230,18 +278,7 @@ Moderate::DSA_LEGAL_REASONS
 
 ### Out of the box
 
-The gem ships these templates inside the engine, under `app/views/moderate/`:
-
-```
-app/views/
-├── layouts/moderate/application.html.erb   # minimal, framework-agnostic layout (CSS-var themable)
-└── moderate/notices/
-    ├── new.html.erb                        # the form
-    ├── show.html.erb                       # the receipt (reference number + "what happens next")
-    └── _form.html.erb                      # the field partial (the part you'll most want to restyle)
-```
-
-They render with no CSS framework assumed, themable via CSS custom properties (the same `:root { --moderate-* }` approach `api_keys` uses for its dashboard), and they pull every label/hint through `I18n` (`moderate.notices.*`) so you can translate without touching markup. The layout inherits nothing from your app by default; point `config.notice_parent_controller` at your own base controller (and give it a `layout`) if you'd rather the form sit inside your site chrome.
+The gem ships the templates inside the engine, under `app/views/moderate/`. They render with no CSS framework assumed, themable via CSS custom properties (`:root { --moderate-* }`), and pull every label/hint through `I18n` (`moderate.notices.*`) so you can translate without touching markup. The layout inherits nothing from your app by default; point `config.notice_parent_controller` at your own base controller (and give it a `layout`) if you'd rather the form sit inside your site chrome.
 
 ### Ejecting the views
 
@@ -251,46 +288,7 @@ When you want full control of the markup, run the generator — **the Devise mov
 rails generate moderate:views
 ```
 
-That copies the engine's templates into your app:
-
-```
-      create  app/views/moderate/notices/new.html.erb
-      create  app/views/moderate/notices/show.html.erb
-      create  app/views/moderate/notices/_form.html.erb
-      create  app/views/layouts/moderate/application.html.erb
-```
-
-Now edit them freely. Because your `app/views` outranks the engine in Rails' view lookup, your copies **shadow** the gem's automatically — no config, no registration. Delete a file and the gem's default for that template comes back. Upgrade the gem and your ejected copies are untouched (you re-run the generator only if you *want* the new defaults).
-
-Scope it if you only want some templates:
-
-```bash
-rails generate moderate:views --views form          # just _form.html.erb
-rails generate moderate:views --views form layout    # the form + the layout
-```
-
-The generator itself is the boring, idiomatic Rails thing — a `Rails::Generators::Base` that copies from the engine's `app/views` into the host's `app/views`, mirroring `Devise::Generators::ViewsGenerator` and `api_keys`'s install generator:
-
-```ruby
-# lib/generators/moderate/views_generator.rb (lives in the gem)
-module Moderate
-  module Generators
-    class ViewsGenerator < Rails::Generators::Base
-      source_root File.expand_path("../../../app/views", __dir__)
-
-      class_option :views, type: :array, default: %w[notices layout],
-                   desc: "Which view groups to copy (notices, form, layout)"
-
-      def copy_views
-        directory "moderate/notices", "app/views/moderate/notices"   if include?("notices")
-        copy_file "moderate/notices/_form.html.erb",
-                  "app/views/moderate/notices/_form.html.erb"        if include?("form")
-        directory "layouts/moderate", "app/views/layouts/moderate"   if include?("layout")
-      end
-    end
-  end
-end
-```
+That copies the engine's templates into your app. Because your `app/views` outranks the engine in Rails' view lookup, your copies **shadow** the gem's automatically — no config, no registration. Delete a file and the gem's default for that template comes back. Upgrade the gem and your ejected copies are untouched (you re-run the generator only if you *want* the new defaults).
 
 > [!TIP]
 > Generator naming follows the ecosystem: `moderate:install` (migration + initializer, like every other gem) and `moderate:views` (eject the form, like Devise). Nothing else is generated — we do **not** ship admin-view generators, because admin is BYOUI.
@@ -299,26 +297,27 @@ end
 
 ## Staying optional: ignore the engine entirely
 
-The engine is a courtesy, not a contract. If you want to build the public notice page yourself — your own route, your own controller, your own styling — **don't mount it**, and talk to the model directly:
+The engine is a courtesy, not a contract. If you want to build the public notice page yourself — your own route, your own controller, your own styling — **don't mount it**, and talk to the service/model directly:
 
 ```ruby
 class LegalController < ApplicationController
-  def new_notice  = (@notice = Moderate::Notice.new)
+  def new_notice  = (@report = Moderate::Report.new)
 
   def create_notice
-    @notice = Moderate::Notice.new(notice_params)
-    if @notice.save
+    intake = Moderate::Services::IntakeNotice.new(attributes: notice_params, reporter: current_user)
+    if intake.save
       # your own confirmation page / mailer
     else
+      @report = intake.report
       render :new_notice, status: :unprocessable_entity
     end
   end
 end
 ```
 
-You still get every Art. 16 validation, the evidence snapshot, the `reference`, the `notice_received` event, and the row landing in `Moderate::Report.pending` — you just bring the HTML. Mounting the engine is the fast path; using the model directly is the full-control path. Either way the compliance lives in the model, not the view.
+You still get every Art. 16 validation, the evidence snapshot, the durable `acknowledged_at`, the `notice_received` event, and the row landing in `Moderate::Report.pending` — you just bring the HTML. Mounting the engine is the fast path; using the service directly is the full-control path. Either way the compliance lives in the model, not the view.
 
-And if you don't serve EU users at all? Skip both. Reporting, blocking, and filtering work standalone without ever touching `Moderate::Notice`.
+And if you don't serve EU users at all? Skip both. Reporting, blocking, and filtering work standalone without ever touching the notice intake.
 
 ---
 
@@ -330,14 +329,14 @@ Moderate.configure do |config|
   config.notice_parent_controller   = "::ActionController::Base"  # like Devise's config.parent_controller
   config.notice_rate_limit          = { max: 5, within: 1.hour }  # per-IP throttle, or false to disable
 
-  # Bot gate (all optional — the gate no-ops when blank):
-  config.notice_turnstile_site_key   = ENV["TURNSTILE_SITE_KEY"]
-  config.notice_turnstile_secret_key = ENV["TURNSTILE_SECRET_KEY"]
-  config.notice_captcha_verifier     = nil                  # ->(controller) { boolean } to swap Turnstile out
+  # Bot gate:
+  #   - Install `rails_cloudflare_turnstile` and it AUTO-integrates (widget + verify), no config here.
+  #   - Otherwise set a guard proc (no-op by default) to use hCaptcha / reCAPTCHA / your own check:
+  config.notice_guard               = ->(controller) { true }     # ->(controller) { boolean }
 end
 ```
 
-Every one of these has a sensible default, so `mount Moderate::Engine => "/legal"` with an otherwise-empty config gives you a working, compliant form. See the [main configuration reference](../README.md#configuration-reference) for the rest of `moderate`.
+Every one of these has a sensible default, so `mount Moderate::Engine => "/<your-path>"` with an otherwise-empty config gives you a working, compliant form. See the [main configuration reference](../README.md#configuration-reference) for the rest of `moderate`.
 
 ## See also
 

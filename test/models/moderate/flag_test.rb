@@ -87,10 +87,20 @@ module Moderate
       assert flag.errors[:resolution_note].any?
     end
 
-    test "source/mode/status are constrained to the allowed vocabularies" do
-      flag = Moderate::Flag.new(flaggable: @user, field: "name", source: "bogus", mode: "flag", status: "pending")
-      refute flag.valid?
-      assert flag.errors[:source].any?
+    test "source/mode/status are constrained to the allowed vocabularies (in the model)" do
+      # These vocabularies are enforced by ActiveModel inclusion validations, not DB
+      # check constraints, so each invalid value surfaces a friendly model error.
+      bad_source = Moderate::Flag.new(flaggable: @user, field: "name", source: "bogus", mode: "flag", status: "pending")
+      refute bad_source.valid?
+      assert bad_source.errors[:source].any?
+
+      bad_mode = Moderate::Flag.new(flaggable: @user, field: "name", source: "manual", mode: "annihilate", status: "pending")
+      refute bad_mode.valid?
+      assert bad_mode.errors[:mode].any?
+
+      bad_status = Moderate::Flag.new(flaggable: @user, field: "name", source: "manual", mode: "flag", status: "frozen")
+      refute bad_status.valid?
+      assert bad_status.errors[:status].any?
     end
 
     test "flaggable_label asks the flaggable, falling back to Type id" do
@@ -105,10 +115,13 @@ module Moderate
     end
 
     test "the :flag-mode filter files a Flag after_commit through the configured policy" do
-      # The dummy initializer pairs Comment#image with the async :image adapter in
-      # :flag mode; we re-establish that policy here (setup reset it). The image
-      # adapter flags every uploaded image for human review, so attaching one should
-      # produce exactly one pending Flag on (comment, "image") after commit.
+      # Image moderation is bring-your-own (the gem ships only the offline text
+      # :wordlist). The dummy host registers a tiny async image adapter under :image
+      # (test/dummy/app/adapters/dummy_image_adapter.rb) that flags every uploaded
+      # image for human review; we re-register + re-establish that policy here (setup's
+      # Moderate.reset! wiped both the adapter and the policy). Attaching one image
+      # should produce exactly one pending Flag on (comment, "image") after commit.
+      Moderate.config.register_adapter :image, DummyImageAdapter.new
       Moderate.config.filter "Comment", :image, with: :image, mode: :flag
       comment = Comment.create!(user: @user, body: "clean body")
 

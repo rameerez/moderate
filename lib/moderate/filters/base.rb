@@ -15,19 +15,22 @@ module Moderate
   # ── How adapters are invoked ────────────────────────────────────────────────
   # The configuration registry (`Moderate::Configuration#adapters`) stores each
   # adapter as EITHER a live object the host registered, OR a class-NAME String the
-  # gem constantizes lazily. The two built-ins are seeded as the strings
-  # "Moderate::Adapters::Wordlist" / "Moderate::Adapters::Image", and
-  # `Configuration#resolve_adapter` returns the CLASS itself for a String/Class
-  # entry. That means the gem calls `SomeAdapterClass.classify(value)` and
-  # `SomeAdapterClass.synchronous?` — i.e. the built-ins expose CLASS methods, not
-  # instance methods. (A host's own adapter registered as an instance exposes the
-  # same `#classify`/`#synchronous?` on that instance — same duck type, both work.)
+  # gem constantizes lazily. The one built-in is seeded as the string
+  # "Moderate::Filters::Wordlist", and `Configuration#resolve_adapter` returns the
+  # CLASS itself for a String/Class entry. That means the gem calls
+  # `SomeAdapterClass.classify(value)` and `SomeAdapterClass.synchronous?` — i.e. the
+  # built-in exposes CLASS methods, not instance methods. (A host's own adapter
+  # registered as an instance — including the reference adapters in `examples/` —
+  # exposes the same `#classify`/`#synchronous?` on that instance — same duck type,
+  # both work.)
   #
-  # `Base` gives the built-ins both halves of that duck type from a single source:
+  # `Base` gives the built-in both halves of that duck type from a single source:
   # subclasses implement the work as an INSTANCE method (`#classify`), and `Base`
   # provides the CLASS-level `classify`/`synchronous?`/`async?` that the registry
   # resolution path calls, delegating the class call to a fresh instance. So one
-  # implementation satisfies both call styles and there's no copy-paste.
+  # implementation satisfies both call styles and there's no copy-paste. (It's the
+  # base for the bundled wordlist; the `examples/` reference adapters don't need it —
+  # any object answering `#classify` is a valid adapter.)
   #
   # ── Sync vs. async (why it matters for :block) ──────────────────────────────
   # `Configuration#validate!` enforces the README's rule: a `:block`-mode filter
@@ -37,10 +40,12 @@ module Moderate
   # as synchronous (the safe default that keeps simple adapters working); only an
   # adapter that explicitly returns `synchronous? == false` is rejected for :block.
   #
-  # We model this once here as `async?` (default `false` — built-ins are sync) and
-  # derive `synchronous?` from it, so a subclass flips ONE flag
-  # (`def self.async? = true`) to declare itself background-only. The OpenAI adapter
-  # does exactly that; the wordlist and image adapters leave the default.
+  # We model this once here as `async?` (default `false` — the built-in wordlist is
+  # sync) and derive `synchronous?` from it, so a subclass flips ONE flag
+  # (`def self.async? = true`) to declare itself background-only. The wordlist leaves
+  # the default; a network-backed reference adapter (see `examples/`) declares itself
+  # async via its own `synchronous? == false`, which the spine honors regardless of
+  # whether the adapter inherits from `Base`.
   module Filters
     class Base
       class << self
@@ -93,9 +98,9 @@ module Moderate
 
       # The canonical "nothing matched" Result, stamped with this adapter's name so
       # an allowed verdict is still attributable in audit. Adapters call this on the
-      # happy path (and, for the network adapter, on a fail-open error path — see
-      # the OpenAI adapter's rescue, which must NEVER block a save on a transient
-      # network blip).
+      # happy path (and a network-backed adapter calls it on a fail-open error path
+      # too — a moderation API must NEVER block a save on a transient network blip;
+      # see the reference adapters in `examples/`).
       def allowed_result(raw: nil)
         Moderate::Result.allowed(source: source_name, raw: raw)
       end
@@ -109,9 +114,10 @@ module Moderate
       # The adapter's `source` string — the value recorded on `Moderate::Flag#source`
       # so the moderation queue shows which backend flagged each item. Defaults to
       # the demodulized, underscored class name ("Wordlist" -> "wordlist"); the
-      # built-ins override it to the migration's allowed `source` enum values
-      # ("text_filter" / "image_filter" / "external_classifier"). See the
-      # `moderate_flags_source_check` constraint in the install migration.
+      # bundled wordlist overrides it to one of the migration's allowed `source` enum
+      # values ("text_filter"), and a reference adapter sets the value that fits it
+      # ("image_filter" / "external_classifier"). See the `moderate_flags_source_check`
+      # constraint in the install migration.
       def source_name
         self.class.name.to_s.split("::").last.gsub(/([a-z])([A-Z])/, '\1_\2').downcase
       end

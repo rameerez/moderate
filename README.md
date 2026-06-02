@@ -52,7 +52,7 @@ It's the kind of plumbing nobody wants to build, everybody rebuilds, and almost 
 
 - **Report** users and content (in-app), with evidence snapshots and a real decision workflow.
 - **Block** users (bidirectional), enforced everywhere a blocked pair could reconnect.
-- **Filter** text and images before they're posted (`:off` / `:block` / `:flag`), with pluggable backends — a built-in offline wordlist and OpenAI's free multimodal moderation, or your own.
+- **Filter** text and images before they're posted (`:off` / `:block` / `:flag`), with pluggable backends — a built-in offline wordlist, plus ready-to-copy reference adapters in `examples/` (OpenAI, AWS Rekognition) or your own.
 - **Moderate** from a queue: remove content, ban users, dismiss, all audited.
 - **Comply**: DSA notice-and-action (Art. 16), statement of reasons (Art. 17), internal appeals (Art. 20), transparency counters (Art. 24); Apple Guideline 1.2 and Google Play UGC requirements.
 
@@ -63,7 +63,7 @@ It works standalone, and gets better with the rest of the ecosystem.
 **Does:**
 - User & content **reporting** (in-app) + a public **DSA legal-notice** intake form.
 - **Blocking** with a single source-of-truth query you enforce in search, messaging, profiles, anywhere.
-- **Pre-publication content filtering** with three modes and pluggable adapters (text, image, LLM).
+- **Pre-publication content filtering** with three modes and pluggable adapters — the built-in offline wordlist (text), plus image/LLM moderation via reference adapters you register (see `examples/`).
 - A **moderation queue** with audited resolve / dismiss / remove-content / ban actions.
 - **Appeals**, **statement-of-reasons** notifications, and **transparency** aggregation for the DSA.
 - Optional **audit** and **notification** hooks that fan out to your mailer / admin alerts / push.
@@ -197,7 +197,7 @@ end
 
 class Profile < ApplicationRecord
   moderates :bio,    mode: :block       # reject the save if it trips the filter
-  moderates :avatar, mode: :flag, with: :image   # allow the save, queue it for review
+  moderates :avatar, mode: :flag, with: :image   # `:image` = a registered adapter (see examples/); only :wordlist ships built in
 end
 ```
 
@@ -217,15 +217,16 @@ result.scores      # => { "hate" => 0.97, "hate/threatening" => 0.81 }   (0..1 f
 result.labels      # => [#<Label category: :hate, subcategory: :threatening, score: 0.81, input: :text>, …]
 ```
 
-### Filter adapters (wordlist, OpenAI, your own — one interface)
+### Filter adapters (the built-in wordlist, reference adapters, your own — one interface)
 
-Every backend implements the same tiny contract — `classify(value) → Moderate::Result` — so they're interchangeable per field:
+Every backend implements the same tiny contract — `classify(value) → Moderate::Result` — so they're interchangeable per field. `moderate` ships exactly **one** built-in adapter, the offline `:wordlist`; OpenAI, AWS Rekognition, and anything else are **bring-your-own** — copy a ready-made reference adapter from [`examples/`](examples/), add its gem to *your* Gemfile, and `register_adapter` it:
 
 | Adapter | Use it for | Notes |
 | --- | --- | --- |
-| `:wordlist` (default) | text | Fast, multilingual, offline, zero-dependency. Unicode + leetspeak + spacing-evasion resistant. Ships `en`/`es` lists; add your own. |
-| `:openai` | **text *and* image** | OpenAI `omni-moderation-latest` — **free**, multimodal, returns the canonical labels + `0..1` scores + which input (text/image) tripped each. Runs **async** (`Moderate::ClassifyJob`) in `:flag` mode. The recommended "real" adapter. |
-| *your own* | anything | `register_adapter(:rekognition, …)` / `:replicate` / Perspective / a self-hosted model — any object responding to `classify`. No built-in pretends the backend must be an "LLM". |
+| `:wordlist` (built-in, default) | text | Fast, multilingual, offline, zero-dependency. Unicode + leetspeak + spacing-evasion resistant. Ships `en`/`es` lists; add your own. The only adapter the gem ships. |
+| OpenAI (reference adapter — [`examples/openai_moderation_adapter.rb`](examples/openai_moderation_adapter.rb)) | **text *and* image** | OpenAI `omni-moderation-latest` via the `ruby_llm` gem — **free**, multimodal, its category set IS the canonical taxonomy + `0..1` scores. Copy it in, `gem "ruby_llm"`, `register_adapter(:openai, …)`. Runs **async** (`Moderate::ClassifyJob`) in `:flag` mode. |
+| AWS Rekognition (reference adapter — [`examples/aws_rekognition_adapter.rb`](examples/aws_rekognition_adapter.rb)) | images / avatars | `detect_moderation_labels` via `aws-sdk-rekognition`, with its taxonomy mapped onto the canonical labels. Copy it in, `gem "aws-sdk-rekognition"`, `register_adapter(:rekognition, …)`. Async, `:flag` mode. |
+| *your own* | anything | `register_adapter(:replicate, …)` / Perspective / a self-hosted model — any object responding to `classify`. No built-in pretends the backend must be an "LLM". |
 
 All adapters map their provider labels onto **one canonical taxonomy** (OpenAI's: `harassment[/threatening]`, `hate[/threatening]`, `sexual[/minors]`, `self-harm[/intent|/instructions]`, `violence[/graphic]`, `illicit[/violent]`), so `Moderate::Flag`, the DSA statement of reasons, and the transparency counters all speak one vocabulary.
 
@@ -233,12 +234,17 @@ All adapters map their provider labels onto **one canonical taxonomy** (OpenAI's
 Moderate.configure do |config|
   config.default_filter_mode = :block
   config.filter_adapter      = :wordlist
+
+  # Bring an external classifier: copy examples/openai_moderation_adapter.rb into
+  # your app, add `gem "ruby_llm"`, then register and use it by name.
+  config.register_adapter :openai, OpenAIModerationAdapter.new
+
   config.filter "Message", :body,   with: :wordlist, mode: :flag
   config.filter "Profile", :avatar, with: :openai,   mode: :flag   # one adapter moderates text AND images
 end
 ```
 
-> **`:block` requires a synchronous adapter** (`:wordlist`) — you can't reject a save on a background result. Service adapters like `:openai` run in `:flag` mode (allow the write, classify in a job, file a `Moderate::Flag`). `moderate` validates this for you and says so.
+> **`:block` requires a synchronous adapter** (`:wordlist`) — you can't reject a save on a background result. The async reference adapters (the OpenAI/Rekognition examples) declare `synchronous? == false`, so they run in `:flag` mode (allow the write, classify in a job, file a `Moderate::Flag`). `moderate` validates this for you and says so.
 
 Bring your own adapter — it's just an object that responds to `classify`:
 
@@ -320,22 +326,24 @@ The full event vocabulary: `report_received`, `report_decision`, `affected_user_
 
 `moderate` is built around the rules so you don't have to read the regulation:
 
-- **DSA Art. 16 (notice & action):** a public, electronic notice form (`Moderate::Notice` intake) capturing the substantiated reason, exact URL, notifier name+email, good-faith statement, the EU **statement-of-reasons taxonomy**, and the member-state selector — with an automatic confirmation of receipt.
+- **DSA Art. 16 (notice & action):** a public, electronic notice form — a mountable engine you place at the path of your choosing (`mount Moderate::Engine => "/trust"`, no hardcoded `/legal`) — capturing the substantiated reason, exact URL, notifier name+email, good-faith statement, the EU **statement-of-reasons taxonomy**, and the member-state selector, with an automatic confirmation of receipt. A notice is a `Moderate::Report` with `intake_kind: "dsa"` (no separate model), built via `Moderate::Services::IntakeNotice`. The form prefills the reported-content fields from query params (editable) and a signed-in notifier's identity (locked), and auto-integrates [`rails_cloudflare_turnstile`](https://github.com/instrumentl/rails-cloudflare-turnstile) when present (falling back to a `config.notice_guard` proc). See [`docs/dsa-notice-form.md`](docs/dsa-notice-form.md).
 - **DSA Art. 17 (statement of reasons):** decision notices state the action, the legal/contractual ground, whether automated means were used, and the redress path.
 - **DSA Art. 20 (appeals):** a free, electronic internal complaint mechanism, open ≥ 6 months, decided by a human.
 - **DSA Art. 24 (transparency):** counters you can publish (notices received, actions taken, median handling time, appeal outcomes).
 - **Apple Guideline 1.2 & Google Play UGC:** filter-before-post, in-app report **and** block, ongoing moderation, published contact — `moderate` covers all four. See the mapped checklist in [`docs/compliance.md`](docs/compliance.md).
 
-> Two taxonomies, on purpose: an in-app **community report** category set (harassment, spam, …) and a separate, regulator-aligned **DSA legal-reason** taxonomy for public notices. `moderate` ships both.
+> Two taxonomies, on purpose: an in-app **community report** category set (harassment, spam, …) and a separate, regulator-aligned **DSA legal-reason** taxonomy for public notices. `moderate` ships both. The community set is host-customizable via `config.report_categories`; the DSA legal-reason taxonomy is regulator-defined and fixed.
 
 ## 🤓 Why the models?
 
 `rails generate moderate:install` creates four tables:
 
-- **`moderate_reports`** — a report/notice + an immutable evidence snapshot + decision metadata + the appeal window. Serves both in-app reports and public DSA notices (distinguished by `kind`).
+- **`moderate_reports`** — a report/notice + an immutable evidence snapshot + decision metadata + the appeal window. Serves both in-app reports and public DSA notices (distinguished by `intake_kind`).
 - **`moderate_blocks`** — the bidirectional `blocker`/`blocked` edge, with a self-block check and the SSOT relation behind `Moderate.blocked_ids_for`.
 - **`moderate_flags`** — system/auto-filter flags (source: `text_filter` / `image_filter` / `external_classifier` / `manual`), with the classifier's labels + scores; the queue both human admins and ML consumers read via `pending`.
 - **`moderate_appeals`** — DSA Art. 20 internal complaints against a decision.
+
+> The value-list taxonomies (community `category`, `status`, `content_type`, the DSA `legal_reason`/`legal_country_code`, `resolution_basis`, plus `Flag` source/mode/status and `Appeal` source/status) are validated **in the models** — frozen constants + ActiveModel `inclusion` validations — **not** by database `CHECK` constraints. That means **adding or customizing a label never requires a migration**: the community category list is host-overridable via `config.report_categories` (defaults to `Moderate::Report::DEFAULT_CATEGORIES`), and the gem can grow its own taxonomies in a point release without touching your schema. The only value guard kept at the DB level is a cheap message-length backstop; everything else the migration adds is structural (NOT NULLs, FKs, the unique block edge, and the self-block CHECK).
 
 The migration is **adaptive**: it matches your app's primary-key type (UUID or bigint) and JSON column type (`jsonb` / `json`) automatically, so it drops cleanly into any Rails 7.1+ schema.
 

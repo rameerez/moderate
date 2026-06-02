@@ -24,14 +24,18 @@ module Moderate
     STATUSES = %w[open actioned dismissed].freeze
     INTAKE_KINDS = %w[community dsa].freeze
 
-    # The in-app COMMUNITY report categories. Two taxonomies on purpose (README):
-    # a friendly community set the user picks from a "Report" sheet, plus the
-    # regulator-aligned DSA legal-reason set below for public notices. These two
+    # The default in-app COMMUNITY report categories. Two taxonomies on purpose
+    # (README): a friendly community set the user picks from a "Report" sheet, plus
+    # the regulator-aligned DSA legal-reason set below for public notices. These two
     # vocabularies serve different audiences and must NOT be collapsed.
     #
-    # The list mirrors the `moderate_reports_category_check` DB constraint exactly,
-    # so an invalid category fails identically whether it hits AR or the database.
-    CATEGORIES = %w[
+    # This list is HOST-CUSTOMIZABLE: a host that needs its own community labels sets
+    # `config.report_categories = %w[...]` and validation tracks that instead (see
+    # `.report_categories` below). The taxonomy lives in the MODEL — there is no DB
+    # check constraint on `category` — precisely so adding a label never requires a
+    # migration. (The DSA legal-reason/country lists below are regulator-defined and
+    # therefore fixed, NOT host-overridable.)
+    DEFAULT_CATEGORIES = %w[
       harassment hate threats sexual_content spam fraud unsafe_behavior
       illegal_content privacy child_safety other hate_abuse_harassment
       violent_speech graphic_violent_media illegal_regulated_behaviors
@@ -42,7 +46,8 @@ module Moderate
     # The DSA "statement of reasons" legal-reason taxonomy used on public notices.
     # These are the categories the EU Transparency Database expects, so the Art. 24
     # transparency counters and the Art. 16 intake speak one regulator-aligned
-    # vocabulary. Mirrors the `moderate_reports_legal_reason_check` constraint.
+    # vocabulary. Regulator-defined, so this is a FIXED constant (not host-overridable):
+    # widening it is a gem change, not a host config. Validated by the model, not the DB.
     DSA_LEGAL_REASONS = %w[
       animal_welfare consumer_information cyber_violence data_protection_privacy
       illegal_or_harmful_speech civic_elections non_consensual_behavior
@@ -52,8 +57,8 @@ module Moderate
     ].freeze
 
     # The 27 EU member-state codes plus "EU" (whole-union). The DSA notice form
-    # requires the member state whose law is allegedly broken. Mirrors the
-    # `moderate_reports_legal_country_code_check` constraint.
+    # requires the member state whose law is allegedly broken. Regulator-defined and
+    # therefore fixed (not host-overridable). Validated by the model, not the DB.
     EU_COUNTRY_CODES = %w[
       AT BE BG CY CZ DE DK EE ES FI FR GR HR HU IE IT LT LU LV MT NL PL PT
       RO SE SI SK EU
@@ -61,18 +66,19 @@ module Moderate
 
     # Generic, host-agnostic content-type buckets. A host's reportable supplies its
     # own via `moderation_content_type`, but the stored value is constrained to this
-    # vocabulary so the queue and transparency counts stay tidy. Mirrors the
-    # `moderate_reports_content_type_check` constraint (NULL allowed).
+    # vocabulary (model-level inclusion, NULL allowed) so the queue and transparency
+    # counts stay tidy.
     CONTENT_TYPES = %w[
       user_profile profile_avatar listing message conversation group other
     ].freeze
 
     # The legal/contractual ground a moderator records when closing a report —
     # the DSA Art. 17(1) "legal or contractual ground" of the statement of reasons.
-    # Mirrors the `moderate_reports_resolution_basis_check` constraint (NULL allowed).
+    # Model-level inclusion (NULL allowed); no DB constraint.
     RESOLUTION_BASES = %w[terms law law_and_terms insufficient_information no_violation].freeze
 
-    # Matches the `moderate_reports_message_length_check` DB constraint.
+    # Matches the `moderate_reports_message_length_check` DB constraint — the one
+    # value guard kept at the DB level (a cheap runaway-free-text backstop).
     MESSAGE_MAX_LENGTH = 4000
 
     # Signed-GlobalID purposes. A purpose is a namespace tag baked into the signed
@@ -146,7 +152,14 @@ module Moderate
 
     validates :status, inclusion: { in: STATUSES }
     validates :intake_kind, inclusion: { in: INTAKE_KINDS }
-    validates :category, inclusion: { in: CATEGORIES }
+    # `category` is validated against the HOST-CUSTOMIZABLE list (config override or
+    # DEFAULT_CATEGORIES) — resolved at validation time, NOT class-load time, so a host
+    # that sets `config.report_categories` in its initializer is honored even though
+    # this model loads first. Passed as a lambda because `inclusion: { in: [...] }`
+    # snapshots a plain array once at load; a lambda is re-evaluated per record. The
+    # lambda's argument IS the record, so we reach the class method through its class
+    # (inside the proc, `self` is the record instance, which has no `report_categories`).
+    validates :category, inclusion: { in: ->(report) { report.class.report_categories } }
     validates :message, presence: true, length: { maximum: MESSAGE_MAX_LENGTH }
     # DSA Art. 16(2)(c): notices must carry the notifier's name and email — UNLESS
     # the notice alleges an offence against minors, where the regulation waives the
@@ -183,6 +196,16 @@ module Moderate
     validate :public_notice_requires_subject_url
     validate :dsa_notice_must_be_substantiated
     validate :anonymous_notice_only_for_child_safety
+
+    # --- Taxonomy (host-customizable) ----------------------------------------
+
+    # The community `category` vocabulary in effect: the host's `config.report_categories`
+    # if they set one, else the gem's DEFAULT_CATEGORIES. Read at the point of use (not
+    # memoized) so a host can change it without a reboot and so it tracks `Moderate.reset!`
+    # in tests. Coerced to strings to match the normalized, persisted column value.
+    def self.report_categories
+      Array(Moderate.config.report_categories).map(&:to_s).presence || DEFAULT_CATEGORIES
+    end
 
     # --- Signed-GlobalID locators --------------------------------------------
 

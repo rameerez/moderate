@@ -224,6 +224,68 @@ module Moderate
       refute_predicate report, :automated_processing_used?
     end
 
+    test "the taxonomy is validated in the model (no DB check constraint)" do
+      author = create_user
+      comment = Comment.create!(user: author, body: "fine")
+
+      # An unknown community category is rejected by the model's inclusion validation.
+      bad_category = Moderate::Report.new(
+        reporter: @reporter, reportable: comment, reported_field: "body",
+        category: "definitely_not_a_category", message: "x", good_faith_confirmed: true
+      )
+      refute bad_category.valid?
+      assert bad_category.errors[:category].any?
+
+      # Unknown status is rejected too.
+      bad_status = Moderate::Report.new(
+        reporter: @reporter, reportable: comment, reported_field: "body",
+        category: "harassment", message: "x", good_faith_confirmed: true, status: "frozen"
+      )
+      refute bad_status.valid?
+      assert bad_status.errors[:status].any?
+
+      # And an unknown DSA legal reason / country code / content type, when present.
+      bad_legal = Moderate::Report.new(
+        intake_kind: "dsa", category: "illegal_content",
+        legal_reason: "not_a_reason", legal_country_code: "ZZ", content_type: "spaceship",
+        notifier_name: "N", notifier_email: "n@example.com",
+        subject_url: "https://example.test/x", message: "x", good_faith_confirmed: true
+      )
+      refute bad_legal.valid?
+      assert bad_legal.errors[:legal_reason].any?
+      assert bad_legal.errors[:legal_country_code].any?
+      assert bad_legal.errors[:content_type].any?
+    end
+
+    test "a host-added community category (config.report_categories) is accepted" do
+      author = create_user
+      comment = Comment.create!(user: author, body: "fine")
+
+      # A host that needs its own community label sets config.report_categories — no
+      # migration required, since `category` is validated in the model (not by a DB
+      # check constraint) against Report.report_categories.
+      Moderate.config.report_categories = %w[harassment ban_evasion]
+
+      ok = Moderate::Report.new(
+        reporter: @reporter, reportable: comment, reported_field: "body",
+        category: "ban_evasion", message: "host-specific category", good_faith_confirmed: true
+      )
+      assert_predicate ok, :valid?
+
+      # And once the host narrows the list, a previously-default category is rejected.
+      gone = Moderate::Report.new(
+        reporter: @reporter, reportable: comment, reported_field: "body",
+        category: "spam", message: "no longer in the host's list", good_faith_confirmed: true
+      )
+      refute gone.valid?
+      assert gone.errors[:category].any?
+    end
+
+    test "report_categories falls back to DEFAULT_CATEGORIES when the host sets none" do
+      # No config override (the test setup leaves it nil) ⇒ the gem default list.
+      assert_equal Moderate::Report::DEFAULT_CATEGORIES, Moderate::Report.report_categories
+    end
+
     test "resolution note is required once a report is closed" do
       author = create_user
       comment = Comment.create!(user: author, body: "fine comment")

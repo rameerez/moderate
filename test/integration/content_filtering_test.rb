@@ -225,13 +225,17 @@ class ContentFilteringTest < ActiveSupport::TestCase
   test ":flag mode on the :image attachment field flags an uploaded image after commit" do
     Moderate.configure do |config|
       rewire_hooks(config)
-      # The :image adapter is async, so it's only valid in :flag mode (validate! would
-      # reject :block + an async adapter). This mirrors the dummy Comment#image policy.
+      # Image moderation is bring-your-own — the gem ships only the offline text
+      # :wordlist. The dummy host registers a tiny async image adapter under :image
+      # (test/dummy/app/adapters/dummy_image_adapter.rb); it's async, so it's only
+      # valid in :flag mode (validate! would reject :block + an async adapter). This
+      # mirrors the dummy Comment#image policy.
+      config.register_adapter :image, DummyImageAdapter.new
       config.filter "Comment", :image, with: :image, mode: :flag
     end
 
     comment = nil
-    assert_difference -> { Moderate::Flag.count }, 1, "the default :image adapter flags every uploaded image" do
+    assert_difference -> { Moderate::Flag.count }, 1, "the registered :image adapter flags every uploaded image" do
       comment = Comment.new(user: @user, body: CLEAN)
       comment.image.attach(
         io: StringIO.new("not really an image, the adapter ignores the bytes"),

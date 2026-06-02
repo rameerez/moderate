@@ -18,10 +18,13 @@ class Comment < ApplicationRecord
   belongs_to :user
 
   # An optional image attachment, present so the image-field filtering tests have a
-  # real Active Storage attachment to exercise the :image adapter (which flags every
-  # uploaded image for human review). We declare the field as moderated and point it
-  # at the :image adapter in :flag mode — :image is async, so :block would be a
-  # config error; :flag lets the save through and files a Moderate::Flag after commit.
+  # real Active Storage attachment to exercise a bring-your-own IMAGE adapter. The gem
+  # ships only the offline text :wordlist; this host registers its own async image
+  # adapter under the name :image (test/dummy/app/adapters/dummy_image_adapter.rb,
+  # wired in config/initializers/moderate.rb), which flags every uploaded image for
+  # human review. We declare the field as moderated and point it at that :image
+  # adapter in :flag mode — it's async, so :block would be a config error; :flag lets
+  # the save through and files a Moderate::Flag after commit.
   has_one_attached :image
   moderates :image, with: :image, mode: :flag
 
@@ -49,8 +52,8 @@ class Comment < ApplicationRecord
   # image adapter against the attachment without the gem knowing about Active Storage.
 
   # The value handed to the adapter for `:image` is the attachment itself (the
-  # :image adapter ignores the bytes and flags any present image for human review);
-  # for `:body` it's the plain column value.
+  # registered :image adapter ignores the bytes and flags any present image for human
+  # review); for `:body` it's the plain column value.
   def moderation_field_value(field)
     return image if field.to_s == "image"
 

@@ -6,6 +6,13 @@
 # reference the recorder immediately.
 require_relative "../support/moderate_test_recorder"
 
+# Load the host's bring-your-own image adapter the SAME way, for the SAME reason: the
+# block below registers it immediately (and config.filter "Comment", :image triggers
+# validate!, which insists the :image adapter already exists), and a config
+# initializer can run before app/adapters is autoloadable. require_relative sidesteps
+# the autoload-timing question entirely.
+require_relative "../../app/adapters/dummy_image_adapter"
+
 # The dummy host's boot-time configuration — the same `Moderate.configure` block a
 # real host writes in config/initializers/moderate.rb.
 #
@@ -33,6 +40,15 @@ Moderate.configure do |config|
   #                   for review (useful for fields you never want to hard-block).
   config.filter "Comment", :body, with: :wordlist, mode: :block
   config.filter "User", :name, with: :wordlist, mode: :flag
+
+  # IMAGE FILTERING — bring-your-own. The gem ships only the offline text :wordlist;
+  # image moderation is a host-registered adapter. We register a trivial async image
+  # adapter under the name :image (the Comment#image field points `with: :image` at
+  # it). It's async, so it's only valid in :flag mode. (Tests that exercise this path
+  # re-register it inside their own configure block, since the suite's setup calls
+  # Moderate.reset!, which wipes registered adapters — see test/test_helper.rb.)
+  config.register_adapter :image, DummyImageAdapter.new
+  config.filter "Comment", :image, with: :image, mode: :flag
 
   # AUDIT — every important action is recorded into the in-memory recorder so tests
   # can assert `ModerateTestRecorder.audits` instead of reaching into a real audit

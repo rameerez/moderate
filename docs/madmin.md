@@ -65,8 +65,8 @@ That's the whole pattern. The rest of this doc fills in the resource definitions
 
 | Model | What it is | The queue scope | Decide with |
 | --- | --- | --- | --- |
-| `Moderate::Report` | In-app reports **and** public DSA notices (one table, distinguished by `kind`) | `Moderate::Report.pending` | `report.resolve!` / `report.dismiss!` |
-| `Moderate::Flag` | Auto-filter flags from `:flag`-mode `moderates` (source: `wordlist` / `image` / a remote adapter / `manual`) | `Moderate::Flag.pending` | `flag.resolve!` / `flag.dismiss!` |
+| `Moderate::Report` | In-app reports **and** public DSA notices (one table, distinguished by `intake_kind`) | `Moderate::Report.pending` | `report.resolve!` / `report.dismiss!` |
+| `Moderate::Flag` | Auto-filter flags from `:flag`-mode `moderates` (source: `text_filter` / `image_filter` / `external_classifier` / `manual`) | `Moderate::Flag.pending` | `flag.resolve!` / `flag.dismiss!` |
 | `Moderate::Appeal` | DSA Art. 20 internal complaints against a decision | `Moderate::Appeal.pending` | `appeal.uphold!` / `appeal.reject!` |
 | `Moderate::Block` | The bidirectional `blocker`/`blocked` safety edge | (no decision — read-only) | n/a |
 

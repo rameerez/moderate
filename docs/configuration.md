@@ -30,8 +30,9 @@ Moderate.configure do |config|
   config.filter_adapter      = :wordlist     # default text adapter
   config.additional_words    = %w[…]         # extra :wordlist entries
   config.excluded_words      = %w[…]         # :wordlist false-positives to never flag
+  config.report_categories   = %w[…]         # override the in-app community category list (no migration)
 
-  config.register_adapter :openai, OpenAIModerator.new   # bring your own remote adapter
+  config.register_adapter :openai, OpenAIModerationAdapter.new   # bring your own remote adapter
   config.filter "Message", :body, with: :wordlist, mode: :flag   # per-field policy in one place
 
   # --- Hooks (all no-op by default) ----------------------------------------
@@ -93,7 +94,7 @@ end
 
 class Profile < ApplicationRecord
   moderates :bio,    mode: :block  # override: reject the save
-  moderates :avatar, mode: :flag, with: :image
+  moderates :avatar, mode: :flag, with: :image   # `:image` is a registered adapter — see examples/ (only :wordlist is built in)
 end
 ```
 
@@ -112,14 +113,13 @@ The default **text** adapter used by `moderates :field` and `Moderate.classify`.
 adapter.classify(value)  # => Moderate::Result(allowed:, categories:, scores:)
 ```
 
-Two adapters ship built in:
+Exactly **one** adapter ships built in:
 
 | Adapter | Use it for | Notes |
 | --- | --- | --- |
-| `:wordlist` (default) | text | Fast, multilingual, **offline**. Unicode + leetspeak + spacing-evasion resistant. Ships `en`/`es` lists; extend with `additional_words` / `excluded_words`. |
-| `:image` | images / avatars / attachments | Pluggable safe-search / NSFW backend; runs async in `:flag` mode. |
+| `:wordlist` (default) | text | Fast, multilingual, **offline**, zero-dependency. Unicode + leetspeak + spacing-evasion resistant. Ships `en`/`es` lists; extend with `additional_words` / `excluded_words`. |
 
-For anything nuanced — context-aware text, a hosted moderation API — you **bring and name your own adapter** with `register_adapter` (next section). `moderate` intentionally does **not** ship a built-in "LLM" adapter: the contract is `classify(value) → Result`, and whether the backend behind your adapter is an LLM, a hosted endpoint, or a regex is your call, not the gem's.
+For anything nuanced — context-aware text, images, a hosted moderation API — you **bring and name your own adapter** with `register_adapter` (next section). Two ready-to-copy reference adapters live under [`examples/`](../examples/): `examples/openai_moderation_adapter.rb` (OpenAI `omni-moderation-latest`, text + image, via the `ruby_llm` gem) and `examples/aws_rekognition_adapter.rb` (image moderation via `aws-sdk-rekognition`). They are **not shipped, loaded, or a dependency** — copy one into your app, add its gem to *your* Gemfile, and register it. `moderate` intentionally does **not** ship a built-in "LLM" or image adapter: the contract is `classify(value) → Result`, and whether the backend behind your adapter is an LLM, a hosted endpoint, or a regex is your call, not the gem's.
 
 ### `register_adapter` — bring your own backend
 
@@ -154,6 +154,9 @@ end
 
 The name is **yours** — `:openai`, `:replicate`, `:hive`, `:my_classifier`, whatever reads well in your models. The `source` recorded on resulting `Moderate::Flag`s is that name, so your moderation queue shows exactly which backend flagged each item.
 
+> [!TIP]
+> You don't have to write the adapter from scratch. Two production-shaped reference adapters ship under [`examples/`](../examples/) — `examples/openai_moderation_adapter.rb` (OpenAI, text + image, via `ruby_llm`) and `examples/aws_rekognition_adapter.rb` (image moderation via `aws-sdk-rekognition`). Copy one in, add its gem to *your* Gemfile, and `register_adapter` it. They're reference code, not a gem dependency, so nothing is pulled into an app that doesn't want it.
+
 ### `additional_words` / `excluded_words`
 
 ```ruby
@@ -168,14 +171,30 @@ Two layers on top of the built-in `:wordlist`:
 
 Both apply only to the `:wordlist` adapter. (The old `0.x` `additional_words`/`excluded_words` config keys carry over unchanged — see [Upgrading from 0.x](../README.md#upgrading-from-0x).)
 
+### `report_categories` — customize the in-app community category list
+
+```ruby
+config.report_categories = %w[harassment hate spam fraud my_custom_label]   # default: nil
+```
+
+The in-app **community report** category set a user picks from when they tap "Report" (`harassment`, `spam`, …). Leave it `nil` (the default) to use the gem's `Moderate::Report::DEFAULT_CATEGORIES`; set an Array to replace the list with your own. The `category` value is validated **in the model** (a frozen constant + an ActiveModel `inclusion` validation), **not** by a database `CHECK` constraint, so **adding or narrowing a category never requires a migration** — change this one config line and you're done.
+
+```ruby
+Moderate::Report.report_categories
+# => your config.report_categories if set, else Moderate::Report::DEFAULT_CATEGORIES
+```
+
+> [!NOTE]
+> This is the **community** taxonomy only. The separate, regulator-aligned **DSA legal-reason** taxonomy (`Moderate::Report::DSA_LEGAL_REASONS`) and the EU member-state list are **not** host-overridable — they're defined by the regulation, so widening them is a gem change, not host config.
+
 ### `filter` — per-field policy in the initializer
 
 If you'd rather keep all your Trust & Safety policy in one place instead of sprinkling `moderates` across models, declare per-field filters in the initializer. Same effect, same arguments:
 
 ```ruby
-config.filter "Message", :body,   with: :wordlist, mode: :flag
-config.filter "Profile", :bio,    with: :wordlist, mode: :block
-config.filter "Profile", :avatar, with: :image,    mode: :flag
+config.filter "Message", :body,   with: :wordlist,    mode: :flag
+config.filter "Profile", :bio,    with: :wordlist,    mode: :block
+config.filter "Profile", :avatar, with: :rekognition, mode: :flag   # a reference adapter you registered
 ```
 
 `config.filter "Class", :field, with:, mode:` is the initializer twin of `moderates :field, with:, mode:` on the model. Use whichever fits your taste; you can mix both. (Reportable classes themselves are auto-discovered from the reportable macro — there's no separate registry to maintain.)
@@ -281,7 +300,7 @@ config.default_filter_mode = :reject
 # => ArgumentError: default_filter_mode must be one of: off, block, flag
 
 config.filter "Message", :body, with: :gpt5, mode: :flag
-# => ArgumentError: unknown filter adapter :gpt5 — built-ins are :wordlist, :image;
+# => ArgumentError: unknown filter adapter :gpt5 — the only built-in is :wordlist;
 #    register your own with `config.register_adapter :gpt5, MyAdapter.new`
 ```
 

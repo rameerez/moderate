@@ -20,15 +20,16 @@ module Moderate
 
     STATUSES = %w[pending actioned dismissed].freeze
 
-    # Where a flag came from. These mirror the `moderate_flags_source_check` DB
-    # constraint exactly. `external_classifier` covers ANY host-registered remote
-    # adapter (OpenAI, Rekognition, Perspective, a self-hosted model) — the gem
-    # never hard-codes a specific provider here.
+    # Where a flag came from. Validated by the `validates :source, inclusion` below —
+    # NOT a DB constraint, so the gem can grow the list without a host migration.
+    # `external_classifier` covers ANY host-registered remote adapter (OpenAI,
+    # Rekognition, Perspective, a self-hosted model) — the gem never hard-codes a
+    # specific provider here.
     SOURCES = %w[text_filter image_filter external_classifier manual].freeze
 
     # What the flag WOULD do. `:flag` allowed the write and queued it; `:block`
     # rejected the write (a block-mode trip can also be recorded as a flag for the
-    # audit trail). Mirrors the `moderate_flags_mode_check` constraint.
+    # audit trail). Validated by the model (inclusion), not a DB constraint.
     MODES = %w[flag block].freeze
 
     # The flagged content is polymorphic — any `Moderate::Reportable`. `owner` is the

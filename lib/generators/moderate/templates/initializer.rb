@@ -29,12 +29,12 @@ Moderate.configure do |config|
 
   # The default text adapter used by `moderates :field` and `Moderate.classify`.
   # Every adapter implements the same tiny contract — `classify(value) → Result`
-  # — so they're interchangeable per field.
+  # — so they're interchangeable per field. `moderate` ships exactly ONE built-in
+  # adapter; anything else (text-with-context, images, a hosted moderation API) is
+  # bring-your-own (`register_adapter`, below):
   #
-  #   :wordlist - fast, multilingual, offline wordlist (ships en/es). The
-  #               default. Unicode + leetspeak + spacing-evasion resistant.
-  #   :image    - pluggable safe-search / NSFW backend for images & avatars
-  #   :llm      - optional OpenAI / ruby_llm classifier with real 0..1 scores
+  #   :wordlist - fast, multilingual, offline wordlist (ships en/es). The ONLY
+  #               built-in. Unicode + leetspeak + spacing-evasion resistant.
   #
   # Default: :wordlist
   # config.filter_adapter = :wordlist
@@ -47,12 +47,19 @@ Moderate.configure do |config|
   #
   # config.filter "Message", :body,   with: :wordlist, mode: :flag
   # config.filter "Profile", :bio,    with: :wordlist, mode: :block
-  # config.filter "Profile", :avatar, with: :image,    mode: :flag
+  # config.filter "Profile", :avatar, with: :rekognition, mode: :flag  # a registered adapter (see below)
 
   # Bring your own adapter — it's just an object that responds to `classify`,
   # returning a Moderate::Result. Register it once, then reference it by name
   # in `moderates` or `config.filter` with `with: :my_adapter`.
   #
+  # Two ready-to-copy reference adapters ship under the gem's examples/ directory —
+  # OpenAI moderation (text + image, via the ruby_llm gem) and AWS Rekognition
+  # (images). They are NOT a dependency: copy one into your app, add its gem to your
+  # Gemfile, and register it here. Async adapters (a remote classifier) are only valid
+  # in :flag mode; :block needs the synchronous :wordlist.
+  #
+  # config.register_adapter :openai, OpenAIModerationAdapter.new
   # config.register_adapter :my_adapter, MyAdapter.new
 
   # Extra wordlist entries layered on top of the built-in lists, and entries to
@@ -61,6 +68,13 @@ Moderate.configure do |config|
   #
   # config.additional_words = %w[customword anotherword]
   # config.excluded_words   = %w[scunthorpe assangea]
+
+  # Override the in-app COMMUNITY report category list (what a user picks from a
+  # "Report" sheet). Defaults to Moderate::Report::DEFAULT_CATEGORIES. Adding a
+  # category here requires NO migration — `category` is validated in the model. (The
+  # separate, regulator-defined DSA legal-reason taxonomy is NOT overridable.)
+  #
+  # config.report_categories = %w[harassment hate spam fraud my_custom_label]
 
   # ==========================================================================
   # AUDIT — one hook, recorded however you want

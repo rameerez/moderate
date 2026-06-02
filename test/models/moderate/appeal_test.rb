@@ -79,6 +79,17 @@ module Moderate
       assert_equal "notifier", default.source
     end
 
+    test "status is constrained to the allowed vocabulary (in the model, not the DB)" do
+      # `status` is validated by an ActiveModel inclusion validation, not a DB check
+      # constraint, so an unknown value surfaces a friendly model error.
+      appeal = Moderate::Appeal.new(
+        report: closed_report, appellant_email: "appeal@example.com",
+        reason: "x", status: "withdrawn"
+      )
+      refute appeal.valid?
+      assert appeal.errors[:status].any?
+    end
+
     test "a logged-in appellant's contact is hydrated onto the appeal" do
       user = create_user
       appeal = Moderate::Appeal.new(

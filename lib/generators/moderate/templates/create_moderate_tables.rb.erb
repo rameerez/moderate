@@ -80,46 +80,15 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
     add_index :moderate_reports, :resolved_at, name: "index_moderate_reports_on_resolved_at"
     add_index :moderate_reports, :appeal_deadline_at, name: "index_moderate_reports_on_appeal_deadline_at"
 
-    add_check_constraint :moderate_reports,
-      in_list("intake_kind", %w[community dsa]),
-      name: "moderate_reports_intake_kind_check"
-    add_check_constraint :moderate_reports,
-      in_list("status", %w[open actioned dismissed]),
-      name: "moderate_reports_status_check"
-    add_check_constraint :moderate_reports,
-      in_list("category", %w[
-        harassment hate threats sexual_content spam fraud unsafe_behavior
-        illegal_content privacy child_safety other hate_abuse_harassment
-        violent_speech graphic_violent_media illegal_regulated_behaviors
-        impersonation adult_sexual_content private_non_consensual_content
-        suicide_self_harm terrorism_violent_extremism scam_fraud
-      ]),
-      name: "moderate_reports_category_check"
-    add_check_constraint :moderate_reports,
-      nullable_in_list("content_type", %w[
-        user_profile profile_avatar listing message conversation group other
-      ]),
-      name: "moderate_reports_content_type_check"
-    add_check_constraint :moderate_reports,
-      nullable_in_list("legal_reason", %w[
-        animal_welfare consumer_information cyber_violence data_protection_privacy
-        illegal_or_harmful_speech civic_elections non_consensual_behavior
-        pornography_sexualized_content protection_of_minors public_security
-        scams_fraud scope_of_platform_service self_harm unsafe_illegal_products
-        violence intellectual_property other
-      ]),
-      name: "moderate_reports_legal_reason_check"
-    add_check_constraint :moderate_reports,
-      nullable_in_list("legal_country_code", %w[
-        AT BE BG CY CZ DE DK EE ES FI FR GR HR HU IE IT LT LU LV MT NL PL PT
-        RO SE SI SK EU
-      ]),
-      name: "moderate_reports_legal_country_code_check"
-    add_check_constraint :moderate_reports,
-      nullable_in_list("resolution_basis", %w[
-        terms law law_and_terms insufficient_information no_violation
-      ]),
-      name: "moderate_reports_resolution_basis_check"
+    # NOTE: the value-list taxonomies (category, intake_kind, status, content_type,
+    # legal_reason, legal_country_code, resolution_basis) are validated in the MODELS
+    # (frozen constants + ActiveModel inclusion validations), NOT by DB check
+    # constraints. That's deliberate: a host must be able to add a community
+    # `category` (Report.report_categories via config.report_categories) or have the
+    # gem grow its taxonomy WITHOUT shipping a migration to widen a CHECK. So the only
+    # constraints here are STRUCTURAL — NOT NULLs (above), FKs, the unique block edge,
+    # the self-block CHECK, and this cheap message-length guardrail (a runaway free-text
+    # field is a DB-level concern worth keeping even though the model also caps it).
     add_check_constraint :moderate_reports,
       "#{char_length_fn}(message) <= 4000",
       name: "moderate_reports_message_length_check"
@@ -182,15 +151,9 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
     add_index :moderate_flags, [:owner_id, :status], name: "index_moderate_flags_on_owner_id_and_status"
     add_index :moderate_flags, [:status, :created_at], name: "index_moderate_flags_on_status_and_created_at"
 
-    add_check_constraint :moderate_flags,
-      in_list("mode", %w[flag block]),
-      name: "moderate_flags_mode_check"
-    add_check_constraint :moderate_flags,
-      in_list("source", %w[text_filter image_filter external_classifier manual]),
-      name: "moderate_flags_source_check"
-    add_check_constraint :moderate_flags,
-      in_list("status", %w[pending actioned dismissed]),
-      name: "moderate_flags_status_check"
+    # Flag's mode/source/status vocabularies are validated in Moderate::Flag
+    # (constants + inclusion validations), not by DB CHECK constraints — same
+    # migration-free-taxonomy rationale as moderate_reports above.
 
     # ---------------------------------------------------------------------------
     # moderate_appeals
@@ -224,12 +187,9 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
     add_index :moderate_appeals, [:status, :created_at], name: "index_moderate_appeals_on_status_and_created_at"
     add_index :moderate_appeals, :appellant_email, name: "index_moderate_appeals_on_appellant_email"
 
-    add_check_constraint :moderate_appeals,
-      in_list("source", %w[notifier affected_user admin other]),
-      name: "moderate_appeals_source_check"
-    add_check_constraint :moderate_appeals,
-      in_list("status", %w[open upheld rejected]),
-      name: "moderate_appeals_status_check"
+    # Appeal's source/status vocabularies are validated in Moderate::Appeal
+    # (constants + inclusion validations), not by DB CHECK constraints — same
+    # migration-free-taxonomy rationale as moderate_reports above.
   end
 
   private
@@ -273,17 +233,5 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
   #     makes the 4000 cap a real character cap on every adapter, not a byte cap.
   def char_length_fn
     connection.adapter_name.downcase.include?("sqlite") ? "length" : "char_length"
-  end
-
-  # Builds a portable `column IN ('a', 'b', ...)` check-constraint expression that
-  # works across PostgreSQL, MySQL 8+, and SQLite (no Postgres-specific casts).
-  def in_list(column, values)
-    list = values.map { |value| connection.quote(value) }.join(", ")
-    "#{column} IN (#{list})"
-  end
-
-  # Like `in_list`, but allows NULL (for optional columns).
-  def nullable_in_list(column, values)
-    "#{column} IS NULL OR #{in_list(column, values)}"
   end
 end

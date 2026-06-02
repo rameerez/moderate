@@ -6,9 +6,10 @@ require "set"
 module Moderate
   module Filters
     # The default, built-in TEXT adapter: a fast, offline, multilingual,
-    # zero-dependency wordlist matcher. Registered by the spine under the name
-    # :wordlist (config seed "Moderate::Adapters::Wordlist", aliased to this class
-    # at the bottom of the file). Synchronous, so it's valid in :block mode.
+    # zero-dependency wordlist matcher. It is the ONE built-in adapter the gem ships
+    # — registered by the spine under the name :wordlist (config seed
+    # "Moderate::Filters::Wordlist", constantized lazily). Synchronous, so it's valid
+    # in :block mode.
     #
     # ── What it's for, and what it's NOT ─────────────────────────────────────────
     # This satisfies the store bar of "a method for filtering objectionable UGC
@@ -16,9 +17,10 @@ module Moderate
     # https://developer.apple.com/app-store/review/guidelines/#user-generated-content;
     # Google Play UGC: https://support.google.com/googleplay/android-developer/answer/9876937)
     # with no network call and no external service. It is NOT a full trust-&-safety
-    # classifier — it can't read context. For nuance, point a field at the :openai
-    # adapter or your own. The bar this clears is "obvious slurs/threats/spam don't
-    # sail straight through", at zero latency and zero cost.
+    # classifier — it can't read context. For nuance (or for images), register a
+    # reference adapter from `examples/` (OpenAI, AWS Rekognition, …) or your own.
+    # The bar this clears is "obvious slurs/threats/spam don't sail straight
+    # through", at zero latency and zero cost.
     #
     # ── Evasion resistance (the part that matters) ───────────────────────────────
     # Naive substring matching is trivially defeated ("f.u.c.k", "FÜCK", "f u c k",
@@ -250,15 +252,4 @@ module Moderate
       end
     end
   end
-
-  # ── Registry alias ───────────────────────────────────────────────────────────
-  # The spine's Configuration seeds the adapters registry with the STRING
-  # "Moderate::Adapters::Wordlist" and constantizes it lazily. We define the adapter
-  # under `Moderate::Filters` (matching its file path, so Zeitwerk is happy) and
-  # expose it under the registered `Moderate::Adapters` name via a constant alias,
-  # so `"Moderate::Adapters::Wordlist".constantize` resolves to this exact class.
-  # Defining the alias namespace defensively (it may not exist yet depending on load
-  # order of the three built-in adapter files).
-  module Adapters; end
-  Adapters::Wordlist = Filters::Wordlist
 end

@@ -72,15 +72,6 @@ module Moderate
     initializer "moderate.autoload", before: :set_autoload_paths do
       loader = Rails.autoloaders.main
 
-      # ACRONYM INFLECTION. Zeitwerk derives the expected constant from the file name
-      # by camelizing it, so `openai.rb` → `Openai`. The adapter class is spelled
-      # `Moderate::Filters::OpenAI` (the brand's own capitalization, and what the
-      # `Moderate::Adapters::OpenAI` alias and the README examples use), so we teach
-      # the inflector the override or Zeitwerk raises "expected file … to define
-      # constant Moderate::Filters::Openai". (Same mechanism Rails uses for `api` →
-      # `API`; see https://github.com/fxn/zeitwerk#inflection.)
-      loader.inflector.inflect("openai" => "OpenAI")
-
       # Files the spine already requires (or that define top-level constants) — tell
       # Zeitwerk to leave them alone so it doesn't try to (re)manage their constants.
       ZEITWERK_IGNORED.each do |file|
