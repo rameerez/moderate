@@ -300,7 +300,40 @@ module Moderate
       config.locale || (defined?(I18n) ? I18n.default_locale : :en)
     end
 
+    # DSA Art. 24 transparency aggregation for a period — the numbers a host
+    # publishes (notices received by intake/ground, actions taken, automated-means
+    # usage, appeal outcomes, median handling times). This is the queryable building
+    # block: the public `/transparency` page (off by default — see
+    # `config.transparency_report_enabled`) renders this, and a host that keeps the
+    # page off can still call this to publish its own report in its own format.
+    def transparency(from: nil, to: nil)
+      to ||= Time.respond_to?(:current) ? Time.current : Time.now
+      from ||= to - (365 * 24 * 60 * 60)
+      reports = Moderate::Report.where(created_at: from..to)
+      appeals = Moderate::Appeal.where(created_at: from..to)
+      flags = Moderate::Flag.where(created_at: from..to)
+
+      {
+        period: { from: from, to: to },
+        notices_by_intake: reports.group(:intake_kind).count,
+        dsa_notices_by_legal_reason: reports.where(intake_kind: "dsa").group(:legal_reason).count,
+        actions_by_basis: reports.where.not(resolved_at: nil).group(:resolution_basis).count,
+        automated_flags_by_source: flags.group(:source).count,
+        appeals_by_status: appeals.group(:status).count,
+        median_notice_action_seconds: transparency_median(reports.where.not(resolved_at: nil).pluck(:created_at, :resolved_at)),
+        median_appeal_action_seconds: transparency_median(appeals.where.not(resolved_at: nil).pluck(:created_at, :resolved_at))
+      }
+    end
+
     private
+
+    # Median seconds between paired (created_at, resolved_at) timestamps; 0 when empty.
+    def transparency_median(pairs)
+      values = pairs.filter_map { |created_at, resolved_at| resolved_at && created_at ? (resolved_at - created_at).to_i : nil }.sort
+      return 0 if values.empty?
+
+      values[values.length / 2]
+    end
 
     # The internal reportable-name set. Set (not Array) so re-including the concern
     # is idempotent.

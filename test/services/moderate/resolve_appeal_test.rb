@@ -25,6 +25,19 @@ module Moderate
         ModerateTestRecorder.clear
       end
 
+      test "Appeal#uphold! and #reject! delegate to the service (the README's plain-English API)" do
+        moderator = User.create!(name: "Mod")
+
+        appeal = create_appeal
+        appeal.uphold!(by: moderator, note: "We reversed the decision.")
+        assert_equal "upheld", appeal.reload.status
+        assert_equal moderator, appeal.resolved_by
+
+        other = create_appeal
+        other.reject!(by: moderator, note: "Original decision stands.")
+        assert_equal "rejected", other.reload.status
+      end
+
       test "upholding closes the appeal, stamps the human decider, audits, and notifies" do
         moderator = User.create!(name: "Mod")
         appeal = create_appeal

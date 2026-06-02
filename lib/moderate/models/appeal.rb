@@ -81,6 +81,19 @@ module Moderate
       status == "rejected"
     end
 
+    # Decide this appeal — model-level sugar over Moderate::Services::ResolveAppeal,
+    # so a host can write `appeal.uphold!(by: moderator, note: "…")` /
+    # `appeal.reject!(by: moderator, note: "…")` instead of constructing the service.
+    # The service does the real work (audit, the appeal-decision notification, and —
+    # for an upheld appeal — reversing the original decision); these only forward.
+    def uphold!(by:, note:)
+      Moderate::Services::ResolveAppeal.new(self, by: by).uphold!(note: note)
+    end
+
+    def reject!(by:, note:)
+      Moderate::Services::ResolveAppeal.new(self, by: by).reject!(note: note)
+    end
+
     private
 
     # See the before_save comment: keep the NOT-NULL JSON `snapshot` non-null on MySQL.

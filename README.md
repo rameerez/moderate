@@ -19,7 +19,7 @@ If you have an app where users can upload / generate content or send messages to
 
 ```ruby
 class Comment < ApplicationRecord
-  reportable
+  has_reportable_content
 end
 ```
 
@@ -79,12 +79,12 @@ end
 
 ```ruby
 class User < ApplicationRecord
-  has_moderation_capabilities # can report, block, be blocked, be banned
+  has_reporting_and_blocking # can report, block, be blocked, be banned
 end
 
 class Message < ApplicationRecord
-  reportable         # can be reported
-  moderates :body    # …and filtered before it's saved
+  has_reportable_content   # can be reported
+  moderates :body          # …and filtered before it's saved
 end
 ```
 
@@ -129,11 +129,11 @@ Typical offending content include categories like these, all covered by the `mod
 
 ## 🧑‍🤝‍🧑 Actors: report & block
 
-Add `has_moderation_capabilities` to your user model (or any model that acts on behalf of a person):
+Add `has_reporting_and_blocking` to your user model (or any model that acts on behalf of a person):
 
 ```ruby
 class User < ApplicationRecord
-  has_moderation_capabilities
+  has_reporting_and_blocking
 end
 ```
 
@@ -167,11 +167,11 @@ current_user.report!(@user,    category: :impersonation)
 
 ## 🚩 Reportable content
 
-Declare what can be reported with one `reportable` line — the fields are optional (omit them to report the whole record):
+Declare what can be reported with one `has_reportable_content` line — the fields are optional (omit them to report the whole record):
 
 ```ruby
 class Listing < ApplicationRecord
-  reportable :title, :description
+  has_reportable_content :title, :description
 
   # Tell moderate how to present & clean this content when a moderator acts:
   def moderation_label = "Listing #{id}"
@@ -200,7 +200,7 @@ Because `moderate` is UI-agnostic, it does not render a built-in "under review" 
 
 If your app runs inside Hotwire Native / Turbo Native, remember that native path configuration is host-owned. Add rules for the in-app report routes you mount (for example `/reports/new` **and** the form action `/reports`, so validation errors stay in the same modal stack) and for the engine's public legal routes **and their form actions** such as `<mount>/notices/new`, `<mount>/notices`, `<mount>/appeals/new`, `<mount>/appeals`, and `<mount>/transparency` — where `<mount>` is wherever you mounted `Moderate::Engine` in your routes (it is host-chosen, not fixed). `moderate` can provide the Rails routes; your native shell still decides whether they push, present modally, use a sheet, and which Android `uri` maps to the destination.
 
-Adding a new reportable type is one `reportable` line — the intake, queue, snapshot, and admin code never change.
+Adding a new reportable type is one `has_reportable_content` line — the intake, queue, snapshot, and admin code never change.
 
 ## 🧪 Content filtering: `:off` / `:block` / `:flag`
 
@@ -345,7 +345,7 @@ The full event vocabulary: `report_received`, `report_decision`, `affected_user_
 - **DSA Art. 16 (notice & action):** a public, electronic notice form — a mountable engine you place at the path of your choosing (`mount Moderate::Engine => "/trust"`, no hardcoded `/legal`) — capturing the substantiated reason, exact URL, notifier name+email, good-faith statement, the EU **statement-of-reasons taxonomy**, and the member-state selector, with an automatic confirmation of receipt. A notice is a `Moderate::Report` with `intake_kind: "dsa"` (no separate model), built via `Moderate::Services::IntakeNotice`. The form prefills the reported-content fields from query params (editable) and a signed-in notifier's identity (locked), and auto-integrates [`rails_cloudflare_turnstile`](https://github.com/instrumentl/rails-cloudflare-turnstile) when present (falling back to a `config.notice_guard` proc, with an optional per-request skip hook for clients that cannot render a browser challenge). See [`docs/dsa-notice-form.md`](docs/dsa-notice-form.md).
 - **DSA Art. 17 (statement of reasons):** decision notices state the action, the legal/contractual ground, whether automated means were used, and the redress path.
 - **DSA Art. 20 (appeals):** a free, electronic internal complaint mechanism, open ≥ 6 months, decided by a human.
-- **DSA Art. 24 (transparency):** counters you can publish (notices received, actions taken, median handling time, appeal outcomes).
+- **DSA Art. 24 (transparency):** counters you can publish (notices received, actions taken, median handling time, appeal outcomes). The public transparency page is **opt-in** (`config.transparency_report_enabled = true`, off by default) — a live portal isn't itself required (the duty is to *publish* a report, and micro/small enterprises are exempt), so you turn it on only when you want it.
 - **Apple Guideline 1.2 & Google Play UGC:** filter-before-post, in-app report **and** block, ongoing moderation, published contact — `moderate` covers all four. See the mapped checklist in [`docs/compliance.md`](docs/compliance.md).
 
 > Two taxonomies, on purpose: an in-app **community report** category set (harassment, spam, …) and a separate, regulator-aligned **DSA legal-reason** taxonomy for public notices. `moderate` ships both. The community set is host-customizable via `config.report_categories`; the DSA legal-reason taxonomy is regulator-defined and fixed.
@@ -380,7 +380,7 @@ Moderate.configure do |config|
 end
 ```
 
-Reportable classes are auto-discovered from the `reportable` macro (or `include Moderate::Reportable`) — no manual registry.
+Reportable classes are auto-discovered from the `has_reportable_content` macro (or `include Moderate::Reportable`) — no manual registry.
 
 ## Upgrading from 0.x
 

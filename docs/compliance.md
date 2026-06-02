@@ -90,11 +90,11 @@ The statement must include, at minimum: the **restriction imposed** (and its sco
 
 | Requirement | How `moderate` satisfies it | Who | Proof |
 | --- | --- | --- | --- |
-| Count of **notices received** (by type/ground). | `Moderate.transparency` aggregates `moderate_reports` by `intake_kind` and `legal_reason`/`category`. | **[gem]** | `test/services/transparency_counts_test.rb` |
-| Count of **actions taken** (removals, bans, dismissals). | The same aggregation tallies resolutions by action and dismissals. | **[gem]** | `test/services/transparency_counts_test.rb` |
-| **Median handling time** (notice → decision). | Computed from each report's received-at vs decided-at timestamps. | **[gem]** | `test/services/transparency_timing_test.rb` |
-| Use of **automated means** in moderation. | Counts of decisions acting on auto-`Moderate::Flag`s vs human reports, from the `source` column. | **[gem]** | `test/services/transparency_automated_test.rb` |
-| **Appeals** received and their **outcomes** (upheld / rejected). | Aggregation over `moderate_appeals` by status. | **[gem]** | `test/services/transparency_appeals_test.rb` |
+| Count of **notices received** (by type/ground). | `Moderate.transparency` aggregates `moderate_reports` by `intake_kind` and `legal_reason`/`category`. | **[gem]** | `test/integration/transparency_report_test.rb` |
+| Count of **actions taken** (removals, bans, dismissals). | The same aggregation tallies resolutions by action and dismissals. | **[gem]** | `test/integration/transparency_report_test.rb` |
+| **Median handling time** (notice → decision). | Computed from each report's received-at vs decided-at timestamps. | **[gem]** | `test/integration/transparency_report_test.rb` |
+| Use of **automated means** in moderation. | Counts of decisions acting on auto-`Moderate::Flag`s vs human reports, from the `source` column. | **[gem]** | `test/integration/transparency_report_test.rb` |
+| **Appeals** received and their **outcomes** (upheld / rejected). | Aggregation over `moderate_appeals` by status. | **[gem]** | `test/integration/transparency_report_test.rb` |
 | **Publish** the report (at least annually). | The gem produces the numbers; **you** publish them (a `/transparency` page, a PDF, whatever) — only you know your reporting period and format. | **[you]** | manual: render `Moderate.transparency(from:, to:)` |
 
 > [!TIP]
@@ -111,7 +111,7 @@ Apple is blunt: an app with UGC that lacks these gets **rejected**, and rejectio
 | Requirement | How `moderate` satisfies it | Who | Proof |
 | --- | --- | --- | --- |
 | **(a)** A method to **filter objectionable material** before it's posted. | `moderates :field` with `mode: :block` rejects the offending write before save; the default `:wordlist` adapter is a fast offline baseline, and you can register an image / remote adapter for stronger checks. | **[gem]** | `test/models/filtering_block_mode_test.rb` |
-| **(b)** A mechanism to **report** offensive content. | `current_user.report!(content, category:)` in-app; `reportable` content exposes `reports`, `reported?`, `flagged?`; the `moderate_report_link` helper drops the button into any view. | **[gem]** | `test/models/reportable_test.rb`, `test/helpers/report_link_test.rb` |
+| **(b)** A mechanism to **report** offensive content. | `current_user.report!(content, category:)` in-app; reportable content exposes `reports`, `reported?`, `flagged?`; the `moderate_report_link` helper drops the button into any view. | **[gem]** | `test/models/reportable_test.rb`, `test/helpers/report_link_test.rb` |
 | **(b)** **Timely responses** to reports. | The report lands in `Moderate::Report.pending` with a snapshot; the reporter gets a `report_received` receipt immediately, and a `report_decision` when you act. (Acting promptly is on you — the gem surfaces the queue and the events.) | **[gem + you]** | `test/services/report_received_event_test.rb` |
 | **(c)** The ability to **block abusive users**. | `current_user.block!(other)` — bidirectional, idempotent, audited; enforce it everywhere with the single `Moderate.blocked_ids_for(user)` query. | **[gem]** | `test/models/block_test.rb` |
 | **(d)** **Published contact information** to reach the developer. | The notice-engine root (`/legal`) is a natural home for your contact/abuse address; the gem gives you the page, **you** publish the address (Apple wants a real human-reachable contact). | **[gem + you]** | manual: contact shown in-app + on the notice page |
@@ -132,7 +132,7 @@ Google Play's UGC policy overlaps heavily with Apple's but is explicit about **t
 
 | Requirement | How `moderate` satisfies it | Who | Proof |
 | --- | --- | --- | --- |
-| In-app **reporting** of objectionable **content**. | `current_user.report!(content, category:)`; any model that is `reportable` can be reported. | **[gem]** | `test/models/reportable_test.rb` |
+| In-app **reporting** of objectionable **content**. | `current_user.report!(content, category:)`; any model that is reportable can be reported. | **[gem]** | `test/models/reportable_test.rb` |
 | In-app **reporting** of objectionable **users**. | A user model with `has_reporting_and_blocking` is itself reportable: `current_user.report!(other_user, category: :impersonation)`. | **[gem]** | `test/models/report_user_test.rb` |
 | In-app **blocking** of objectionable **users**. | `current_user.block!(other)` — the bidirectional safety edge. | **[gem]** | `test/models/block_test.rb` |
 | In-app **blocking / hiding** of objectionable **content**. | Filter the blocked pair's content out of any feed with `Moderate.blocked_ids_for(current_user)` — the single source-of-truth query you apply in search, inbox, and listings. | **[gem]** | `test/models/blocked_ids_scope_test.rb` |
@@ -141,7 +141,7 @@ Google Play's UGC policy overlaps heavily with Apple's but is explicit about **t
 | Users **accept terms / acceptable-use** before contributing UGC. | This is your signup/terms gate — `moderate` doesn't own it — but, as with Apple, your acceptable-use policy should enumerate the **community-report categories** so the terms and the report buttons describe the same prohibited behavior. | **[you]** | manual: terms acceptance in your onboarding |
 
 > [!NOTE]
-> **"Both users and content" is the row people miss.** Plenty of apps add a "Report comment" button and stop there. Play wants you to be able to report **and** block **both** a person and a thing. `moderate` covers all four cells because a user model with `has_reporting_and_blocking` is *also* `reportable`, and blocking is enforced over content via `blocked_ids_for`. If you only made content `reportable` and never made users blockable, you'd pass Apple's spot check and still fail Play's policy.
+> **"Both users and content" is the row people miss.** Plenty of apps add a "Report comment" button and stop there. Play wants you to be able to report **and** block **both** a person and a thing. `moderate` covers all four cells because a user model with `has_reporting_and_blocking` is *also* reportable, and blocking is enforced over content via `blocked_ids_for`. If you only made content reportable and never made users blockable, you'd pass Apple's spot check and still fail Play's policy.
 
 ---
 
@@ -159,7 +159,7 @@ If you read nothing else, this is the table that says "we did the thing."
 | **Apple 1.2(b)** | Report + timely response | `report!` + `Report.pending` + `report_decision` | ✅ gem (you respond) |
 | **Apple 1.2(c)** | Block abusive users | `block!` + `blocked_ids_for` | ✅ gem |
 | **Apple 1.2(d)** | Published contact | `/legal` page | ✅ gem (you publish address) |
-| **Play UGC** | Report + block, **users and content** | `report!`/`block!` on users; `reportable` + `blocked_ids_for` on content | ✅ gem |
+| **Play UGC** | Report + block, **users and content** | `report!`/`block!` on users; reportable + `blocked_ids_for` on content | ✅ gem |
 | **Play UGC** | Ongoing moderation surface | `Flag.pending` + `:flag`-mode filtering | ✅ gem (you review) |
 | **Play UGC** | Accept terms before UGC | your onboarding gate | ⬜ you (categories align) |
 
