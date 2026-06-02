@@ -56,9 +56,9 @@ module ModerateTestRecorder
       event # truthy, and lets a test inspect what was "delivered"
     end
 
-    # on_block(blocker:, blocked:) — record the pair the gem handed us.
-    def on_block(blocker:, blocked:)
-      @blocks << { blocker: blocker, blocked: blocked }
+    # on_block(blocker:, blocked:, at:) — record the pair and timestamp the gem handed us.
+    def on_block(blocker:, blocked:, at:)
+      @blocks << { blocker: blocker, blocked: blocked, at: at }
     end
 
     # ban_handler(user:, by:, reason:) — record the ban request. We DON'T mutate the

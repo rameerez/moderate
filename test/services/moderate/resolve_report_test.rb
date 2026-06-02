@@ -67,6 +67,9 @@ module Moderate
         # affected-user statement of reasons (Art. 17).
         assert_equal 1, ModerateTestRecorder.notifications_named(:report_decision).size
         assert_equal 1, ModerateTestRecorder.notifications_named(:affected_user_decision).size
+        assert_equal 1, ModerateTestRecorder.notifications_named(:user_banned).size
+        assert_equal author, ModerateTestRecorder.notifications_named(:user_banned).first.subject
+        assert_equal moderator, ModerateTestRecorder.notifications_named(:user_banned).first.actor
 
         # Delivered ⇒ the legal-communication timestamps were stamped.
         assert_predicate report.decision_notified_at, :present?

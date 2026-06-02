@@ -43,6 +43,7 @@ module Moderate
       assert_equal comment.id, snapshot["reportable_id"]
       assert_equal "body", snapshot["reported_field"]
       assert_equal author.id, snapshot["reported_user_id"]
+      assert_equal "a perfectly ordinary comment", snapshot["content_text"]
       assert snapshot["captured_at"].present?
 
       # A fresh report has not yet acknowledged receipt (DSA Art. 16(4) stamp).
@@ -181,6 +182,18 @@ module Moderate
       # auto-discovered reportable classes) blocks object-substitution attacks.
       assert_nil Moderate::Report.locate_signed_reportable("not-a-token")
       assert_nil Moderate::Report.locate_signed_reportable(nil)
+    end
+
+    test "signed reportable lookup falls back to the reportable contract when the registry is stale" do
+      user = create_user
+      token = user.to_sgid_param(for: Moderate::Report::SIGNED_GLOBAL_ID_PURPOSE)
+      registry = Moderate.send(:reportable_registry)
+      original_registry = registry.dup
+      registry.delete(user.class.name)
+
+      assert_equal user, Moderate::Report.locate_signed_reportable(token)
+    ensure
+      registry.replace(original_registry) if registry && original_registry
     end
 
     test "automated_processing_used? is true when an auto-flag exists for the same target+field" do

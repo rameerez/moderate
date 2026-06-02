@@ -67,9 +67,9 @@ class NoticeFormTest < ActionDispatch::IntegrationTest
     }
     assert_response :success
 
-    # subject_url (Art. 16(2)(b)) prefilled into an EDITABLE url field — no readonly.
-    assert_select "input[name=?]", "notice[subject_url]" do |els|
-      assert_equal "https://example.test/p/123", els.first["value"]
+    # subject_urls (Art. 16(2)(b)) prefilled into an EDITABLE text area — no readonly.
+    assert_select "textarea[name=?]", "notice[subject_urls]" do |els|
+      assert_equal "https://example.test/p/123", els.first.text
       assert_nil els.first["readonly"], "the reported-content URL must stay editable"
     end
     # content_type prefilled as the selected option.
@@ -94,9 +94,9 @@ class NoticeFormTest < ActionDispatch::IntegrationTest
     get NEW
     assert_response :success
     assert_select "form"
-    # The URL field renders, with no prefilled value (Rails omits a nil value attr).
-    assert_select "input[name=?]", "notice[subject_url]" do |els|
-      assert els.first["value"].to_s.empty?, "subject_url should be blank with no query string"
+    # The URL field renders, with no prefilled value.
+    assert_select "textarea[name=?]", "notice[subject_urls]" do |els|
+      assert els.first.text.empty?, "subject_urls should be blank with no query string"
     end
   end
 
@@ -117,7 +117,7 @@ class NoticeFormTest < ActionDispatch::IntegrationTest
       end
 
       # The reported-content fields are STILL editable even when identity is locked.
-      assert_select "input[name=?]", "notice[subject_url]" do |els|
+      assert_select "textarea[name=?]", "notice[subject_urls]" do |els|
         assert_nil els.first["readonly"], "the reported-content URL stays editable"
       end
     end
@@ -171,8 +171,26 @@ class NoticeFormTest < ActionDispatch::IntegrationTest
     receipts = ModerateTestRecorder.notifications_named(:notice_received)
     assert_equal 1, receipts.size
     assert_equal "notifier@example.com", receipts.first.recipients.first.email
+    assert_empty ModerateTestRecorder.notifications_named(:report_received)
     # And the shared intake path audited it.
     assert_equal 1, ModerateTestRecorder.audits_named(:report_received).size
+  end
+
+  test "POST create accepts newline-separated exact URLs" do
+    params = well_formed_notice_params.except(:subject_url).merge(
+      subject_urls: "https://example.test/illegal\nhttps://example.test/also-illegal"
+    )
+
+    assert_difference -> { Moderate::Report.count }, 1 do
+      post CREATE, params: { notice: params }
+    end
+
+    report = Moderate::Report.last
+    assert_equal "https://example.test/illegal", report.subject_url
+    assert_equal [
+      "https://example.test/illegal",
+      "https://example.test/also-illegal"
+    ], report.subject_urls
   end
 
   test "POST create with an invalid notice re-renders the form 422 and creates nothing" do

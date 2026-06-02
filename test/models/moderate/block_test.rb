@@ -50,12 +50,33 @@ module Moderate
 
     test "block! fires the on_block side-effect hook once on creation" do
       captured = []
-      Moderate.config.on_block = ->(blocker:, blocked:) { captured << [blocker, blocked] }
+      Moderate.config.on_block = ->(blocker:, blocked:, at:) { captured << [blocker, blocked, at] }
 
       Moderate::Block.block!(blocker: @blocker, blocked: @blocked)
       Moderate::Block.block!(blocker: @blocker, blocked: @blocked)
 
-      assert_equal [[@blocker, @blocked]], captured
+      assert_equal 1, captured.length
+      assert_equal @blocker, captured.first[0]
+      assert_equal @blocked, captured.first[1]
+      assert_instance_of ActiveSupport::TimeWithZone, captured.first[2]
+    end
+
+    test "block! merges hash-like on_block metadata into the audit payload" do
+      audits = []
+      Moderate.config.audit = ->(event) { audits << event }
+      Moderate.config.on_block = ->(blocker:, blocked:, at:) {
+        { side_effect: "cancelled_invites", blocker_id_from_hook: blocker.id, blocked_id_from_hook: blocked.id, at_from_hook: at.iso8601 }
+      }
+
+      Moderate::Block.block!(blocker: @blocker, blocked: @blocked)
+
+      audit = audits.find { |event| event.name == :user_blocked }
+      assert_equal "cancelled_invites", audit.payload[:side_effect]
+      assert_equal @blocker.id, audit.payload[:blocker_id]
+      assert_equal @blocked.id, audit.payload[:blocked_id]
+      assert_equal @blocker.id, audit.payload[:blocker_id_from_hook]
+      assert_equal @blocked.id, audit.payload[:blocked_id_from_hook]
+      assert audit.payload[:at_from_hook].present?
     end
 
     test "unblock! removes the edge and returns true; missing edge returns false" do

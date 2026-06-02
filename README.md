@@ -314,7 +314,7 @@ Moderate.configure do |config|
   end
 
   # Optional side effects when a block happens (e.g. tear down a pending invite):
-  config.on_block = ->(blocker:, blocked:) { CancelPendingInvites.call(blocker, blocked) }
+  config.on_block = ->(blocker:, blocked:, at:) { CancelPendingInvites.call(blocker, blocked, at: at) }
 end
 ```
 
@@ -357,7 +357,7 @@ Moderate.configure do |config|
 
   config.audit       = ->(event) { ... }     # optional; no-op by default
   config.notify      = ->(event) { ... }     # optional; no-op by default
-  config.on_block    = ->(blocker:, blocked:) { ... }   # optional
+  config.on_block    = ->(blocker:, blocked:, at:) { ... }   # optional
   config.ban_handler = ->(user:, by:, reason:) { user.suspend! }   # how a "ban" is applied in your app
 
   config.filter "Message", :body, with: :wordlist, mode: :flag

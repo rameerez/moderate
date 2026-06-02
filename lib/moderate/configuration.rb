@@ -112,7 +112,7 @@ module Moderate
       #   on_block/ban_handler take keyword args
       @audit = ->(_event) {}
       @notify = ->(_event) {}
-      @on_block = ->(blocker:, blocked:) {}
+      @on_block = ->(blocker:, blocked:, at:) {}
       @ban_handler = ->(user:, by:, reason:) {}
 
       # Misc. nil locale ⇒ follow I18n.default_locale at use time.
@@ -170,7 +170,9 @@ module Moderate
     #   config.register_adapter(:openai, OpenAIModerator.new)
     def register_adapter(name, adapter)
       key = normalize_name(name)
-      raise ArgumentError, "adapter for #{key.inspect} must respond to #classify" unless adapter.respond_to?(:classify)
+      unless adapter.is_a?(String) || adapter.is_a?(Class) || adapter.respond_to?(:classify)
+        raise ArgumentError, "adapter for #{key.inspect} must respond to #classify"
+      end
 
       @adapters[key] = adapter
     end
@@ -275,14 +277,19 @@ module Moderate
         "can't do — use mode: :flag (allow the write, classify in a job, file a Moderate::Flag)."
     end
 
-    # Turn an adapters-registry value into an adapter object. Strings/Classes
-    # (the built-ins) are constantized; an object is returned as-is.
+    # Turn an adapters-registry value into an adapter object. Strings/Classes are
+    # constantized and used directly when they expose class-level `classify`
+    # (Moderate::Filters::Base style), otherwise instantiated so a host can
+    # register a plain class whose instances implement `#classify`.
     def resolve_adapter(ref)
-      case ref
+      adapter = case ref
       when String then ref.constantize
       when Class then ref
-      else ref
+      else
+        return ref
       end
+
+      adapter.respond_to?(:classify) ? adapter : adapter.new
     end
 
     # Like resolve_adapter but never raises (a built-in whose file isn't loaded yet

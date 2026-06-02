@@ -129,7 +129,7 @@ Moderate.configure do |config|
   # Run extra teardown when a block happens (cancel a pending invite, leave a
   # shared room, drop a follow…). No-op by default. Signature uses keyword args.
   #
-  # config.on_block = ->(blocker:, blocked:) { CancelPendingInvites.call(blocker, blocked) }
+  # config.on_block = ->(blocker:, blocked:, at:) { CancelPendingInvites.call(blocker, blocked, at: at) }
 
   # ==========================================================================
   # BAN HANDLER — how a "ban" is actually applied in YOUR app

@@ -76,6 +76,7 @@ module Moderate
     # through, so this stays forward-compatible with the Report model's attributes.
     def report!(reportable, category:, details: nil, **attributes)
       attributes[:message] = details if details && !attributes.key?(:message)
+      reported_field = attributes.delete(:reported_field) || attributes.delete(:field)
 
       # An in-app reporter attests to good faith IMPLICITLY by choosing to report —
       # there's no separate checkbox in the in-app flow (that's the public DSA notice
@@ -85,13 +86,23 @@ module Moderate
       # override by passing `good_faith_confirmed:` in `attributes`.)
       attributes[:good_faith_confirmed] = true unless attributes.key?(:good_faith_confirmed)
 
-      Moderate::Report.create!(
+      report = Moderate::Report.new(
         reporter: self,
         reportable: reportable,
         category: category.to_s,
         intake_kind: "community",
         **attributes
       )
+
+      intake = Moderate::Services::IntakeReport.new(
+        report: report,
+        reporter: self,
+        reportable: reportable,
+        reported_field: reported_field
+      )
+      return report if intake.save
+
+      raise ActiveRecord::RecordInvalid, report
     end
 
     # --- Blocking -------------------------------------------------------------

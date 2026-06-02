@@ -83,7 +83,9 @@ module Moderate
           # Side-effect hook FIRST, inside the transaction: if the host's on_block
           # raises, the whole block rolls back rather than leaving a half-applied
           # state (edge saved but invite not torn down).
-          Moderate.run_on_block(blocker: blocker, blocked: blocked)
+          on_block_payload = audit_payload_from_on_block(
+            Moderate.run_on_block(blocker: blocker, blocked: blocked, at: block.created_at)
+          )
 
           Moderate.audit(
             name: :user_blocked,
@@ -93,7 +95,7 @@ module Moderate
               blocker_id: blocker.id,
               blocked_id: blocked.id,
               summary: "user #{blocker.id} blocked user #{blocked.id}"
-            }
+            }.merge(on_block_payload)
           )
         end
       end
@@ -178,6 +180,16 @@ module Moderate
     end
 
     private
+
+    def self.audit_payload_from_on_block(result)
+      return {} if result.nil?
+      return result if result.is_a?(Hash)
+      return result.to_h if result.respond_to?(:to_h)
+
+      {}
+    rescue ArgumentError, TypeError
+      {}
+    end
 
     # The DB has a CHECK constraint (`moderate_blocks_no_self_block`) too; this gives
     # the friendly validation error before the row ever reaches the database.

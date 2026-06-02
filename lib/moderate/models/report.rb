@@ -209,18 +209,17 @@ module Moderate
 
     # --- Signed-GlobalID locators --------------------------------------------
 
-    # Resolve a signed token back into the reported content. `only:` is scoped to
-    # the auto-discovered reportable classes (NOT every model), so a forged/replayed
-    # token can only ever resolve to a class the host explicitly made reportable —
-    # a deliberate allow-list against object-substitution attacks.
+    # Resolve a signed token back into the reported content. Prefer the
+    # auto-discovered registry allow-list when it is already populated, then fall
+    # back to the reportable contract after verifying the SignedGlobalID purpose.
+    # That second path matters in lazy-loaded Rails apps: resolving the token may be
+    # the first thing that constantizes the reportable model, so the registry can be
+    # stale until after GlobalID loads the class.
     def self.locate_signed_reportable(token)
       return if token.blank?
 
-      GlobalID::Locator.locate_signed(
-        token,
-        for: SIGNED_GLOBAL_ID_PURPOSE,
-        only: Moderate.reportable_classes
-      )
+      locate_signed_reportable_from_registry(token) ||
+        locate_signed_reportable_by_contract(token)
     end
 
     # Resolve a signed token back into the Report it was minted for (used by the
@@ -286,9 +285,9 @@ module Moderate
     # The snapshotted text of the reported field, asked of the reportable. Returns
     # nil when the reportable doesn't expose snapshot text (or there's no record).
     def reported_content_text
-      return unless reportable.respond_to?(:moderation_snapshot_text)
+      return unless reportable.respond_to?(:moderation_snapshot)
 
-      reportable.moderation_snapshot_text(reported_field)
+      reportable.moderation_snapshot(reported_field)
     end
 
     # --- Signed GIDs for emailed links ---------------------------------------
@@ -353,6 +352,24 @@ module Moderate
     end
 
     private
+
+    def self.locate_signed_reportable_from_registry(token)
+      classes = Moderate.reportable_classes
+      return if classes.empty?
+
+      record = GlobalID::Locator.locate_signed(token, for: SIGNED_GLOBAL_ID_PURPOSE, only: classes)
+      reportable_contract?(record) ? record : nil
+    end
+
+    def self.locate_signed_reportable_by_contract(token)
+      record = GlobalID::Locator.locate_signed(token, for: SIGNED_GLOBAL_ID_PURPOSE)
+      reportable_contract?(record) ? record : nil
+    end
+
+    def self.reportable_contract?(record)
+      record.respond_to?(:reportable_field_allowed?) &&
+        record.respond_to?(:reported_owner)
+    end
 
     # Coalesce the JSON columns to their empty shape so a NULL never reaches a
     # NOT-NULL JSON column (the MySQL-no-JSON-default case — see the before_save

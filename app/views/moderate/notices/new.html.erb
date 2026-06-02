@@ -102,6 +102,16 @@
           default: "Use this form to notify us of content you believe is illegal under EU law (Digital Services Act, Article 16). Anyone can submit a notice — you do not need an account. We confirm receipt by email.") %>
   </p>
 
+  <% if flash[:alert].present? %>
+    <div class="moderate-errors" role="alert">
+      <%= flash[:alert] %>
+    </div>
+  <% elsif flash[:notice].present? %>
+    <div class="moderate-errors" role="status">
+      <%= flash[:notice] %>
+    </div>
+  <% end %>
+
   <%# Surface validation errors at the top so the submitter sees why a save failed. %>
   <% if @report.respond_to?(:errors) && @report.errors.any? %>
     <div class="moderate-errors" role="alert">
@@ -125,12 +135,13 @@
             required: true %>
     </div>
 
-    <%# Exact URL — "the exact electronic location of that information", Art. 16(2)(b).
+    <%# Exact URLs — "the exact electronic location of that information", Art. 16(2)(b).
         Prefilled from ?content_url=… (X-style deep link) but EDITABLE: the notifier
-        may correct the link to the specific content they are reporting. %>
+        may correct the link to the specific content they are reporting. One URL per
+        line; the model normalizes into subject_urls and keeps subject_url as first. %>
     <div class="moderate-field">
-      <%= form.label :subject_url, t("moderate.notices.fields.content_url", default: "Exact URL of the content") %>
-      <%= form.url_field :subject_url, required: true, placeholder: "https://" %>
+      <%= form.label :subject_urls, t("moderate.notices.fields.content_url", default: "Exact URL of the content") %>
+      <%= text_area_tag "notice[subject_urls]", @report.subject_url_list.join("\n"), rows: 3, required: true, placeholder: "https://" %>
       <span class="moderate-hint">
         <%= t("moderate.notices.hints.content_url", default: "The exact link to the specific content you are reporting.") %>
       </span>

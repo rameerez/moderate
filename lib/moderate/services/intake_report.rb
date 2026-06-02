@@ -76,6 +76,7 @@ module Moderate
       # `acknowledged_at`, set above), but the recipient list is still resolved so
       # the host's single notify hook can email AND ping admins from one event.
       def deliver_receipt
+        return if report.skip_received_notice
         return if recipient_email.blank?
 
         Moderate.notify(

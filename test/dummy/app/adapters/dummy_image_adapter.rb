@@ -17,8 +17,8 @@
 #   * It flags ANY present image for human review (it ignores the bytes — this is a
 #     deterministic test double, not a real classifier), producing one Moderate::Flag
 #     on the (record, field) after commit.
-#   * `source` is "image_filter" — one of the four values the install migration's
-#     moderate_flags_source_check constraint allows for a flag from an image backend.
+#   * It leaves `source` unset so the gem stamps the registered adapter name
+#     ("image") onto the persisted Moderate::Flag.
 #
 # Host-agnostic on purpose: no domain concepts, just "an image was uploaded, queue it
 # for review".
@@ -29,7 +29,7 @@ class DummyImageAdapter
   # we allow it; any present attachment is flagged for human review with score 1.0
   # (a "needs a human" signal, not a probability).
   def classify(value)
-    return Moderate::Result.allowed(source: "image_filter") if value.blank?
+    return Moderate::Result.allowed if value.blank?
 
     label = Moderate::Label.new(
       category: :sexual, # the conservative "needs review" bucket for an unclassified image
@@ -38,7 +38,7 @@ class DummyImageAdapter
       flagged: true,
       input: :image
     )
-    Moderate::Result.new(allowed: false, labels: [label], source: "image_filter")
+    Moderate::Result.new(allowed: false, labels: [label])
   end
 
   # Async: returning false is what makes the spine forbid :block mode and run this

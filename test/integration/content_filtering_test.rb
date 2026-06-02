@@ -247,8 +247,29 @@ class ContentFilteringTest < ActiveSupport::TestCase
 
     flag = Moderate::Flag.where(field: "image").last
     assert_not_nil flag, "an image flag should be filed for the :image field"
-    assert_equal "image_filter", flag.source
+    assert_equal "image", flag.source
     assert_equal comment, flag.flaggable
+  end
+
+  test "a registered adapter can be a string class name and records the adapter name as the flag source" do
+    Moderate.configure do |config|
+      rewire_hooks(config)
+      config.register_adapter :string_image, "DummyImageAdapter"
+      config.filter "Comment", :image, with: :string_image, mode: :flag
+    end
+
+    comment = Comment.new(user: @user, body: CLEAN)
+    comment.image.attach(
+      io: StringIO.new("not really an image"),
+      filename: "avatar.png",
+      content_type: "image/png"
+    )
+
+    assert_difference -> { Moderate::Flag.count }, 1 do
+      assert comment.save
+    end
+
+    assert_equal "string_image", Moderate::Flag.where(field: "image").last.source
   end
 
   private
@@ -259,7 +280,7 @@ class ContentFilteringTest < ActiveSupport::TestCase
   def rewire_hooks(config = Moderate.config)
     config.audit = ->(event) { ModerateTestRecorder.audit(event) }
     config.notify = ->(event) { ModerateTestRecorder.notify(event) }
-    config.on_block = ->(blocker:, blocked:) { ModerateTestRecorder.on_block(blocker: blocker, blocked: blocked) }
+    config.on_block = ->(blocker:, blocked:, at:) { ModerateTestRecorder.on_block(blocker: blocker, blocked: blocked, at: at) }
     config.ban_handler = ->(user:, by:, reason:) { ModerateTestRecorder.ban_handler(user: user, by: by, reason: reason) }
     config
   end

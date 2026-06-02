@@ -20,11 +20,10 @@ module Moderate
 
     STATUSES = %w[pending actioned dismissed].freeze
 
-    # Where a flag came from. Validated by the `validates :source, inclusion` below —
-    # NOT a DB constraint, so the gem can grow the list without a host migration.
-    # `external_classifier` covers ANY host-registered remote adapter (OpenAI,
-    # Rekognition, Perspective, a self-hosted model) — the gem never hard-codes a
-    # specific provider here.
+    # Built-in/generic source names. Host-registered adapter names are also valid
+    # sources (see `.sources` below) because `Moderate.classify` stamps the adapter
+    # name onto the Result when the adapter does not set one explicitly. This is why
+    # a host can register `:openai` or `:image` and see that exact name in the queue.
     SOURCES = %w[text_filter image_filter external_classifier manual].freeze
 
     # What the flag WOULD do. `:flag` allowed the write and queued it; `:block`
@@ -63,7 +62,7 @@ module Moderate
 
     validates :field, presence: true
     validates :status, inclusion: { in: STATUSES }
-    validates :source, inclusion: { in: SOURCES }
+    validates :source, inclusion: { in: ->(_flag) { sources } }
     validates :mode, inclusion: { in: MODES }
     validates :resolution_note, presence: true, if: :closed?
 
@@ -84,6 +83,10 @@ module Moderate
         scores: scores.to_h,
         context: context.to_h
       )
+    end
+
+    def self.sources
+      (SOURCES + Moderate.config.adapters.keys.map(&:to_s)).uniq
     end
 
     def pending?

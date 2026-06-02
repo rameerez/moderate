@@ -61,7 +61,7 @@ Moderate.configure do |config|
   config.notify = ->(event) { ModerateTestRecorder.notify(event) }
 
   # ON BLOCK — keyword-arg side-effect hook, captured for assertions.
-  config.on_block = ->(blocker:, blocked:) { ModerateTestRecorder.on_block(blocker: blocker, blocked: blocked) }
+  config.on_block = ->(blocker:, blocked:, at:) { ModerateTestRecorder.on_block(blocker: blocker, blocked: blocked, at: at) }
 
   # BAN HANDLER — keyword-arg hook deciding what "banned" means. The recorder just
   # captures the request; a test can assert the gem asked for a ban without the

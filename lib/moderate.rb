@@ -197,11 +197,12 @@ module Moderate
     end
 
     # Run the optional `on_block` side-effect hook (cancel a pending invite, leave a
-    # shared room, …). Keyword-arg signature per docs/configuration.md. Kept as a
-    # facade method so Moderate::Block has one call site and doesn't reach into
-    # config internals. No-op by default.
-    def run_on_block(blocker:, blocked:)
-      config.on_block.call(blocker: blocker, blocked: blocked)
+    # shared room, …). Keyword-arg signature per docs/configuration.md. `at:` is the
+    # block row's creation time so hosts can apply time-aware teardown without
+    # reaching back into the database. Kept as a facade method so Moderate::Block has
+    # one call site and doesn't reach into config internals. No-op by default.
+    def run_on_block(blocker:, blocked:, at:)
+      config.on_block.call(blocker: blocker, blocked: blocked, at: at)
     end
 
     # Apply a ban via the host's `ban_handler` (suspend!, soft-delete, flip a flag,
@@ -209,7 +210,16 @@ module Moderate
     # default — the surrounding decision still audits and notifies even if no ban is
     # wired, so the action is never silently dropped (docs/configuration.md).
     def apply_ban(user:, by:, reason:)
-      config.ban_handler.call(user: user, by: by, reason: reason)
+      result = config.ban_handler.call(user: user, by: by, reason: reason)
+      payload = {
+        user_id: user&.id,
+        reason: reason,
+        summary: "user #{user&.id || '(unknown)'} banned"
+      }.compact
+
+      audit(:user_banned, subject: user, actor: by, recipients: [user].compact, payload: payload)
+      notify(:user_banned, subject: user, actor: by, recipients: [user].compact, payload: payload)
+      result
     end
 
     # --- Blocking SSOT --------------------------------------------------------

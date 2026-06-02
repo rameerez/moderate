@@ -183,6 +183,7 @@ module Moderate
         :legal_country_code,           # ISO-3166 EU/EEA selector — jurisdiction/routing
         :content_type,                 # host-agnostic CONTENT_TYPES bucket for the snapshot
         :subject_url,                  # "the exact electronic location" — Art. 16(2)(b)
+        :subject_urls,                 # newline-separated exact locations; normalized by Report
         :message,                      # "sufficiently substantiated explanation" — Art. 16(2)(a)
         :reported_account_identifier,  # optional host-side handle the notice is about
         :notifier_name,                # Art. 16(2)(c)

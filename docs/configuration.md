@@ -38,7 +38,7 @@ Moderate.configure do |config|
   # --- Hooks (all no-op by default) ----------------------------------------
   config.audit       = ->(event) { … }                    # record important actions
   config.notify      = ->(event) { … }                    # fan out emails / alerts / push
-  config.on_block    = ->(blocker:, blocked:) { … }       # side effects when a block happens
+  config.on_block    = ->(blocker:, blocked:, at:) { … }  # side effects when a block happens
   config.ban_handler = ->(user:, by:, reason:) { … }      # how a "ban" is applied in YOUR app
 
   # --- Misc -----------------------------------------------------------------
@@ -250,10 +250,10 @@ content_flagged   content_removed
 ### `on_block` — side effects when a block happens
 
 ```ruby
-config.on_block = ->(blocker:, blocked:) { CancelPendingInvites.call(blocker, blocked) }
+config.on_block = ->(blocker:, blocked:, at:) { CancelPendingInvites.call(blocker, blocked, at: at) }
 ```
 
-Optional teardown when one user blocks another — cancel a pending invite, leave a shared room, drop a follow. Signature is **keyword args** (`blocker:`, `blocked:`). No-op by default. (A `user_blocked` event also fires through `notify`; use `on_block` for *domain side effects* and `notify` for *messaging*.)
+Optional teardown when one user blocks another — cancel a pending invite, leave a shared room, drop a follow. Signature is **keyword args** (`blocker:`, `blocked:`, `at:`), where `at` is the created block row's timestamp. No-op by default. (A `user_blocked` event also fires through `notify`; use `on_block` for *domain side effects* and `notify` for *messaging*.)
 
 ### `ban_handler` — what "banned" means in your app
 

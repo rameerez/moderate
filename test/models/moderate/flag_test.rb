@@ -130,7 +130,7 @@ module Moderate
       end
 
       flag = Moderate::Flag.pending.where(flaggable: comment, field: "image").last
-      assert_equal "image_filter", flag.source
+      assert_equal "image", flag.source
       assert_equal comment.user, flag.owner # owner inferred from reported_owner
     end
 

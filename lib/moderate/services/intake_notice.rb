@@ -44,6 +44,7 @@ module Moderate
           intake_kind: "dsa",
           category: @report.category.presence || "illegal_content"
         )
+        @report.skip_received_notice = true
         @reporter = reporter
       end
 
