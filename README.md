@@ -30,13 +30,23 @@ current_user.block!(@other_user)
 current_user.blocks?(@other_user)   # => true
 ```
 
-Filter content before it's ever saved with just one line:
+Filter content before it's posted — the zero-setup wordlist, or a real classifier like OpenAI moderation:
+
+```ruby
+# config/initializers/moderate.rb — wire up OpenAI moderation once (text AND images)
+config.register_adapter :openai, OpenAIModerationAdapter.new
+```
 
 ```ruby
 class Message < ApplicationRecord
-  moderates :body            # blocks profanity/slurs/threats by default; or :flag for review
+  # Run every DM through OpenAI, but never block mid-conversation: `:flag` lets the
+  # message send, then classifies it in a background job and drops anything harmful
+  # into the moderation queue for review.
+  moderates :body, mode: :flag, with: :openai
 end
 ```
+
+No API keys to start? Drop the `with:` and you get the built-in, zero-dependency `:wordlist` (a fast, multilingual profanity block) — same one-line API.
 
 And give admins a real queue to act on:
 
@@ -79,12 +89,12 @@ end
 
 ```ruby
 class User < ApplicationRecord
-  has_reporting_and_blocking # can report, block, be blocked, be banned
+  has_reporting_and_blocking      # can report, block, be blocked, be banned
 end
 
-class Message < ApplicationRecord
-  has_reportable_content   # can be reported
-  moderates :body          # …and filtered before it's saved
+class Post < ApplicationRecord
+  has_reportable_content          # users can report it
+  moderates :body, mode: :block   # …and profanity is rejected on save — zero-setup built-in wordlist
 end
 ```
 
