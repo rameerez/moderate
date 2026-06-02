@@ -101,6 +101,17 @@ end
 > [!IMPORTANT]
 > `:flag` never lives in a validator. Validators must be side-effect-free, and a flag created inside a rolled-back transaction would silently vanish — so `moderate` creates the flag **after commit**, correctly, for you. This is the whole reason `:flag` is a `moderates` mode and not something you can hand-roll with `validates`.
 
+Reportable records expose the review state directly:
+
+```ruby
+message.flagged?        # any pending flag?
+message.flagged?(:body) # pending flag for one field?
+```
+
+Use those predicates to render host-specific "under review" affordances if that is right for your product. The gem intentionally does not ship a visible banner/component because moderation copy, styling, and disclosure rules belong to the host app.
+
+Hotwire Native / Turbo Native apps also need host path-configuration rules for the report surfaces they mount. Cover both the form route (`/reports/new`, or your equivalent) and the form action (`/reports`) so validation errors stay in the intended native context, plus the engine's public legal routes and their form actions if you mount them (`/legal/report/notices/new`, `/legal/report/notices`, `/legal/report/appeals/new`, `/legal/report/appeals`, transparency, etc.). Android rules must include the destination `uri` your app binary has registered.
+
 ### `filter_adapter`
 
 ```ruby

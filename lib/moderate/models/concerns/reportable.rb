@@ -41,6 +41,15 @@ module Moderate
     extend ActiveSupport::Concern
 
     included do
+      # Reports filed against THIS record. Kept on the public `reports` reader
+      # because the README promises `listing.reports`, and because a reportable
+      # model should read naturally in host code. Reports are legal/evidentiary,
+      # so hard-deleting the content detaches rather than destroys them.
+      has_many :reports,
+        as: :reportable,
+        class_name: "Moderate::Report",
+        dependent: :nullify
+
       # The whitelist of reportable field names, stored as frozen Strings. A
       # `class_attribute` (not a plain constant) so it inherits down an STI tree
       # AND can be overridden per subclass without mutating the parent's list.
@@ -157,6 +166,42 @@ module Moderate
       true
     end
 
+    # Open reports filed against this record, optionally narrowed to one field.
+    # Hosts can use this when they need the actual relation (queue previews,
+    # counters, "already reported" affordances) instead of just a boolean.
+    def open_reports(field = nil)
+      moderation_scope_by_field(reports.open, :reported_field, field)
+    end
+
+    # Has this record received any open reports? This is the public predicate
+    # documented beside `reports` in the README.
+    def reported?(field = nil)
+      open_reports(field).exists?
+    end
+
+    # All auto-filter/manual flags against this record, optionally narrowed to a
+    # field. We keep this as a method instead of a `has_many :flags` association:
+    # `flags` is a common host-model word, while `flagged?` is the public DX.
+    def moderation_flags(field = nil)
+      moderation_scope_by_field(
+        Moderate::Flag.where(flaggable: self),
+        :field,
+        field
+      )
+    end
+
+    # Pending flags are the "allowed through, awaiting review" state a host may
+    # want to surface near user-generated content.
+    def pending_moderation_flags(field = nil)
+      moderation_flags(field).pending
+    end
+
+    # Has this record been flagged and not yet resolved/dismissed? Optionally
+    # pass a field (`listing.flagged?(:description)`) for field-level UI.
+    def flagged?(field = nil)
+      pending_moderation_flags(field).exists?
+    end
+
     # --- Route descriptor hooks -----------------------------------------------
     #
     # The gem is UI-agnostic and doesn't know the host's routes, so a reportable
@@ -212,6 +257,13 @@ module Moderate
       end
     rescue NotImplementedError
       false
+    end
+
+    def moderation_scope_by_field(scope, column, field)
+      field_s = field.to_s.squish
+      return scope if field_s.blank?
+
+      scope.where(column => field_s)
     end
   end
 end
