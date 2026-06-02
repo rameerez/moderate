@@ -141,7 +141,7 @@
         line; the model normalizes into subject_urls and keeps subject_url as first. %>
     <div class="moderate-field">
       <%= form.label :subject_urls, t("moderate.notices.fields.content_url", default: "Exact URL of the content") %>
-      <%= text_area_tag "notice[subject_urls]", @report.subject_url_list.join("\n"), rows: 3, required: true, placeholder: "https://" %>
+      <textarea name="notice[subject_urls]" id="notice_subject_urls" rows="3" required="required" placeholder="https://"><%= @report.subject_url_list.join("\n") %></textarea>
       <span class="moderate-hint">
         <%= t("moderate.notices.hints.content_url", default: "The exact link to the specific content you are reporting.") %>
       </span>

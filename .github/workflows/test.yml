@@ -44,7 +44,14 @@ jobs:
       - name: Prepare database and run tests
         # Exercise the real migration path in SQLite too so dummy/test schema
         # drift is caught in the default matrix, not only adapter-specific jobs.
-        run: bundle exec rake db:migrate:reset test
+        #
+        # Use `db:create db:migrate` rather than `db:migrate:reset`: the reset macro
+        # runs db:drop + db:create + db:migrate IN ONE PROCESS, and on SQLite the
+        # db:migrate step then writes through a stale connection to the just-dropped
+        # file, so nothing persists and the suite boots into "pending migrations"
+        # (PG/MySQL survive it because the DB server reconnects). CI runners start
+        # fresh, so no drop is needed.
+        run: bundle exec rake db:create db:migrate test
 
       - name: Upload test results
         if: failure()
