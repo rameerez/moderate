@@ -110,7 +110,7 @@ message.flagged?(:body) # pending flag for one field?
 
 Use those predicates to render host-specific "under review" affordances if that is right for your product. The gem intentionally does not ship a visible banner/component because moderation copy, styling, and disclosure rules belong to the host app.
 
-Hotwire Native / Turbo Native apps also need host path-configuration rules for the report surfaces they mount. Cover both the form route (`/reports/new`, or your equivalent) and the form action (`/reports`) so validation errors stay in the intended native context, plus the engine's public legal routes and their form actions if you mount them (`/legal/report/notices/new`, `/legal/report/notices`, `/legal/report/appeals/new`, `/legal/report/appeals`, transparency, etc.). Android rules must include the destination `uri` your app binary has registered.
+Hotwire Native / Turbo Native apps also need host path-configuration rules for the report surfaces they mount. Cover both the form route (`/reports/new`, or your equivalent) and the form action (`/reports`) so validation errors stay in the intended native context, plus the engine's public legal routes and their form actions if you mount them (`<mount>/notices/new`, `<mount>/notices`, `<mount>/appeals/new`, `<mount>/appeals`, `<mount>/transparency`, where `<mount>` is your host-chosen `Moderate::Engine` mount point). Android rules must include the destination `uri` your app binary has registered.
 
 ### `filter_adapter`
 

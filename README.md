@@ -177,7 +177,7 @@ You get:
 ```ruby
 listing.reports          # reports filed against this record
 listing.reported?        # any open report?
-listing.flagged?         # any pending system (auto-filter) flag?
+listing.flagged?         # any pending flag (auto-filter OR manual)?
 listing.flagged?(:description) # field-level pending flag?
 ```
 
@@ -189,7 +189,7 @@ Drop a report link into any view with the helper (it renders nothing if the view
 
 Because `moderate` is UI-agnostic, it does not render a built-in "under review" badge. Use `flagged?` / `flagged?(:field)` to render copy that fits your product when `:flag` mode lets content through but queues it for review.
 
-If your app runs inside Hotwire Native / Turbo Native, remember that native path configuration is host-owned. Add rules for the in-app report routes you mount (for example `/reports/new` **and** the form action `/reports`, so validation errors stay in the same modal stack) and for the engine's public legal routes **and their form actions** such as `/legal/report/notices/new`, `/legal/report/notices`, `/legal/report/appeals/new`, and `/legal/report/appeals`. `moderate` can provide the Rails routes; your native shell still decides whether they push, present modally, use a sheet, and which Android `uri` maps to the destination.
+If your app runs inside Hotwire Native / Turbo Native, remember that native path configuration is host-owned. Add rules for the in-app report routes you mount (for example `/reports/new` **and** the form action `/reports`, so validation errors stay in the same modal stack) and for the engine's public legal routes **and their form actions** such as `<mount>/notices/new`, `<mount>/notices`, `<mount>/appeals/new`, `<mount>/appeals`, and `<mount>/transparency` — where `<mount>` is wherever you mounted `Moderate::Engine` in your routes (it is host-chosen, not fixed). `moderate` can provide the Rails routes; your native shell still decides whether they push, present modally, use a sheet, and which Android `uri` maps to the destination.
 
 Adding a new reportable type is one `reportable` line — the intake, queue, snapshot, and admin code never change.
 

@@ -8,14 +8,15 @@ Gem::Specification.new do |spec|
   spec.authors = ["rameerez"]
   spec.email = ["rubygems@rameerez.com"]
 
-  spec.summary = "Trust & Safety for your Rails app: report, block, filter, and an EU DSA / App Store / Play compliant moderation queue"
-  spec.description = "moderate is a complete, opinionated Trust & Safety layer for Rails apps with user-generated content. Let users report abusive content and other users, block each other (bidirectional, enforced everywhere), and filter objectionable text and images before they're posted (off/block/flag, with pluggable wordlist/image/LLM backends). Run a real moderation queue with audited resolve/dismiss/remove-content/ban actions, internal appeals, and statement-of-reasons notifications. Ships aligned with the EU Digital Services Act (notice-and-action, statement of reasons, appeals, transparency) and the Apple App Store and Google Play user-generated-content review guidelines. UI-agnostic primitives (models, services, helpers, controller concerns) that plug into madmin, goodmail, telegrama, and noticed."
+  spec.summary = "Trust & Safety and content moderation for Rails: report abusive content, block users, filter objectionable text and images, and run an audited moderation queue — with DSA-aligned and App Store / Google Play UGC primitives."
+  spec.description = "moderate is a complete Trust & Safety and content moderation engine for Ruby on Rails apps with user-generated content (UGC) — social apps, marketplaces, dating, communities, forums, comments, reviews, and chat. It bundles the four things every UGC app needs behind one data model and one set of hooks: abuse reporting (report posts, comments, profiles, listings, messages, and other users), bidirectional user blocking behind a single enforced source of truth, pre-publication content filtering for profanity, slurs, hate, spam, harassment, and objectionable or NSFW text and images in off/block/flag modes, and an audited moderation queue with locked resolve/dismiss/remove-content/ban decisions, internal appeals, and statement-of-reasons notifications. Filtering uses a tiny classify(value) => Result adapter contract: a fast, offline, multilingual wordlist/profanity/bad-word blocklist ships as the zero-dependency default, and you bring your own classifier (OpenAI omni-moderation, AWS Rekognition image/NSFW detection, Google Perspective, or self-hosted) as an optional reference adapter, never a forced dependency. moderate also ships primitives aligned with the EU Digital Services Act (DSA notice-and-action, statement of reasons, appeals, transparency) and with the Apple App Store (Guideline 1.2) and Google Play user-generated-content review rules that get apps rejected without report/block/filter — the mechanisms, not a compliance certificate. It is a mountable, UI-agnostic Rails engine with no hard dependencies beyond ActiveRecord, ActiveSupport, Railties, and GlobalID, and optionally auto-integrates with madmin, goodmail, telegrama, noticed, and rails_cloudflare_turnstile — a modern, full-stack alternative to single-purpose Rails profanity filters like obscenity and profanity-filter."
   spec.homepage = "https://github.com/rameerez/moderate"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.2.0"
 
   spec.metadata["allowed_push_host"] = "https://rubygems.org"
-  spec.metadata["homepage_uri"] = spec.homepage
+  # NOTE: `homepage_uri` is derived from `spec.homepage` automatically — setting it
+  # here too only triggers a "same URI for multiple keys" warning, so we don't.
   spec.metadata["source_code_uri"] = spec.homepage
   spec.metadata["changelog_uri"] = "#{spec.homepage}/blob/main/CHANGELOG.md"
   spec.metadata["bug_tracker_uri"] = "#{spec.homepage}/issues"
@@ -41,6 +42,6 @@ Gem::Specification.new do |spec|
   # hard dependencies, so `moderate` runs standalone in any Rails app.
   spec.add_dependency "activerecord", ">= 7.1.0", "< 9.0"
   spec.add_dependency "activesupport", ">= 7.1.0", "< 9.0"
-  spec.add_dependency "globalid", ">= 1.0"
+  spec.add_dependency "globalid", "~> 1.0"
   spec.add_dependency "railties", ">= 7.1.0", "< 9.0"
 end

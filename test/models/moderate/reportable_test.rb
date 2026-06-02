@@ -3,6 +3,21 @@
 require "test_helper"
 
 module Moderate
+  class RemovableComment < ::Comment
+    self.table_name = "comments"
+
+    def removable_reported_field?(field)
+      field.to_s == "body" && body.present?
+    end
+
+    def remove_reported_field!(field)
+      return false unless removable_reported_field?(field)
+
+      update!(body: nil)
+      true
+    end
+  end
+
   class ReportableTest < ActiveSupport::TestCase
     setup do
       @reporter = create_user
@@ -11,6 +26,8 @@ module Moderate
     end
 
     test "reports exposes reports filed against the record" do
+      refute_predicate @comment, :reported?
+
       report = Moderate::Report.create!(
         reporter: @reporter,
         reportable: @comment,
@@ -24,6 +41,24 @@ module Moderate
       assert_predicate @comment, :reported?
       assert @comment.reported?(:body)
       refute @comment.reported?(:image)
+    end
+
+    test "reported? works on actor reportables and starts false with no rows" do
+      refute_predicate @author, :reported?
+
+      report = Moderate::Report.create!(
+        reporter: @reporter,
+        reportable: @author,
+        reported_field: "name",
+        category: "impersonation",
+        message: "This profile should be reviewed.",
+        good_faith_confirmed: true
+      )
+
+      assert_includes @author.reports, report
+      assert_predicate @author, :reported?
+      assert @author.reported?(:name)
+      refute @author.reported?(:avatar)
     end
 
     test "reported? only counts open reports" do
@@ -42,6 +77,8 @@ module Moderate
     end
 
     test "flagged? only counts pending flags on the requested field" do
+      refute_predicate @comment, :flagged?
+
       body_flag = flag_comment!("body")
       flag_comment!("image")
 
@@ -54,6 +91,37 @@ module Moderate
 
       refute @comment.flagged?(:body)
       assert @comment.flagged?(:image)
+    end
+
+    test "flagged? works on actor reportables and starts false with no rows" do
+      refute_predicate @author, :flagged?
+
+      Moderate::Flag.flag!(
+        flaggable: @author,
+        field: "name",
+        owner: @author,
+        source: "manual",
+        mode: "flag",
+        excerpt: "name excerpt",
+        categories: [],
+        scores: {},
+        context: {}
+      )
+
+      assert_predicate @author, :flagged?
+      assert @author.flagged?(:name)
+      refute @author.flagged?(:avatar)
+    end
+
+    test "removable_reported_field? defaults false and can be overridden by a reportable" do
+      refute @comment.removable_reported_field?(:body)
+      refute @comment.remove_reported_field!(:body)
+
+      removable = RemovableComment.create!(user: @author, body: "remove me")
+
+      assert removable.removable_reported_field?(:body)
+      assert removable.remove_reported_field!(:body)
+      assert_nil removable.reload.body
     end
 
     test "pending_moderation_flags returns the field-scoped relation" do

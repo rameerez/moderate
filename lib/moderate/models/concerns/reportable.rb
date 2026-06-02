@@ -146,6 +146,19 @@ module Moderate
       false
     end
 
+    # Companion query to `remove_reported_field!`: CAN this specific `field` be
+    # removed on this record? An admin UI uses it to decide whether to OFFER a
+    # "remove content" action at all. Without it, a host that only removes SOME
+    # fields (e.g. an avatar but not a display name) would render a remove button
+    # that always fails when the moderator clicks it on a non-removable field.
+    #
+    # Defaults to false (mirrors the no-op `remove_reported_field!`). Override it
+    # alongside `remove_reported_field!` and have the latter reuse it, so the
+    # "can I?" answer and the "do it" action never drift apart.
+    def removable_reported_field?(_field)
+      false
+    end
+
     # Visibility/authorization gate for the report affordance: should `viewer` be
     # offered a "report this" control for `field`? The default enforces two rules:
     #
