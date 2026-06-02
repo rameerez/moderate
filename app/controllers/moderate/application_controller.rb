@@ -5,15 +5,15 @@ module Moderate
   # form). It is NOT used by the host's in-app report/admin controllers — those are
   # BYOUI and inherit from the host's own ApplicationController.
   #
-  # The parent class is INDIRECTED through `config.notice_parent_controller`
+  # The parent class is INDIRECTED through `config.parent_controller`
   # (default `"::ActionController::Base"`), exactly the `config.parent_controller`
   # trick Devise and `api_keys` use. Why indirect instead of just inheriting from
   # `ActionController::Base`?
   #   - On an API-only app there is no `ActionController::Base` view stack by
   #     default; defaulting to it (and pulling in the view modules below) keeps the
   #     HTML notice form working even there.
-  #   - A host that wants the public form to sit inside its own site chrome points
-  #     `config.notice_parent_controller` at its own base controller and inherits
+  #   - A host that wants the public forms to sit inside its own site chrome points
+  #     `config.parent_controller` at its own base controller and inherits
   #     its layout, locale-setting, current_user, etc. — without us hard-coding any
   #     of that.
   #
@@ -23,7 +23,7 @@ module Moderate
   # this file. The configured value is a STRING constantized lazily, consistent with
   # the rest of the gem's "store class names as strings" rule.
   parent = begin
-    Moderate.config.notice_parent_controller.to_s.constantize
+    Moderate.config.parent_controller.to_s.constantize
   rescue NameError
     # Defensive fallback: if the configured parent isn't loadable (typo, or an
     # API-only app without ActionController::Base required yet), fall back to the

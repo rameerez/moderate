@@ -3,7 +3,7 @@
 require "test_helper"
 
 # Tests for the class-level DSL the engine adds to every ActiveRecord model:
-# `has_moderation`, `reportable`, and `moderates` (Moderate::Macros, extended onto
+# `participates_in_moderation`, `reportable`, and `moderates` (Moderate::Macros, extended onto
 # ActiveRecord::Base via `ActiveSupport.on_load(:active_record)`).
 #
 # Two angles:
@@ -14,15 +14,15 @@ require "test_helper"
 #     assertion sees the policy the macro just created rather than a boot-time one
 #     that reset! wiped.
 class MacrosTest < ActiveSupport::TestCase
-  # --- has_moderation (Actor + Reportable) ----------------------------------
+  # --- participates_in_moderation (Actor + Reportable) ----------------------
 
-  test "has_moderation includes Moderate::Actor (and Reportable, since a user is reportable)" do
+  test "participates_in_moderation includes Moderate::Actor (and Reportable, since a user is reportable)" do
     assert User.include?(Moderate::Actor)
     # Actor pulls in Reportable — Apple 1.2 / Play UGC require reporting USERS too.
     assert User.include?(Moderate::Reportable)
   end
 
-  test "has_moderation gives an actor the report!/block! surface" do
+  test "participates_in_moderation gives an actor the report!/block! surface" do
     actor = create_user
     %i[report! block! unblock! blocks? blocked_by? blocked_with?].each do |method|
       assert_respond_to actor, method, "expected actor to respond to ##{method}"

@@ -26,6 +26,8 @@ Moderate::Engine.routes.draw do
   # on-record proof of receipt is the report's `acknowledged_at`, and the human-
   # facing confirmation goes out through the `notice_received` notify hook).
   resources :notices, only: %i[new create]
+  resources :appeals, only: %i[new create]
+  resource :transparency, only: :show, controller: "transparency_reports"
 
   # The engine root redirects to the form, so mounting the engine makes its mount
   # point itself a sensible landing spot (and a fine place to host the DSA Art.

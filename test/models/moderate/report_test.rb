@@ -51,7 +51,7 @@ module Moderate
     end
 
     test "reportable classes are auto-discovered from the reportable macro" do
-      # User (has_moderation → reportable) and Comment (reportable :body) both
+      # User (participates_in_moderation -> reportable) and Comment (reportable :body) both
       # self-registered on inclusion — no manual registry.
       assert_includes Moderate.reportable_classes, User
       assert_includes Moderate.reportable_classes, Comment

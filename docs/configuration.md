@@ -46,7 +46,7 @@ Moderate.configure do |config|
 end
 ```
 
-The DSA notice-form options (`notice_form_enabled`, `notice_rate_limit`, `notice_turnstile_*`, `notice_parent_controller`, `notice_captcha_verifier`) are documented in their own guide — see [The DSA notice form](dsa-notice-form.md#configuration-reference-notice-form). They're omitted here to keep this focused on the core T&S surface.
+The public legal-form options (`parent_controller`, `notice_form_enabled`, `notice_rate_limit`, `notice_guard`, `appeal_form_enabled`, `appeal_rate_limit`, `appeal_guard`, `appeal_return_path`) are documented in their own guide — see [The DSA notice form](dsa-notice-form.md#configuration-reference-notice-form). They're omitted here to keep this focused on the core T&S surface.
 
 ---
 
@@ -62,7 +62,7 @@ The model that **acts** in your Trust & Safety system: it reports, it blocks, it
 
 ```ruby
 class User < ApplicationRecord
-  has_moderation            # the sugar (preferred) — gains report!/block!/blocks?/blocked_with?…
+  participates_in_moderation # gains report!/block!/blocks?/blocked_with?…
   # include Moderate::Actor # the documented, exactly-equivalent include form
 end
 ```
@@ -283,11 +283,11 @@ Config sets defaults; the model macros consume them. The two halves of the API:
 
 | In the model | In the initializer | What it controls |
 | --- | --- | --- |
-| `has_moderation` (or `include Moderate::Actor`) | `config.user_class` | Who can report/block and be reported/banned |
+| `participates_in_moderation` (or `include Moderate::Actor`) | `config.user_class` | Who can report/block and be reported/banned |
 | `reportable :title, :description` (or `include Moderate::Reportable`) | — (auto-discovered) | Which content is reportable, and which fields |
 | `moderates :body, with:, mode:` | `config.default_filter_mode`, `config.filter_adapter`, `config.filter "…"` | Pre-publication filtering per field |
 
-Both sugar macros have an exactly-equivalent `include` form for include-purists — `has_moderation` ⇔ `include Moderate::Actor`, `reportable` ⇔ `include Moderate::Reportable`. The sugar is preferred because it reads as plain English alongside the rest of your stack (`has_credits`, `has_wallets`, `has_api_keys`), but they compile to the same thing.
+Both sugar macros have an exactly-equivalent `include` form for include-purists — `participates_in_moderation` ⇔ `include Moderate::Actor`, `reportable` ⇔ `include Moderate::Reportable`. They compile to the same thing.
 
 ---
 

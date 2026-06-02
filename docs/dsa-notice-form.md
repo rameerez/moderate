@@ -58,7 +58,7 @@ That third point is the **Devise pattern**, and we copy it on purpose because ev
 | `mount` is implicit via `devise_for` | `mount Moderate::Engine => "/<your-path>"` |
 | Views ship inside the gem | Views ship inside the engine (`app/views/moderate/notices/`) |
 | `rails g devise:views` copies them to your app | `rails g moderate:views` copies them to your app |
-| `config.parent_controller` | `config.notice_parent_controller` |
+| `config.parent_controller` | `config.parent_controller` |
 | Rails view lookup prefers `app/views` over the gem | identical — an ejected view **shadows** the bundled one, zero config |
 | Works untouched if you never eject | Works untouched if you never eject |
 
@@ -207,7 +207,7 @@ module Moderate
 end
 ```
 
-`Moderate::ApplicationController` (the engine's base) inherits from `config.notice_parent_controller.constantize` (default `"::ActionController::Base"` so it works even on API-only apps, with `protect_from_forgery` applied when available) — exactly the `config.parent_controller` indirection Devise uses, so you can point it at your own base controller to inherit your layout, locale-setting, and `current_user`.
+`Moderate::ApplicationController` (the engine's base) inherits from `config.parent_controller.constantize` (default `"::ActionController::Base"` so it works even on API-only apps, with `protect_from_forgery` applied when available) — exactly the `parent_controller` indirection Devise uses, so you can point it at your own base controller to inherit your layout, locale-setting, and `current_user`.
 
 #### The bot gate (auto-integrates `rails_cloudflare_turnstile`)
 
@@ -278,7 +278,7 @@ Moderate::Report::DSA_LEGAL_REASONS
 
 ### Out of the box
 
-The gem ships the templates inside the engine, under `app/views/moderate/`. They render with no CSS framework assumed, themable via CSS custom properties (`:root { --moderate-* }`), and pull every label/hint through `I18n` (`moderate.notices.*`) so you can translate without touching markup. The layout inherits nothing from your app by default; point `config.notice_parent_controller` at your own base controller (and give it a `layout`) if you'd rather the form sit inside your site chrome.
+The gem ships the templates inside the engine, under `app/views/moderate/`. They render with no CSS framework assumed, themable via CSS custom properties (`:root { --moderate-* }`), and pull every label/hint through `I18n` (`moderate.notices.*`) so you can translate without touching markup. The layout inherits nothing from your app by default; point `config.parent_controller` at your own base controller (and give it a `layout`) if you'd rather the forms sit inside your site chrome.
 
 ### Ejecting the views
 
@@ -326,7 +326,11 @@ And if you don't serve EU users at all? Skip both. Reporting, blocking, and filt
 ```ruby
 Moderate.configure do |config|
   config.notice_form_enabled        = true                  # mount-able engine on/off (default: true)
-  config.notice_parent_controller   = "::ActionController::Base"  # like Devise's config.parent_controller
+  config.parent_controller          = "::ActionController::Base"  # like Devise's config.parent_controller
+  config.appeal_form_enabled        = true
+  config.appeal_rate_limit          = { max: 10, within: 1.minute }
+  config.appeal_guard               = ->(controller) { true }
+  config.appeal_return_path         = "/"
   config.notice_rate_limit          = { max: 5, within: 1.hour }  # per-IP throttle, or false to disable
 
   # Bot gate:

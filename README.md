@@ -103,7 +103,7 @@ end
 
 ```ruby
 class User < ApplicationRecord
-  has_moderation     # can report, block, be blocked, be banned
+  participates_in_moderation # can report, block, be blocked, be banned
 end
 
 class Message < ApplicationRecord
@@ -118,11 +118,11 @@ That's it — you now have reporting, blocking, filtering, and a moderation queu
 
 ## 🧑‍🤝‍🧑 Actors: report & block
 
-Add `has_moderation` to your user model (or any model that acts on behalf of a person) — it sits right alongside your other ecosystem macros like `has_credits` / `has_wallets`:
+Add `participates_in_moderation` to your user model (or any model that acts on behalf of a person):
 
 ```ruby
 class User < ApplicationRecord
-  has_moderation
+  participates_in_moderation
 end
 ```
 

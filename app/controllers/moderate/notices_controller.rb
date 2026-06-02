@@ -116,7 +116,7 @@ module Moderate
     # Identity prefill from the signed-in user, when one exists. We detect Devise (or
     # any auth that exposes `current_user`) WITHOUT a hard dependency: the engine's
     # base controller may or may not define `current_user` depending on the host's
-    # `notice_parent_controller`. `respond_to?` keeps the public/anonymous form
+    # `parent_controller`. `respond_to?` keeps the public/anonymous form
     # working when nobody is logged in (the overwhelmingly common case for Art. 16).
     # We read name/email via `try` so the host's user class only needs whichever it
     # actually has. These keys are what the view LOCKS.

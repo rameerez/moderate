@@ -25,7 +25,7 @@ require_relative "../../app/adapters/dummy_image_adapter"
 # shared setup is the natural place to re-point the hooks at ModerateTestRecorder).
 # This file documents the canonical wiring; the suite mirrors it post-reset.
 Moderate.configure do |config|
-  # WHO ARE YOUR USERS — the actor model (include Moderate::Actor / has_moderation).
+  # WHO ARE YOUR USERS — the actor model (include Moderate::Actor / participates_in_moderation).
   # Stored as a string, constantized lazily, so this works even though User isn't
   # loaded yet at boot.
   config.user_class = "User"

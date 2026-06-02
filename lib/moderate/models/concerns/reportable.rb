@@ -97,7 +97,7 @@ module Moderate
     # NO default: a model that can be reported MUST tell the gem who's behind it,
     # because guessing wrong here means notifying or banning the wrong person.
     # We raise a NotImplementedError naming the class so the omission is loud at
-    # the first report, not silent. (A `User` model with `has_moderation` is itself
+    # the first report, not silent. (A `User` model with `participates_in_moderation` is itself
     # reportable and returns `self` — see Moderate::Actor.)
     def reported_owner
       raise NotImplementedError,
@@ -148,7 +148,7 @@ module Moderate
     #
     # The `moderate_report_link` helper renders nothing when this is false, and the
     # report controller redirects. Hosts can override for richer rules. (A User with
-    # `has_moderation` overrides this in Moderate::Actor to compare ids directly,
+    # `participates_in_moderation` overrides this in Moderate::Actor to compare ids directly,
     # since a user IS its own owner.)
     def report_visible_to?(viewer, field:)
       return false unless reportable_field_allowed?(field)

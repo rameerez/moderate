@@ -1,0 +1,20 @@
+<%
+  rows = rows.to_h.compact_blank
+  translation_scope = local_assigns[:translation_scope]
+%>
+
+<article class="moderate-card">
+  <h2><%= title %></h2>
+  <% if rows.any? %>
+    <dl>
+      <% rows.sort_by { |key, _value| key.to_s }.each do |key, value| %>
+        <div>
+          <dt><%= translation_scope ? t("#{translation_scope}.#{key}", default: key.to_s.humanize) : key.to_s.humanize %></dt>
+          <dd><%= value %></dd>
+        </div>
+      <% end %>
+    </dl>
+  <% else %>
+    <p><%= t("moderate.transparency.no_data", default: "No data in this period.") %></p>
+  <% end %>
+</article>

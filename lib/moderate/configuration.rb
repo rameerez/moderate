@@ -70,9 +70,12 @@ module Moderate
     # receives the controller and returns truthy to allow the POST. nil/no-op ⇒ the
     # form just works (the default). When the host installs `rails_cloudflare_turnstile`,
     # the controller auto-uses Turnstile instead and this proc is bypassed.
-    attr_accessor :notice_form_enabled, :notice_parent_controller, :notice_rate_limit,
+    attr_reader :parent_controller
+    attr_accessor :notice_form_enabled, :notice_rate_limit,
                   :notice_turnstile_site_key, :notice_turnstile_secret_key,
-                  :notice_captcha_verifier, :notice_guard, :signed_gid_purposes
+                  :notice_captcha_verifier, :notice_guard,
+                  :appeal_form_enabled, :appeal_rate_limit, :appeal_guard, :appeal_return_path,
+                  :signed_gid_purposes
 
     def initialize
       # Identity. "User" is the overwhelmingly common case; the host overrides it
@@ -118,13 +121,15 @@ module Moderate
       # Misc. nil locale ⇒ follow I18n.default_locale at use time.
       @locale = nil
 
+      # Engine controller defaults. The parent controller defaults to a stock base so
+      # the engine works even on API-only apps — the same `parent_controller`
+      # indirection Devise and api_keys use.
+      @parent_controller = "::ActionController::Base"
+
       # DSA notice-form defaults (see docs/dsa-notice-form.md). The form is on by
       # default; both bot-gates no-op when their keys are blank; the rate limit is a
-      # sane per-IP throttle. The parent controller defaults to a stock base so the
-      # engine works even on API-only apps — the same `parent_controller`
-      # indirection Devise and api_keys use.
+      # sane per-IP throttle.
       @notice_form_enabled = true
-      @notice_parent_controller = "::ActionController::Base"
       @notice_rate_limit = { max: 5, within: 3600 } # 1.hour, expressed in seconds to avoid an ActiveSupport dependency here
       @notice_turnstile_site_key = nil
       @notice_turnstile_secret_key = nil
@@ -132,7 +137,23 @@ module Moderate
       # Gem-absent fallback bot gate. nil ⇒ no extra gate (the form just works); the
       # controller only consults it when rails_cloudflare_turnstile is NOT installed.
       @notice_guard = nil
+
+      # DSA internal complaint / appeal form defaults. Same shape as the notice
+      # form: public route, optional bot gate, runtime rate limit, and a redirect
+      # target the host can choose.
+      @appeal_form_enabled = true
+      @appeal_rate_limit = { max: 10, within: 60 }
+      @appeal_guard = nil
+      @appeal_return_path = "/"
+
       @signed_gid_purposes = %i[appeal confirm_notice unsubscribe]
+    end
+
+    def parent_controller=(value)
+      name = value.is_a?(Class) ? value.name : value.to_s
+      raise ArgumentError, "parent_controller can't be blank" if name.strip.empty?
+
+      @parent_controller = name
     end
 
     # --- Validating setters ---------------------------------------------------

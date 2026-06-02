@@ -2,7 +2,7 @@
 
 # The dummy host's ACTOR model — the `config.user_class`.
 #
-# `has_moderation` (the macro the engine adds to ActiveRecord::Base) makes a User
+# `participates_in_moderation` (the macro the engine adds to ActiveRecord::Base) makes a User
 # able to report, block/unblock, be reported, and be banned; because Actor pulls in
 # Reportable, a User is ALSO reportable (Apple 1.2 / Google Play UGC both require
 # reporting AND blocking *users*, not just content). `reportable :name` narrows the
@@ -10,7 +10,7 @@
 # whitelist (a report naming `:name` is allowed; one naming an undeclared field is
 # rejected by Moderate::Report's reportable_field_must_be_allowed validation).
 class User < ApplicationRecord
-  has_moderation
+  participates_in_moderation
   reportable :name
 
   # The initializer declares `config.filter "User", :name, mode: :flag`, so a User

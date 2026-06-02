@@ -17,7 +17,7 @@ require_relative "moderate/result"
 require_relative "moderate/event"
 require_relative "moderate/configuration"
 
-# The class-level DSL (has_moderation / reportable / moderates). Required here,
+# The class-level DSL (participates_in_moderation / reportable / moderates). Required here,
 # eagerly, because the engine's `moderate.active_record` initializer does
 # `extend Moderate::Macros` inside an `on_load(:active_record)` block — the constant
 # must already be defined by the time that hook fires. It's a plain module that only
