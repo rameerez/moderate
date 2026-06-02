@@ -5,7 +5,7 @@ require "test_helper"
 # Tests for the built-in offline TEXT adapter, Moderate::Filters::Wordlist
 # (registered as :wordlist, the default text adapter).
 #
-# This is the evasion-resistant matcher: a fast, offline, multilingual wordlist
+# This is the fast offline baseline matcher: a multilingual wordlist
 # that emits the gem's canonical taxonomy labels. We test it directly (the class)
 # so a failure points straight at the matcher, and also through Moderate.classify
 # (the facade) to prove the spine stamps the adapter name onto the Result's source.

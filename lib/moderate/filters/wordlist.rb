@@ -37,8 +37,8 @@ module Moderate
     # The normalized text is then matched in TWO forms: the single-spaced form
     # (so word-boundary patterns like "\bkill yourself\b" work), AND a space-removed
     # "compact" form (so spacing evasion "f u c k" -> "fuck" is caught). A pattern
-    # hits if it matches EITHER form. This is the proven, evasion-resistant
-    # matching strategy the adapter relies on.
+    # hits if it matches EITHER form. This is a fast offline baseline matching
+    # strategy the adapter relies on.
     #
     # ── Output ───────────────────────────────────────────────────────────────────
     # On a hit, returns a flagged Moderate::Result whose labels are the canonical
