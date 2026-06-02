@@ -1,6 +1,25 @@
 # frozen_string_literal: true
 
-class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
+# CONCRETE rendering of lib/generators/moderate/templates/create_moderate_tables.rb.erb.
+#
+# This is the SAME schema the install generator copies into a real host — same
+# tables, columns, indexes, and check-constraints — rendered to plain Ruby for the
+# dummy app's test database. It is run by `rake db:migrate:reset` across all three
+# CI database legs (sqlite / postgres / mysql), so the private helpers below are
+# kept IDENTICAL to the template's: they branch on the connection adapter to emit
+# jsonb-vs-json, MySQL's no-default-on-JSON caveat, and portable IN(...) checks.
+#
+# KEEP IN SYNC with the ERB template. If the template's column set / indexes /
+# constraints change, this file must change too — the sqlite matrix leg runs the
+# real migration path precisely to catch drift between the two (see
+# .github/workflows/test.yml: "Exercise the real migration path in SQLite too so
+# dummy/test schema drift is caught").
+#
+# The migration version is pinned to [7.1] — the gemspec floor and the lowest Rails
+# in the test matrix. (The template renders this from ActiveRecord::VERSION at
+# generate time; here we anchor to the floor, which every Rails in the matrix
+# accepts.)
+class CreateModerateTables < ActiveRecord::Migration[7.1]
   def change
     primary_key_type, foreign_key_type = primary_and_foreign_key_types
 
@@ -19,11 +38,10 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
       t.references :reported_user, type: foreign_key_type, null: true
 
       # The reported content (any Moderate::Reportable model), polymorphic.
-      # `index: false` because we declare the polymorphic index explicitly below
-      # (`index_moderate_reports_on_reportable`); without this, `t.references` would
-      # ALSO auto-create an index on [reportable_type, reportable_id], and the two
-      # collide ("index ... already exists") when the migration runs. Suppressing the
-      # auto-index leaves exactly the one named index this schema intends.
+      # `index: false` because the polymorphic index is declared explicitly below
+      # (index_moderate_reports_on_reportable); otherwise `t.references` auto-creates
+      # a second index on the same columns and the migration fails with
+      # "index ... already exists". (Kept in sync with the generator template.)
       t.references :reportable, polymorphic: true, type: foreign_key_type, null: true, index: false
 
       # Which field of the reportable was reported (e.g. "description").
@@ -265,12 +283,9 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
     []
   end
 
-  # The SQL function for COUNTING CHARACTERS in a check constraint, chosen per
-  # adapter so the message-length guard is portable:
-  #   - SQLite has no `char_length`; its `length(text)` already counts CHARACTERS.
-  #   - PostgreSQL & MySQL 8+ both provide `char_length` (true character count,
-  #     unlike MySQL's `length`, which counts BYTES). Using `char_length` there
-  #     makes the 4000 cap a real character cap on every adapter, not a byte cap.
+  # SQLite has no `char_length`; its `length(text)` already counts characters.
+  # PostgreSQL & MySQL 8+ provide `char_length` (true char count). Kept in sync with
+  # the generator template so the message-length cap is a real char cap everywhere.
   def char_length_fn
     connection.adapter_name.downcase.include?("sqlite") ? "length" : "char_length"
   end

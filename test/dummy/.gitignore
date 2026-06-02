@@ -1,0 +1,13 @@
+# Generated test artifacts for the dummy app — never committed.
+# The schema is rebuilt from db/migrate by `db:migrate:reset` on every CI run, the
+# sqlite file is per-run, and Active Storage writes blobs under tmp/storage.
+/db/*.sqlite3
+/db/*.sqlite3-*
+/db/schema.rb
+/log/*.log
+/tmp/
+
+# Keep the directory skeletons that must exist for db:create / Active Storage even
+# though their contents are ignored.
+!/log/.keep
+!/tmp/.keep
