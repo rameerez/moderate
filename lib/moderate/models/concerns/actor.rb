@@ -3,7 +3,7 @@
 module Moderate
   # The "person who acts" in the Trust & Safety system: the model that reports
   # other content, blocks other actors, gets reported, gets banned. Backs the
-  # `participates_in_moderation` macro (and its documented equivalent,
+  # `has_moderation_capabilities` macro (and its documented equivalent,
   # `include Moderate::Actor`).
   #
   # This is the one model the gem treats as the actor/identity, configured via
@@ -20,7 +20,7 @@ module Moderate
   module Actor
     extend ActiveSupport::Concern
 
-    # A user is also reportable. Pulling Reportable in here means `participates_in_moderation`
+    # A user is also reportable. Pulling Reportable in here means `has_moderation_capabilities`
     # alone gives you both halves (act AND be-acted-on) without a second macro.
     include Moderate::Reportable
 
@@ -60,7 +60,7 @@ module Moderate
     # --- Reporting ------------------------------------------------------------
 
     # File a report from this actor against a piece of content (or another actor —
-    # a user with `participates_in_moderation` is itself reportable).
+    # a user with `has_moderation_capabilities` is itself reportable).
     #
     #   current_user.report!(@message, category: :harassment, details: "...")
     #   current_user.report!(@other_user, category: :impersonation)
@@ -77,7 +77,9 @@ module Moderate
     # through, so this stays forward-compatible with the Report model's attributes.
     def report!(reportable, category:, details: nil, **attributes)
       attributes[:message] = details if details && !attributes.key?(:message)
-      reported_field = attributes.delete(:reported_field) || attributes.delete(:field)
+      reported_field = attributes.delete(:reported_field)
+      field = attributes.delete(:field)
+      reported_field ||= field
 
       # An in-app reporter attests to good faith IMPLICITLY by choosing to report —
       # there's no separate checkbox in the in-app flow (that's the public DSA notice

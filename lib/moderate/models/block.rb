@@ -91,11 +91,11 @@ module Moderate
             name: :user_blocked,
             subject: block,
             actor: blocker,
-            payload: {
+            payload: on_block_payload.merge(
               blocker_id: blocker.id,
               blocked_id: blocked.id,
               summary: "user #{blocker.id} blocked user #{blocked.id}"
-            }.merge(on_block_payload)
+            )
           )
         end
       end
@@ -190,6 +190,7 @@ module Moderate
     rescue ArgumentError, TypeError
       {}
     end
+    private_class_method :audit_payload_from_on_block
 
     # The DB has a CHECK constraint (`moderate_blocks_no_self_block`) too; this gives
     # the friendly validation error before the row ever reaches the database.

@@ -241,7 +241,7 @@
       `config.notice_guard` (no-op by default), so the form just works.
       https://github.com/instrumentl/rails-cloudflare-turnstile (README)
     %>
-    <% if defined?(::RailsCloudflareTurnstile) && respond_to?(:cloudflare_turnstile) %>
+    <% if turnstile_widget_required? && respond_to?(:cloudflare_turnstile) %>
       <div class="moderate-field">
         <%= cloudflare_turnstile_script_tag if respond_to?(:cloudflare_turnstile_script_tag) %>
         <%= cloudflare_turnstile %>

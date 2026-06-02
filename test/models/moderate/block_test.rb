@@ -6,8 +6,7 @@ module Moderate
   # Tests for Moderate::Block — the bidirectional safety edge behind every "block"
   # feature and behind Moderate.blocked_ids_for.
   #
-  # Ported from the reference suite (test/models/moderation/block_test.rb) and
-  # de-host-ified: the host concepts (drivers, listings, join-request cancellation)
+  # Ported from the old host-shaped suite and de-host-ified: app-specific examples
   # are gone, and assertions are realigned to the GEM's actual API — the SSOT method
   # is `related_user_ids` (not the reference's `user_ids_related_to`), and the
   # audit/notify payloads carry `:blocker_id`/`:blocked_id` (not whole records).
@@ -65,7 +64,15 @@ module Moderate
       audits = []
       Moderate.config.audit = ->(event) { audits << event }
       Moderate.config.on_block = ->(blocker:, blocked:, at:) {
-        { side_effect: "cancelled_invites", blocker_id_from_hook: blocker.id, blocked_id_from_hook: blocked.id, at_from_hook: at.iso8601 }
+        {
+          side_effect: "cancelled_invites",
+          blocker_id: "hook must not clobber this",
+          blocked_id: "hook must not clobber this",
+          summary: "hook must not clobber this",
+          blocker_id_from_hook: blocker.id,
+          blocked_id_from_hook: blocked.id,
+          at_from_hook: at.iso8601
+        }
       }
 
       Moderate::Block.block!(blocker: @blocker, blocked: @blocked)
@@ -74,6 +81,7 @@ module Moderate
       assert_equal "cancelled_invites", audit.payload[:side_effect]
       assert_equal @blocker.id, audit.payload[:blocker_id]
       assert_equal @blocked.id, audit.payload[:blocked_id]
+      assert_equal "user #{@blocker.id} blocked user #{@blocked.id}", audit.payload[:summary]
       assert_equal @blocker.id, audit.payload[:blocker_id_from_hook]
       assert_equal @blocked.id, audit.payload[:blocked_id_from_hook]
       assert audit.payload[:at_from_hook].present?

@@ -229,6 +229,25 @@ A public, unauthenticated form is a spam magnet. `moderate` ships a **single, re
 
 We default to recommending Turnstile (privacy-friendly, free, the RailsFast house default), but you're never locked in: the guard is just a lambda.
 
+Some clients cannot render a browser challenge at all (for example a native shell
+posting through your authenticated web session, or an edge layer that has already
+verified the request). For those cases, keep the browser gate on for normal traffic
+and skip it per request:
+
+```ruby
+config.notice_human_verification_skip_if = ->(controller) {
+  controller.request.user_agent.to_s.match?(/Hotwire Native/i)
+}
+
+config.appeal_human_verification_skip_if = ->(controller) {
+  controller.request.user_agent.to_s.match?(/Hotwire Native/i)
+}
+```
+
+The proc receives the controller and defaults to `nil` (never skip). If it raises,
+the gem treats that as "do not skip" so a broken predicate cannot accidentally turn
+off the public form's bot gate.
+
 #### The rate-limit hook
 
 On Rails 7.2+ you could use the built-in `rate_limit` API; `moderate` instead implements a tiny per-IP, cache-backed counter (`Rails.cache`) as a `before_action`, so it honors your **runtime** `config.notice_rate_limit` (the class-level macro is evaluated at class load, before your initializer has run). Configure it once:
@@ -330,6 +349,7 @@ Moderate.configure do |config|
   config.appeal_form_enabled        = true
   config.appeal_rate_limit          = { max: 10, within: 1.minute }
   config.appeal_guard               = ->(controller) { true }
+  config.appeal_human_verification_skip_if = ->(controller) { false }
   config.appeal_return_path         = "/"
   config.notice_rate_limit          = { max: 5, within: 1.hour }  # per-IP throttle, or false to disable
 
@@ -337,6 +357,7 @@ Moderate.configure do |config|
   #   - Install `rails_cloudflare_turnstile` and it AUTO-integrates (widget + verify), no config here.
   #   - Otherwise set a guard proc (no-op by default) to use hCaptcha / reCAPTCHA / your own check:
   config.notice_guard               = ->(controller) { true }     # ->(controller) { boolean }
+  config.notice_human_verification_skip_if = ->(controller) { false }
 end
 ```
 

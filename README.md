@@ -103,7 +103,7 @@ end
 
 ```ruby
 class User < ApplicationRecord
-  participates_in_moderation # can report, block, be blocked, be banned
+  has_moderation_capabilities # can report, block, be blocked, be banned
 end
 
 class Message < ApplicationRecord
@@ -118,11 +118,11 @@ That's it — you now have reporting, blocking, filtering, and a moderation queu
 
 ## 🧑‍🤝‍🧑 Actors: report & block
 
-Add `participates_in_moderation` to your user model (or any model that acts on behalf of a person):
+Add `has_moderation_capabilities` to your user model (or any model that acts on behalf of a person):
 
 ```ruby
 class User < ApplicationRecord
-  participates_in_moderation
+  has_moderation_capabilities
 end
 ```
 
@@ -326,7 +326,7 @@ The full event vocabulary: `report_received`, `report_decision`, `affected_user_
 
 `moderate` is built around the rules so you don't have to read the regulation:
 
-- **DSA Art. 16 (notice & action):** a public, electronic notice form — a mountable engine you place at the path of your choosing (`mount Moderate::Engine => "/trust"`, no hardcoded `/legal`) — capturing the substantiated reason, exact URL, notifier name+email, good-faith statement, the EU **statement-of-reasons taxonomy**, and the member-state selector, with an automatic confirmation of receipt. A notice is a `Moderate::Report` with `intake_kind: "dsa"` (no separate model), built via `Moderate::Services::IntakeNotice`. The form prefills the reported-content fields from query params (editable) and a signed-in notifier's identity (locked), and auto-integrates [`rails_cloudflare_turnstile`](https://github.com/instrumentl/rails-cloudflare-turnstile) when present (falling back to a `config.notice_guard` proc). See [`docs/dsa-notice-form.md`](docs/dsa-notice-form.md).
+- **DSA Art. 16 (notice & action):** a public, electronic notice form — a mountable engine you place at the path of your choosing (`mount Moderate::Engine => "/trust"`, no hardcoded `/legal`) — capturing the substantiated reason, exact URL, notifier name+email, good-faith statement, the EU **statement-of-reasons taxonomy**, and the member-state selector, with an automatic confirmation of receipt. A notice is a `Moderate::Report` with `intake_kind: "dsa"` (no separate model), built via `Moderate::Services::IntakeNotice`. The form prefills the reported-content fields from query params (editable) and a signed-in notifier's identity (locked), and auto-integrates [`rails_cloudflare_turnstile`](https://github.com/instrumentl/rails-cloudflare-turnstile) when present (falling back to a `config.notice_guard` proc, with an optional per-request skip hook for clients that cannot render a browser challenge). See [`docs/dsa-notice-form.md`](docs/dsa-notice-form.md).
 - **DSA Art. 17 (statement of reasons):** decision notices state the action, the legal/contractual ground, whether automated means were used, and the redress path.
 - **DSA Art. 20 (appeals):** a free, electronic internal complaint mechanism, open ≥ 6 months, decided by a human.
 - **DSA Art. 24 (transparency):** counters you can publish (notices received, actions taken, median handling time, appeal outcomes).

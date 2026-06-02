@@ -363,13 +363,24 @@ module Moderate
 
     def self.locate_signed_reportable_by_contract(token)
       record = GlobalID::Locator.locate_signed(token, for: SIGNED_GLOBAL_ID_PURPOSE)
-      reportable_contract?(record) ? record : nil
+      reportable_contract?(record) && reportable_allowed?(record) ? record : nil
     end
 
     def self.reportable_contract?(record)
       record.respond_to?(:reportable_field_allowed?) &&
         record.respond_to?(:reported_owner)
     end
+
+    def self.reportable_allowed?(record)
+      return false if record.blank?
+
+      Moderate.reportable_classes.include?(record.class) ||
+        record.is_a?(Moderate::Reportable)
+    end
+    private_class_method :locate_signed_reportable_from_registry,
+      :locate_signed_reportable_by_contract,
+      :reportable_contract?,
+      :reportable_allowed?
 
     # Coalesce the JSON columns to their empty shape so a NULL never reaches a
     # NOT-NULL JSON column (the MySQL-no-JSON-default case — see the before_save

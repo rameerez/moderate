@@ -12,17 +12,17 @@
 #
 # This is safe because the macro methods below only REFERENCE the concern constants
 # inside their bodies (`include Moderate::Actor`), which run when a host model calls
-# `participates_in_moderation`/`reportable`/`moderates` — long after boot, when the autoloader
+# `has_moderation_capabilities`/`reportable`/`moderates` — long after boot, when the autoloader
 # is fully wired. So Zeitwerk autoloads each concern lazily on first use.
 module Moderate
   # The class-level DSL the gem adds to every ActiveRecord model.
   #
   # The engine does `ActiveSupport.on_load(:active_record) { extend Moderate::Macros }`,
-  # so `participates_in_moderation`, `reportable`, and `moderates` become class methods on
+  # so `has_moderation_capabilities`, `reportable`, and `moderates` become class methods on
   # ActiveRecord::Base — readable plain-English declarations that sit alongside the
   # rest of a host's stack (`has_credits`, `has_wallets`, `has_api_keys`):
   #
-  #   class User    < ApplicationRecord; participates_in_moderation; end
+  #   class User    < ApplicationRecord; has_moderation_capabilities; end
   #   class Listing < ApplicationRecord; reportable :title, :description; end
   #   class Message < ApplicationRecord; moderates :body, mode: :flag; end
   #
@@ -32,13 +32,13 @@ module Moderate
   # forward to that concern's declaration method. All behavior lives in the
   # concerns, never here.
   module Macros
-    # `participates_in_moderation` — make this model an ACTOR (and, since a user is
+    # `has_moderation_capabilities` — make this model an ACTOR (and, since a user is
     # usually itself reportable, a reportable too): report!/block!/unblock!/blocks?/
     # blocked_with?, the block & report associations, and the be-banned target.
     #
     # Equivalent to `include Moderate::Actor`. Idempotent: re-declaring (or both
     # macro + explicit include) won't double-include.
-    def participates_in_moderation
+    def has_moderation_capabilities
       include Moderate::Actor unless include?(Moderate::Actor)
     end
 

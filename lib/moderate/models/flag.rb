@@ -62,7 +62,7 @@ module Moderate
 
     validates :field, presence: true
     validates :status, inclusion: { in: STATUSES }
-    validates :source, inclusion: { in: ->(_flag) { sources } }
+    validates :source, inclusion: { in: ->(_flag) { sources } }, on: :create
     validates :mode, inclusion: { in: MODES }
     validates :resolution_note, presence: true, if: :closed?
 

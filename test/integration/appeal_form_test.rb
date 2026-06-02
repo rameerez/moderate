@@ -94,6 +94,30 @@ class AppealFormTest < ActionDispatch::IntegrationTest
     assert_match(/verify/i, flash[:alert].to_s)
   end
 
+  test "a configured human verification skip bypasses the appeal browser guard" do
+    Moderate.config.appeal_guard = ->(_controller) { false }
+    Moderate.config.appeal_human_verification_skip_if = ->(controller) {
+      controller.request.user_agent.to_s.include?("Hotwire Native")
+    }
+    report = closed_report
+
+    assert_difference -> { Moderate::Appeal.count }, 1 do
+      post CREATE,
+        params: {
+          token: report.signed_appeal_gid,
+          appeal: {
+            appellant_name: "Appealing Person",
+            appellant_email: "appeal@example.com",
+            source: "notifier",
+            reason: "Please review this decision."
+          }
+        },
+        headers: { "User-Agent" => "Hotwire Native iOS" }
+    end
+
+    assert_redirected_to "/"
+  end
+
   private
 
   def closed_report(reported_user: nil)

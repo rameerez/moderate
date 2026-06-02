@@ -87,6 +87,22 @@ module Moderate
       assert flag.errors[:resolution_note].any?
     end
 
+    test "a flag can be closed after its source adapter is no longer registered" do
+      Moderate.config.register_adapter :temporary, DummyImageAdapter.new
+      flag = Moderate::Flag.flag!(
+        flaggable: @user, field: "name", owner: @user, source: "temporary", mode: "flag",
+        excerpt: "x", categories: [], scores: {}, context: {}
+      )
+
+      Moderate.reset!
+      Moderate.configure { |config| config.user_class = "User" }
+
+      assert_nothing_raised do
+        flag.update!(status: "dismissed", resolution_note: "Handled after adapter cleanup.")
+      end
+      assert_equal "dismissed", flag.reload.status
+    end
+
     test "source/mode/status are constrained to the allowed vocabularies (in the model)" do
       # These vocabularies are enforced by ActiveModel inclusion validations, not DB
       # check constraints, so each invalid value surfaces a friendly model error.

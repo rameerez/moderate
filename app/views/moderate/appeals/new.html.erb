@@ -60,7 +60,7 @@
                 placeholder: t("moderate.appeals.placeholders.reason", default: "Explain why you believe the decision should be reviewed and include any useful context.") %>
         </div>
 
-        <% if defined?(::RailsCloudflareTurnstile) && respond_to?(:cloudflare_turnstile) %>
+        <% if turnstile_widget_required? && respond_to?(:cloudflare_turnstile) %>
           <div class="moderate-turnstile">
             <%= cloudflare_turnstile_script_tag if respond_to?(:cloudflare_turnstile_script_tag) %>
             <%= cloudflare_turnstile %>

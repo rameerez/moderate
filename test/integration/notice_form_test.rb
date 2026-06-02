@@ -294,6 +294,24 @@ class NoticeFormTest < ActionDispatch::IntegrationTest
     refute guard_ran, "the configurable guard must be bypassed when Turnstile is present"
   end
 
+  test "a configured human verification skip bypasses Turnstile and hides the widget" do
+    NoticeFormTest.stub_turnstile!(pass: false)
+    Moderate.config.notice_human_verification_skip_if = ->(controller) {
+      controller.request.user_agent.to_s.include?("Hotwire Native")
+    }
+    headers = { "User-Agent" => "Hotwire Native iOS" }
+
+    get NEW, headers: headers
+    assert_response :success
+    assert_select "div.cf-turnstile-stub", false, "skipped requests should not render a browser captcha"
+
+    assert_difference -> { Moderate::Report.count }, 1 do
+      post CREATE, params: { notice: well_formed_notice_params }, headers: headers
+    end
+    assert_response :see_other
+    refute NoticeFormTest.turnstile_verified, "the verifier should not run for skipped requests"
+  end
+
   # --- Turnstile stubbing helpers (class-level so setup/teardown can reset) ----
 
   class << self

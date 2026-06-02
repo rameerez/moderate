@@ -133,7 +133,7 @@ Google Play's UGC policy overlaps heavily with Apple's but is explicit about **t
 | Requirement | How `moderate` satisfies it | Who | Proof |
 | --- | --- | --- | --- |
 | In-app **reporting** of objectionable **content**. | `current_user.report!(content, category:)`; any model that is `reportable` can be reported. | **[gem]** | `test/models/reportable_test.rb` |
-| In-app **reporting** of objectionable **users**. | A user model with `participates_in_moderation` is itself reportable: `current_user.report!(other_user, category: :impersonation)`. | **[gem]** | `test/models/report_user_test.rb` |
+| In-app **reporting** of objectionable **users**. | A user model with `has_moderation_capabilities` is itself reportable: `current_user.report!(other_user, category: :impersonation)`. | **[gem]** | `test/models/report_user_test.rb` |
 | In-app **blocking** of objectionable **users**. | `current_user.block!(other)` — the bidirectional safety edge. | **[gem]** | `test/models/block_test.rb` |
 | In-app **blocking / hiding** of objectionable **content**. | Filter the blocked pair's content out of any feed with `Moderate.blocked_ids_for(current_user)` — the single source-of-truth query you apply in search, inbox, and listings. | **[gem]** | `test/models/blocked_ids_scope_test.rb` |
 | A method to **moderate UGC** (a real review surface, not just intake). | `Moderate::Report.pending` / `Moderate::Flag.pending` give admins the queue; `resolve!`/`dismiss!`/`remove_content`/`ban_user` are the audited actions. (BYOUI — you bind these to your admin; see [`docs/madmin.md`](madmin.md).) | **[gem + you]** | `test/services/resolve_test.rb` |
@@ -141,7 +141,7 @@ Google Play's UGC policy overlaps heavily with Apple's but is explicit about **t
 | Users **accept terms / acceptable-use** before contributing UGC. | This is your signup/terms gate — `moderate` doesn't own it — but, as with Apple, your acceptable-use policy should enumerate the **community-report categories** so the terms and the report buttons describe the same prohibited behavior. | **[you]** | manual: terms acceptance in your onboarding |
 
 > [!NOTE]
-> **"Both users and content" is the row people miss.** Plenty of apps add a "Report comment" button and stop there. Play wants you to be able to report **and** block **both** a person and a thing. `moderate` covers all four cells because a user model with `participates_in_moderation` is *also* `reportable`, and blocking is enforced over content via `blocked_ids_for`. If you only made content `reportable` and never made users blockable, you'd pass Apple's spot check and still fail Play's policy.
+> **"Both users and content" is the row people miss.** Plenty of apps add a "Report comment" button and stop there. Play wants you to be able to report **and** block **both** a person and a thing. `moderate` covers all four cells because a user model with `has_moderation_capabilities` is *also* `reportable`, and blocking is enforced over content via `blocked_ids_for`. If you only made content `reportable` and never made users blockable, you'd pass Apple's spot check and still fail Play's policy.
 
 ---
 

@@ -73,8 +73,9 @@ module Moderate
     attr_reader :parent_controller
     attr_accessor :notice_form_enabled, :notice_rate_limit,
                   :notice_turnstile_site_key, :notice_turnstile_secret_key,
-                  :notice_captcha_verifier, :notice_guard,
-                  :appeal_form_enabled, :appeal_rate_limit, :appeal_guard, :appeal_return_path,
+                  :notice_captcha_verifier, :notice_guard, :notice_human_verification_skip_if,
+                  :appeal_form_enabled, :appeal_rate_limit, :appeal_guard,
+                  :appeal_human_verification_skip_if, :appeal_return_path,
                   :signed_gid_purposes
 
     def initialize
@@ -137,6 +138,7 @@ module Moderate
       # Gem-absent fallback bot gate. nil ⇒ no extra gate (the form just works); the
       # controller only consults it when rails_cloudflare_turnstile is NOT installed.
       @notice_guard = nil
+      @notice_human_verification_skip_if = nil
 
       # DSA internal complaint / appeal form defaults. Same shape as the notice
       # form: public route, optional bot gate, runtime rate limit, and a redirect
@@ -144,6 +146,7 @@ module Moderate
       @appeal_form_enabled = true
       @appeal_rate_limit = { max: 10, within: 60 }
       @appeal_guard = nil
+      @appeal_human_verification_skip_if = nil
       @appeal_return_path = "/"
 
       @signed_gid_purposes = %i[appeal confirm_notice unsubscribe]
@@ -203,10 +206,13 @@ module Moderate
     # callers decide whether that's an error (the validator/classify path raises a
     # helpful message; see Moderate.classify).
     def adapter_for(name)
-      ref = @adapters[normalize_name(name)]
+      key = normalize_name(name)
+      ref = @adapters[key]
       return nil if ref.nil?
 
-      resolve_adapter(ref)
+      resolve_adapter(ref).tap do |adapter|
+        @adapters[key] = adapter unless adapter.equal?(ref)
+      end
     end
 
     def adapter_registered?(name)

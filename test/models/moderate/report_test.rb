@@ -6,9 +6,9 @@ module Moderate
   # Tests for Moderate::Report — the core notice/report record (in-app community
   # report AND public DSA legal notice, distinguished by `intake_kind`).
   #
-  # Ported from test/models/moderation/report_test.rb and fully de-host-ified: the
-  # reference's marketplace listings are replaced by the dummy Comment (a reportable
-  # piece of content) and the dummy User (itself reportable). Assertions track the
+  # Ported from the old host-shaped suite and fully de-host-ified: app-specific
+  # domain objects are replaced by the dummy Comment (a reportable piece of content)
+  # and the dummy User (itself reportable). Assertions track the
   # GEM's columns and behavior — the immutable snapshot, the inferred reported_user,
   # the signed-GlobalID locators, and the DSA automated-processing disclosure.
   class ReportTest < ActiveSupport::TestCase
@@ -51,7 +51,7 @@ module Moderate
     end
 
     test "reportable classes are auto-discovered from the reportable macro" do
-      # User (participates_in_moderation -> reportable) and Comment (reportable :body) both
+      # User (has_moderation_capabilities -> reportable) and Comment (reportable :body) both
       # self-registered on inclusion — no manual registry.
       assert_includes Moderate.reportable_classes, User
       assert_includes Moderate.reportable_classes, Comment
@@ -194,6 +194,22 @@ module Moderate
       assert_equal user, Moderate::Report.locate_signed_reportable(token)
     ensure
       registry.replace(original_registry) if registry && original_registry
+    end
+
+    test "signed reportable lookup rejects non-reportable records even when they duck-type the contract" do
+      duck_class = Class.new(ApplicationRecord) do
+        self.table_name = "comments"
+
+        def reportable_field_allowed?(_field) = true
+        def reported_owner = User.first
+      end
+      Object.const_set(:DuckReportable, duck_class)
+      record = DuckReportable.create!(user_id: @reporter.id, body: "contract-shaped but not reportable")
+      token = record.to_sgid_param(for: Moderate::Report::SIGNED_GLOBAL_ID_PURPOSE)
+
+      assert_nil Moderate::Report.locate_signed_reportable(token)
+    ensure
+      Object.send(:remove_const, :DuckReportable) if Object.const_defined?(:DuckReportable, false)
     end
 
     test "automated_processing_used? is true when an auto-flag exists for the same target+field" do

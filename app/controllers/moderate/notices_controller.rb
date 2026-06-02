@@ -22,6 +22,8 @@ module Moderate
   # `intake_kind: "dsa"`, sharing the same queue, snapshot, appeal window, and Art.
   # 24 transparency counters as an in-app report. One queue, two front doors.
   class NoticesController < Moderate::ApplicationController
+    helper_method :turnstile_widget_required?
+
     # Hard kill-switch: if a host sets `config.notice_form_enabled = false`, the
     # whole engine surface 404s. Lets an app mount the engine but disable the form
     # (e.g. it doesn't serve EU users) without un-mounting routes.
@@ -290,11 +292,26 @@ module Moderate
     # Detection is via `defined?`/`respond_to?` with NO hard dependency in the
     # gemspec, decided at REQUEST time so the wiring auto-adapts to the bundle.
     def verify_human!
+      return if human_verification_skipped?
+
       if turnstile_available?
         verify_turnstile!
       else
         run_notice_guard!
       end
+    end
+
+    def turnstile_widget_required?
+      turnstile_available? && !human_verification_skipped?
+    end
+
+    def human_verification_skipped?
+      predicate = Moderate.config.notice_human_verification_skip_if
+      return false unless predicate.respond_to?(:call)
+
+      predicate.call(self) ? true : false
+    rescue StandardError
+      false
     end
 
     # True when the gem is loaded AND its controller helper is mixed in here, so a

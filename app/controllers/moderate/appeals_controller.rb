@@ -3,6 +3,8 @@
 module Moderate
   # Public DSA Art. 20 internal complaint form for moderation decisions.
   class AppealsController < Moderate::ApplicationController
+    helper_method :turnstile_widget_required?
+
     before_action :enforce_appeal_enabled!
     before_action :throttle_appeals!, only: :create
     before_action :verify_human!, only: :create
@@ -120,11 +122,26 @@ module Moderate
     end
 
     def verify_human!
+      return if human_verification_skipped?
+
       if turnstile_available?
         verify_turnstile!
       else
         run_appeal_guard!
       end
+    end
+
+    def turnstile_widget_required?
+      turnstile_available? && !human_verification_skipped?
+    end
+
+    def human_verification_skipped?
+      predicate = Moderate.config.appeal_human_verification_skip_if
+      return false unless predicate.respond_to?(:call)
+
+      predicate.call(self) ? true : false
+    rescue StandardError
+      false
     end
 
     def turnstile_available?

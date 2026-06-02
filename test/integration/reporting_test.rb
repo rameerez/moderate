@@ -127,6 +127,19 @@ class ReportingTest < ActiveSupport::TestCase
     assert_equal "body", report.reported_field
   end
 
+  test "report! consumes both field aliases and prefers reported_field" do
+    report = @viewer.report!(
+      @comment,
+      category: :harassment,
+      reported_field: "body",
+      field: "title",
+      details: "abusive"
+    )
+
+    assert report.persisted?
+    assert_equal "body", report.reported_field
+  end
+
   test "a user cannot report themselves" do
     # Pass a valid message and a declared reportable field ("name" is User's only
     # reportable field) so the ONLY thing that can fail is the self-report guard

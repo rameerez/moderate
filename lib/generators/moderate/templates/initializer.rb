@@ -143,6 +143,23 @@ Moderate.configure do |config|
   # config.ban_handler = ->(user:, by:, reason:) { user.suspend!(reason: reason) }
 
   # ==========================================================================
+  # PUBLIC FORM HUMAN VERIFICATION — optional per-request skips
+  # ==========================================================================
+  #
+  # The notice and appeal forms auto-use rails_cloudflare_turnstile when present,
+  # otherwise they fall back to notice_guard / appeal_guard. If one of your clients
+  # cannot render a browser challenge (for example a native shell or an edge-verified
+  # request), skip the human-verification gate for that request only. Nil by default.
+  #
+  # config.notice_human_verification_skip_if = ->(controller) {
+  #   controller.request.user_agent.to_s.match?(/Hotwire Native/i)
+  # }
+  #
+  # config.appeal_human_verification_skip_if = ->(controller) {
+  #   controller.request.user_agent.to_s.match?(/Hotwire Native/i)
+  # }
+
+  # ==========================================================================
   # SIGNED LINKS — purposes for the signed Global IDs in emails & notices
   # ==========================================================================
   #
