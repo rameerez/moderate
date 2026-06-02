@@ -117,7 +117,7 @@ Exactly **one** adapter ships built in:
 
 | Adapter | Use it for | Notes |
 | --- | --- | --- |
-| `:wordlist` (default) | text | Fast, multilingual, **offline**, zero-dependency. Unicode + leetspeak + spacing-evasion resistant. Ships `en`/`es` lists; extend with `additional_words` / `excluded_words`. |
+| `:wordlist` (default) | text | Fast **offline** baseline, multilingual, zero-dependency. Includes Unicode normalization and common substitution handling, but it is not a contextual classifier. Ships `en`/`es` lists; extend with `additional_words` / `excluded_words`. |
 
 For anything nuanced — context-aware text, images, a hosted moderation API — you **bring and name your own adapter** with `register_adapter` (next section). Two ready-to-copy reference adapters live under [`examples/`](../examples/): `examples/openai_moderation_adapter.rb` (OpenAI `omni-moderation-latest`, text + image, via the `ruby_llm` gem) and `examples/aws_rekognition_adapter.rb` (image moderation via `aws-sdk-rekognition`). They are **not shipped, loaded, or a dependency** — copy one into your app, add its gem to *your* Gemfile, and register it. `moderate` intentionally does **not** ship a built-in "LLM" or image adapter: the contract is `classify(value) → Result`, and whether the backend behind your adapter is an LLM, a hosted endpoint, or a regex is your call, not the gem's.
 

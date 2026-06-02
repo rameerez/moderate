@@ -73,7 +73,7 @@ That's the whole pattern. The rest of this doc fills in the resource definitions
 The same `pending` scope is what a **human admin** reads in `madmin` *and* what an **automated ML consumer** reads in a background job — one queue, two readers. (More on that in [Automated review](#automated-review-the-same-pending-queue).)
 
 > [!IMPORTANT]
-> Decisions are **only** ever made by calling the gem's methods (`resolve!`, `dismiss!`, `uphold!`, `reject!`). Don't let madmin's stock edit form mutate `status` directly. Every decision is atomic, requires a moderator + a note, runs your enforcement (content removal via the reportable's own `remove_reported_field!`, bans via your `ban_handler`), fires the `notify` / `audit` hooks, and stamps the appeal window. A raw `status = "resolved"` update skips all of that and leaves you non-compliant. Keep the models **read-only** in madmin (`form: false`) and route every change through a custom member action — exactly what this guide does.
+> Decisions are **only** ever made by calling the gem's methods (`resolve!`, `dismiss!`, `uphold!`, `reject!`). Don't let madmin's stock edit form mutate `status` directly. Every decision is atomic, requires a moderator + a note, runs your enforcement (content removal via the reportable's own `remove_reported_field!`, bans via your `ban_handler`), fires the `notify` / `audit` hooks, and stamps the appeal window. A raw `status = "resolved"` update skips the audited decision workflow. Keep the models **read-only** in madmin (`form: false`) and route every change through a custom member action — exactly what this guide does.
 
 ---
 
@@ -479,7 +479,7 @@ To be explicit about the boundary this guide sits on:
 | The optional `Moderate::Moderation` controller concern | Auth (`current_user`, admin gate) |
 | Helpers + the evidence snapshot on each record | Your branding, layout, extra columns |
 
-You wire it once and you have a real, compliant moderation queue, in your own admin, in an afternoon.
+You wire it once and you have a real, audited moderation queue, in your own admin, in an afternoon.
 
 ## See also
 

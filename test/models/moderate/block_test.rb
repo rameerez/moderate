@@ -30,6 +30,13 @@ module Moderate
       end
     end
 
+    test "blocked_id has its own index for the incoming blocked_ids_for lookup" do
+      indexes = Moderate::Block.connection.indexes(Moderate::Block.table_name)
+
+      assert indexes.any? { |index| index.columns == ["blocked_id"] },
+        "expected an index on moderate_blocks.blocked_id"
+    end
+
     test "block! audits and notifies :user_blocked ONLY on a real (new) block" do
       audits = []
       notifications = []

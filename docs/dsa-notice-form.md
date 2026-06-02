@@ -2,7 +2,7 @@
 
 The EU **Digital Services Act, Article 16 ("Notice and action")** says every hosting service that serves EU users must offer a **public, electronic** way for *anyone* — not just logged-in users — to flag illegal content, and must **acknowledge receipt** of that notice. This is the form you see at the bottom of X, YouTube, Reddit: "Report illegal content (EU)". It is a hard requirement, it is separate from your in-app "Report" button, and it is exactly the kind of legally-loaded plumbing `moderate` exists to take off your plate.
 
-So `moderate` ships it as a **mountable Rails engine**: one line in your routes and you have a compliant, public notice form. The form, the controller, the model, the bot gate, the rate-limit, and the confirmation-of-receipt are all done for you. The default view is plain, accessible, and CSS-framework-agnostic — and it's **overridable the way Devise does it**: run one generator to eject the templates into your app and style them to match your brand.
+So `moderate` ships it as a **mountable Rails engine**: one line in your routes and you have a public notice form with the DSA Art. 16 mechanics built in. The form, the controller, the model, the bot gate, the rate-limit, and the confirmation-of-receipt are all done for you. The default view is plain, accessible, and CSS-framework-agnostic — and it's **overridable the way Devise does it**: run one generator to eject the templates into your app and style them to match your brand.
 
 It is also **completely optional**. If you'd rather build the public notice page yourself (you already have a design system, you want it inside an existing controller, whatever), don't mount the engine — use `Moderate::Report` (with `intake_kind: "dsa"`) directly and skip everything below. The engine is a convenience, not a dependency.
 
@@ -47,7 +47,7 @@ rails generate moderate:views
 
 Most of `moderate` is deliberately **UI-agnostic** — Trust & Safety lives in admin surfaces, and we don't presume to own your admin chrome. The DSA notice form is the **one exception**, for three reasons:
 
-1. **It must exist and it must be public.** Unlike the admin queue (which you'd build anyway), the Art. 16 form is a legal must-have that has nothing to do with your product UI. Shipping it means most apps get compliant with one line instead of researching the regulation.
+1. **It must exist and it must be public.** Unlike the admin queue (which you'd build anyway), the Art. 16 form is a legal must-have that has nothing to do with your product UI. Shipping it means most apps get the required intake mechanism with one line instead of researching the regulation.
 2. **The fields are dictated by law, not by you.** The legal-reason taxonomy, the good-faith statement, the "exact URL" requirement, the EU member-state selector — these come straight from the DSA. There's no product decision to make, so there's nothing to design. We can ship a correct default.
 3. **You still own the look.** A bundled-but-overridable view is the best of both: it works out of the box, and you can make it yours without forking the gem.
 
@@ -361,7 +361,7 @@ Moderate.configure do |config|
 end
 ```
 
-Every one of these has a sensible default, so `mount Moderate::Engine => "/<your-path>"` with an otherwise-empty config gives you a working, compliant form. See the [main configuration reference](../README.md#configuration-reference) for the rest of `moderate`.
+Every one of these has a sensible default, so `mount Moderate::Engine => "/<your-path>"` with an otherwise-empty config gives you a working public notice form with the gem-owned Art. 16 mechanics. See the [main configuration reference](../README.md#configuration-reference) for the rest of `moderate`.
 
 ## See also
 

@@ -119,7 +119,7 @@ class CreateModerateTables < ActiveRecord::Migration[7.1]
     # ---------------------------------------------------------------------------
     create_table :moderate_blocks, id: primary_key_type do |t|
       t.references :blocker, type: foreign_key_type, null: false
-      t.references :blocked, type: foreign_key_type, null: false
+      t.references :blocked, type: foreign_key_type, null: false, index: { name: "index_moderate_blocks_on_blocked_id" }
 
       t.timestamps
     end

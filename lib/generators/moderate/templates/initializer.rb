@@ -34,7 +34,8 @@ Moderate.configure do |config|
   # bring-your-own (`register_adapter`, below):
   #
   #   :wordlist - fast, multilingual, offline wordlist (ships en/es). The ONLY
-  #               built-in. Unicode + leetspeak + spacing-evasion resistant.
+  #               built-in. Fast offline baseline; register a remote/contextual
+  #               adapter when you need stronger checks.
   #
   # Default: :wordlist
   # config.filter_adapter = :wordlist

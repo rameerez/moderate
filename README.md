@@ -5,7 +5,9 @@
 > [!TIP]
 > **🚀 Ship your next Rails app 10x faster!** I've built **[RailsFast](https://railsfast.com/?ref=moderate)**, a production-ready Rails boilerplate template that comes with everything you need to launch a software business in days, not weeks. Go [check it out](https://railsfast.com/?ref=moderate)!
 
-`moderate` gives your Rails app a complete **Trust & Safety** layer — let users **report** abusive content, **block** each other, **filter** objectionable text and images before they're posted, and run a **moderation queue** your admins actually use. It ships **DSA-compliant** (EU Digital Services Act) and aligned with the **Apple App Store** and **Google Play** review guidelines for user-generated content, so you stop leaving store approvals and legal exposure to chance.
+`moderate` gives your Rails app a complete **Trust & Safety** layer — let users **report** abusive content, **block** each other, **filter** objectionable text and images before they're posted, and run a **moderation queue** your admins actually use. It ships **DSA-aligned primitives** (EU Digital Services Act) and Apple App Store / Google Play UGC mechanisms, so the core reporting, blocking, notice, appeal, transparency, and audit workflows are not scattered through your app.
+
+It is not a compliance certificate. You still own your policies, legal review, published contact information, jurisdiction-specific obligations, and day-to-day moderation operations. For example, EU DSA Article 19/24 complaint-handling and transparency duties have size/tier carve-outs (including micro/small enterprise exemptions); `moderate` gives you the mechanisms when you need them, not a legal conclusion that every app must use every surface.
 
 It reads like plain English. Make any model reportable:
 
@@ -54,7 +56,7 @@ It's the kind of plumbing nobody wants to build, everybody rebuilds, and almost 
 - **Block** users (bidirectional), enforced everywhere a blocked pair could reconnect.
 - **Filter** text and images before they're posted (`:off` / `:block` / `:flag`), with pluggable backends — a built-in offline wordlist, plus ready-to-copy reference adapters in `examples/` (OpenAI, AWS Rekognition) or your own.
 - **Moderate** from a queue: remove content, ban users, dismiss, all audited.
-- **Comply**: DSA notice-and-action (Art. 16), statement of reasons (Art. 17), internal appeals (Art. 20), transparency counters (Art. 24); Apple Guideline 1.2 and Google Play UGC requirements.
+- **Align** with the core DSA / store-review mechanisms: notice-and-action (Art. 16), statement of reasons (Art. 17), internal appeals (Art. 20), transparency counters (Art. 24); Apple Guideline 1.2 and Google Play UGC requirements.
 
 It works standalone, and gets better with the rest of the ecosystem.
 
@@ -223,7 +225,7 @@ Every backend implements the same tiny contract — `classify(value) → Moderat
 
 | Adapter | Use it for | Notes |
 | --- | --- | --- |
-| `:wordlist` (built-in, default) | text | Fast, multilingual, offline, zero-dependency. Unicode + leetspeak + spacing-evasion resistant. Ships `en`/`es` lists; add your own. The only adapter the gem ships. |
+| `:wordlist` (built-in, default) | text | Fast offline baseline, multilingual, zero-dependency. Includes Unicode normalization and common substitution handling, but it is not a contextual classifier. Ships `en`/`es` lists; add your own. The only adapter the gem ships. |
 | OpenAI (reference adapter — [`examples/openai_moderation_adapter.rb`](examples/openai_moderation_adapter.rb)) | **text *and* image** | OpenAI `omni-moderation-latest` via the `ruby_llm` gem — **free**, multimodal, its category set IS the canonical taxonomy + `0..1` scores. Copy it in, `gem "ruby_llm"`, `register_adapter(:openai, …)`. Runs **async** (`Moderate::ClassifyJob`) in `:flag` mode. |
 | AWS Rekognition (reference adapter — [`examples/aws_rekognition_adapter.rb`](examples/aws_rekognition_adapter.rb)) | images / avatars | `detect_moderation_labels` via `aws-sdk-rekognition`, with its taxonomy mapped onto the canonical labels. Copy it in, `gem "aws-sdk-rekognition"`, `register_adapter(:rekognition, …)`. Async, `:flag` mode. |
 | *your own* | anything | `register_adapter(:replicate, …)` / Perspective / a self-hosted model — any object responding to `classify`. No built-in pretends the backend must be an "LLM". |
