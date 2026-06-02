@@ -1,15 +1,21 @@
-# 🛡️ `moderate` - Trust & Safety for your Rails app (report, block, filter, comply)
+# 🛡️ `moderate` -  Let your Rails users report content and block each other (Trust & Safety)
 
 [![Gem Version](https://badge.fury.io/rb/moderate.svg)](https://badge.fury.io/rb/moderate) [![Build Status](https://github.com/rameerez/moderate/workflows/Tests/badge.svg)](https://github.com/rameerez/moderate/actions)
 
 > [!TIP]
 > **🚀 Ship your next Rails app 10x faster!** I've built **[RailsFast](https://railsfast.com/?ref=moderate)**, a production-ready Rails boilerplate template that comes with everything you need to launch a software business in days, not weeks. Go [check it out](https://railsfast.com/?ref=moderate)!
 
-`moderate` gives your Rails app a complete **Trust & Safety** layer — let users **report** abusive content, **block** each other, **filter** objectionable text and images before they're posted, and run a **moderation queue** your admins actually use. It ships **DSA-aligned primitives** (EU Digital Services Act) and Apple App Store / Google Play UGC mechanisms, so the core reporting, blocking, notice, appeal, transparency, and audit workflows are not scattered through your app.
+`moderate` gives your Rails app a complete **Trust & Safety** system.
 
-It is not a compliance certificate. You still own your policies, legal review, published contact information, jurisdiction-specific obligations, and day-to-day moderation operations. For example, EU DSA Article 19/24 complaint-handling and transparency duties have size/tier carve-outs (including micro/small enterprise exemptions); `moderate` gives you the mechanisms when you need them, not a legal conclusion that every app must use every surface.
+Trust & Safety (T&S) is the system within an app that lets users **report** abusive content, **block** each other, **filter** objectionable text and images before they're posted (profanity, bad words, NSFW / nudity, etc.), and run a **moderation queue** your admins actually use. It also allows you to easily plug in automated AI moderation systems like **OpenAI Moderation** or **AWS Rekognition** to quickly filter, flag and/or automatically block harmful content (text or image).
 
-It reads like plain English. Make any model reportable:
+If you have an app where users can upload / generate content or send messages to each other, you probably need a Trust & Safety system.
+
+`moderate` ships with mechanisms aligned with the **DSA** (EU Digital Services Act), and also aligned with the **Apple App Store** and Android's **Google Play** directives for User-Generated Content (UGC) in their app stores.
+
+## 👨‍💻 Example
+
+`moderate` reads like plain English. Make any model reportable:
 
 ```ruby
 class Comment < ApplicationRecord
@@ -24,7 +30,7 @@ current_user.block!(@other_user)
 current_user.blocks?(@other_user)   # => true
 ```
 
-Filter content before it's ever saved — one line:
+Filter content before it's ever saved with just one line:
 
 ```ruby
 class Message < ApplicationRecord
@@ -39,42 +45,10 @@ Moderate::Report.pending           # everything awaiting a decision
 report.resolve!(by: current_user, remove_content: true, ban_user: true, note: "Hate speech")
 ```
 
-That's the whole idea: **the messy, legally-loaded plumbing every social/UGC app needs — report, block, filter, moderate, appeal, comply — as one coherent, Ruby-esque gem** instead of scattered, half-finished, store-rejecting DIY code.
+That's the whole idea: **the messy, legally-loaded plumbing every social/UGC app needs (report, block, filter, moderate, appeal, comply) as one coherent Ruby gem** instead of scattered, half-finished, store-rejecting DIY code.
 
 > [!NOTE]
-> `moderate` is **UI-agnostic by design**: most Trust & Safety lives in *admin* surfaces, so the gem ships the **primitives** (models, services, helpers, controller concerns) and lets you **bring your own UI**. It plugs into [`madmin`](https://github.com/excid3/madmin) (or any admin) in minutes — see [Admin & moderation queue](#-admin--the-moderation-queue). It also snaps into the rest of the ecosystem: [`goodmail`](https://github.com/rameerez/goodmail) for decision emails, [`telegrama`](https://github.com/rameerez/telegrama) for admin alerts, and [`noticed`](https://github.com/excid3/noticed) for multi-channel notifications — all through one `notify` hook.
-
----
-
-## Why this gem exists
-
-Every app with user-generated content eventually faces the same wall. A user posts something vile, another user wants them gone, Apple rejects your build for "no way to report objectionable content," and a Spanish lawyer emails you about the Digital Services Act. So you start bolting on a `reports` table, a `blocks` table, a profanity regex, an admin page, a "notify the reporter" email… and it's suddenly a sprawling, half-correct subsystem entangled with your core app.
-
-It's the kind of plumbing nobody wants to build, everybody rebuilds, and almost everybody ships *incomplete* — which is exactly what gets apps rejected from the stores and exposed under the DSA. `moderate` is the single, opinionated, batteries-included source of truth for it:
-
-- **Report** users and content (in-app), with evidence snapshots and a real decision workflow.
-- **Block** users (bidirectional), enforced everywhere a blocked pair could reconnect.
-- **Filter** text and images before they're posted (`:off` / `:block` / `:flag`), with pluggable backends — a built-in offline wordlist, plus ready-to-copy reference adapters in `examples/` (OpenAI, AWS Rekognition) or your own.
-- **Moderate** from a queue: remove content, ban users, dismiss, all audited.
-- **Align** with the core DSA / store-review mechanisms: notice-and-action (Art. 16), statement of reasons (Art. 17), internal appeals (Art. 20), transparency counters (Art. 24); Apple Guideline 1.2 and Google Play UGC requirements.
-
-It works standalone, and gets better with the rest of the ecosystem.
-
-## What `moderate` does and doesn't do
-
-**Does:**
-- User & content **reporting** (in-app) + a public **DSA legal-notice** intake form.
-- **Blocking** with a single source-of-truth query you enforce in search, messaging, profiles, anywhere.
-- **Pre-publication content filtering** with three modes and pluggable adapters — the built-in offline wordlist (text), plus image/LLM moderation via reference adapters you register (see `examples/`).
-- A **moderation queue** with audited resolve / dismiss / remove-content / ban actions.
-- **Appeals**, **statement-of-reasons** notifications, and **transparency** aggregation for the DSA.
-- Optional **audit** and **notification** hooks that fan out to your mailer / admin alerts / push.
-
-**Doesn't** (on purpose — these are other tools' jobs):
-- Authentication / current-user (that's Devise — you tell `moderate` your user class).
-- Sending the actual emails/push (that's [`goodmail`](https://github.com/rameerez/goodmail) / [`noticed`](https://github.com/excid3/noticed) — `moderate` just emits events).
-- The admin UI chrome (that's [`madmin`](https://github.com/excid3/madmin) / your app — `moderate` gives you the data + primitives).
-- A bulletproof ML classifier out of the box (the default text filter is a fast, multilingual wordlist; bring an LLM/image adapter when you want one).
+> `moderate` is **UI-agnostic by design**: most of a Trust & Safety system lives in *admin* surfaces, so the gem ships the **primitives** (models, services, helpers, controller concerns) and lets you **build your own UI**. It plugs into [`madmin`](https://github.com/excid3/madmin) (or any admin system) in minutes; see [Admin & moderation queue](#-admin--the-moderation-queue).
 
 ---
 
@@ -114,7 +88,42 @@ class Message < ApplicationRecord
 end
 ```
 
-That's it — you now have reporting, blocking, filtering, and a moderation queue. Everything below is detail.
+That's it. You now have reporting, blocking, filtering, and a moderation queue. Everything below is detail.
+
+---
+
+## Why this gem exists
+
+Every app with user-generated content eventually faces the same wall. A user posts something vile, another user wants them gone, Apple rejects your build for "no way to report objectionable content," and a Spanish lawyer emails you about the Digital Services Act. So you start bolting on a `reports` table, a `blocks` table, a profanity regex, an admin page, a "notify the reporter" email… and it's suddenly a sprawling, half-correct subsystem entangled with your core app.
+
+It's the kind of plumbing nobody wants to build, everybody rebuilds, and almost everybody ships *incomplete* — which is exactly what gets apps rejected from the stores and exposed under the DSA. `moderate` is the single, opinionated, batteries-included source of truth for it:
+
+- **Report** users and content (in-app), with evidence snapshots and a real decision workflow.
+- **Block** users (bidirectional), enforced everywhere a blocked pair could reconnect.
+- **Filter** text and images before they're posted (`:off` / `:block` / `:flag`), with pluggable backends — a built-in offline wordlist, plus ready-to-copy reference adapters in `examples/` (OpenAI, AWS Rekognition) or your own.
+- **Moderate** from a queue: remove content, ban users, dismiss, all audited.
+- **Align** with the core DSA / store-review mechanisms: notice-and-action (Art. 16), statement of reasons (Art. 17), internal appeals (Art. 20), transparency counters (Art. 24); Apple Guideline 1.2 and Google Play UGC requirements.
+
+Typical offending content include categories like these, all covered by the `moderate` gem: `harassment`, `hate`, `threats`, `sexual_content`, `spam`, `fraud`, `unsafe_behavior`, `illegal_content`, `privacy`, `child_safety`, `other`, `hate_abuse_harassment`, `violent_speech`, `graphic_violent_media`, `illegal_regulated_behaviors`, `impersonation`, `adult_sexual_content`, `private_non_consensual_content`, `suicide_self_harm`, `terrorism_violent_extremism`, `scam_fraud`
+
+> [!IMPORTANT]
+> The `moderate` gem is not a compliance certificate. You still own your policies, legal review, published contact information, jurisdiction-specific obligations, and day-to-day moderation operations. For example, EU DSA Article 19/24 complaint-handling and transparency duties have size/tier carve-outs (including micro/small enterprise exemptions); `moderate` just gives you the mechanisms when you need them, not a legal conclusion that every app must use every surface.
+
+## What `moderate` does and doesn't do
+
+**Does:**
+- User & content **reporting** (in-app) + a public **DSA legal-notice** intake form.
+- **Blocking** with a single source-of-truth query you enforce in search, messaging, profiles, anywhere.
+- **Pre-publication content filtering** with three modes and pluggable adapters — the built-in offline wordlist (text), plus image/LLM moderation via reference adapters you register (see `examples/`).
+- A **moderation queue** with audited resolve / dismiss / remove-content / ban actions.
+- **Appeals**, **statement-of-reasons** notifications, and **transparency** aggregation for the DSA.
+- Optional **audit** and **notification** hooks that fan out to your mailer / admin alerts / push.
+
+**Doesn't** (on purpose — these are other tools' jobs):
+- Authentication / current-user (that's Devise — you tell `moderate` your user class).
+- Sending the actual emails/push (that's [`goodmail`](https://github.com/rameerez/goodmail) / [`noticed`](https://github.com/excid3/noticed) — `moderate` just emits events).
+- The admin UI chrome (that's [`madmin`](https://github.com/excid3/madmin) / your app — `moderate` gives you the data + primitives).
+- A bulletproof ML classifier out of the box (the default text filter is a fast, multilingual wordlist; bring an LLM/image adapter when you want one).
 
 ---
 

@@ -18,10 +18,10 @@ Play **aligned** primitives. (First cut ships as `1.0.0.beta1`.)
 
 ### Added
 
-- **Reporting.** `Moderate::Report` plus the `reportable :fields` macro and
+- **Reporting.** `Moderate::Report` plus the `has_reportable_content :fields` macro and
   `Actor#report!(reportable, category:, details:)`. Reports and DSA notices share one model
   and one queue (`intake_kind: "community" | "dsa"`).
-- **Blocking.** `Moderate::Block`, the `has_moderation_capabilities` actor macro, and
+- **Blocking.** `Moderate::Block`, the `has_reporting_and_blocking` actor macro, and
   `block!` / `unblock!` / `blocks?` / `blocked_by?` / `blocked_with?`. `Moderate.blocked_ids_for(user)`
   is the bidirectional single source of truth you compose into feed/search/inbox queries.
   Optional `config.on_block` teardown hook runs inside the block transaction.
@@ -65,7 +65,7 @@ Play **aligned** primitives. (First cut ships as `1.0.0.beta1`.)
 
 - The 0.x profanity validator still loads: `validates :field, moderate: true` continues to work
   via compatibility shims, so existing apps keep validating. To adopt 1.0, add
-  `has_moderation_capabilities` to your user model and `reportable` / `moderates` to your
+  `has_reporting_and_blocking` to your user model and `has_reportable_content` / `moderates` to your
   content models, run `rails generate moderate:install`, and migrate.
 
 ## [0.1.0] - 2024-11-03

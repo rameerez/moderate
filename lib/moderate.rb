@@ -17,7 +17,7 @@ require_relative "moderate/result"
 require_relative "moderate/event"
 require_relative "moderate/configuration"
 
-# The class-level DSL (has_moderation_capabilities / reportable / moderates). Required here,
+# The class-level DSL (has_reporting_and_blocking / has_reportable_content / moderates). Required here,
 # eagerly, because the engine's `moderate.active_record` initializer does
 # `extend Moderate::Macros` inside an `on_load(:active_record)` block — the constant
 # must already be defined by the time that hook fires. It's a plain module that only
@@ -79,7 +79,7 @@ module Moderate
     # swaps `config.user_class` doesn't see a stale lazily-memoized class.
     #
     # IMPORTANT: we do NOT clear the reportable REGISTRY here. Reportable classes are
-    # discovered once, at MODEL LOAD time (the `reportable` macro / `include
+    # discovered once, at MODEL LOAD time (the `has_reportable_content` macro / `include
     # Moderate::Reportable` runs `Moderate.register_reportable(self)` on inclusion).
     # In a booted app (and the eager-loaded test suite) the models load exactly once,
     # so wiping the registry on every `reset!` would leave `Moderate.reportable_classes`
@@ -113,10 +113,10 @@ module Moderate
     # --- Reportable registry --------------------------------------------------
 
     # Auto-discovered set of classes that declared themselves reportable (via the
-    # `reportable` macro or `include Moderate::Reportable`). The Reportable concern
+    # `has_reportable_content` macro or `include Moderate::Reportable`). The Reportable concern
     # calls `Moderate.register_reportable(self)` on inclusion, so there's NO manual
     # registry to maintain — exactly what the README promises ("Reportable classes
-    # are auto-discovered from the `reportable` macro — no manual registry.").
+    # are auto-discovered from the `has_reportable_content` macro — no manual registry.").
     #
     # Stored as a Set of STRING class names (not Class objects) so we never pin a
     # class in memory across a Zeitwerk reload in development; we constantize on read.

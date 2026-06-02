@@ -12,18 +12,19 @@
 #
 # This is safe because the macro methods below only REFERENCE the concern constants
 # inside their bodies (`include Moderate::Actor`), which run when a host model calls
-# `has_moderation_capabilities`/`reportable`/`moderates` — long after boot, when the autoloader
-# is fully wired. So Zeitwerk autoloads each concern lazily on first use.
+# `has_reporting_and_blocking`/`has_reportable_content`/`moderates` — long after
+# boot, when the autoloader is fully wired. So Zeitwerk autoloads each concern
+# lazily on first use.
 module Moderate
   # The class-level DSL the gem adds to every ActiveRecord model.
   #
   # The engine does `ActiveSupport.on_load(:active_record) { extend Moderate::Macros }`,
-  # so `has_moderation_capabilities`, `reportable`, and `moderates` become class methods on
-  # ActiveRecord::Base — readable plain-English declarations that sit alongside the
-  # rest of a host's stack (`has_credits`, `has_wallets`, `has_api_keys`):
+  # so `has_reporting_and_blocking`, `has_reportable_content`, and `moderates` become
+  # class methods on ActiveRecord::Base — readable plain-English declarations that
+  # sit alongside the rest of a host's stack (`has_credits`, `has_wallets`, `has_api_keys`):
   #
-  #   class User    < ApplicationRecord; has_moderation_capabilities; end
-  #   class Listing < ApplicationRecord; reportable :title, :description; end
+  #   class User    < ApplicationRecord; has_reporting_and_blocking; end
+  #   class Listing < ApplicationRecord; has_reportable_content :title, :description; end
   #   class Message < ApplicationRecord; moderates :body, mode: :flag; end
   #
   # Each macro is exact sugar for an `include` + a declaration — the README
@@ -32,23 +33,26 @@ module Moderate
   # forward to that concern's declaration method. All behavior lives in the
   # concerns, never here.
   module Macros
-    # `has_moderation_capabilities` — make this model an ACTOR (and, since a user is
-    # usually itself reportable, a reportable too): report!/block!/unblock!/blocks?/
-    # blocked_with?, the block & report associations, and the be-banned target.
+    # `has_reporting_and_blocking` — make this model an ACTOR in the Trust & Safety
+    # system: it can report content/users and block/unblock other users
+    # (report!/block!/unblock!/blocks?/blocked_by?/blocked_with?, plus the block &
+    # report associations), and — since the actor is usually itself reportable and is
+    # the be-banned target — it's also made reportable. One macro, both halves.
     #
     # Equivalent to `include Moderate::Actor`. Idempotent: re-declaring (or both
     # macro + explicit include) won't double-include.
-    def has_moderation_capabilities
+    def has_reporting_and_blocking
       include Moderate::Actor unless include?(Moderate::Actor)
     end
 
-    # `reportable(*fields)` — make this content reportable, optionally narrowing to
-    # specific fields. Bare `reportable` (no fields) means "the whole record is
-    # reportable" (the field whitelist stays empty, and a blank reported_field is
-    # then allowed — see Reportable#reportable_field_allowed?).
+    # `has_reportable_content(*fields)` — mark this model as REPORTABLE content,
+    # optionally narrowing to specific fields. Bare `has_reportable_content` (no
+    # fields) means "the whole record is reportable" (the field whitelist stays
+    # empty, and a blank reported_field is then allowed — see
+    # Reportable#reportable_field_allowed?).
     #
     # Equivalent to `include Moderate::Reportable` + `reportable_fields(*fields)`.
-    def reportable(*fields)
+    def has_reportable_content(*fields)
       include Moderate::Reportable unless include?(Moderate::Reportable)
       reportable_fields(*fields) if fields.any?
       self

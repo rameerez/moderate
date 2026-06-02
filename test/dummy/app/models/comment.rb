@@ -9,7 +9,7 @@
 #                       objectionable body is rejected synchronously with a
 #                       validation error (errors.add(:body, :objectionable_content)).
 class Comment < ApplicationRecord
-  reportable :body
+  has_reportable_content :body
   moderates :body
 
   # Every comment belongs to a user; that user is who a decision notifies and a ban

@@ -17,7 +17,7 @@ module Moderate
     #     two front doors.
     #
     # This object is HOST-AGNOSTIC: it never references a concrete content type. The
-    # `reportable` is any `Moderate::Reportable` record (polymorphic), the actor is
+    # `has_reportable_content` is any `Moderate::Reportable` record (polymorphic), the actor is
     # whatever `Moderate.user_class` resolves to, and notification/audit go through
     # the configured hooks — never a hard-wired mailer.
     class IntakeReport

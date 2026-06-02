@@ -161,6 +161,19 @@ Moderate.configure do |config|
   # }
 
   # ==========================================================================
+  # PUBLIC TRANSPARENCY REPORT (DSA Art. 24) — opt-in
+  # ==========================================================================
+  #
+  # OFF by default. A *live* transparency portal is not itself a legal requirement:
+  # the DSA obligation is to *publish* a report at least annually (a static page/file
+  # is fine), and micro/small enterprises are exempt from the transparency tier
+  # entirely (Art. 15(2) / Art. 19). Turn it on to expose the mounted
+  # `<mount>/transparency` page; left off, that route 404s and the counts are never
+  # published. The aggregation is still queryable in code so you can build your own.
+  #
+  # config.transparency_report_enabled = true
+
+  # ==========================================================================
   # SIGNED LINKS — purposes for the signed Global IDs in emails & notices
   # ==========================================================================
   #

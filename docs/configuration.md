@@ -62,7 +62,7 @@ The model that **acts** in your Trust & Safety system: it reports, it blocks, it
 
 ```ruby
 class User < ApplicationRecord
-  has_moderation_capabilities # gains report!/block!/blocks?/blocked_with?…
+  has_reporting_and_blocking # gains report!/block!/blocks?/blocked_with?…
   # include Moderate::Actor # the documented, exactly-equivalent include form
 end
 ```
@@ -294,11 +294,11 @@ Config sets defaults; the model macros consume them. The two halves of the API:
 
 | In the model | In the initializer | What it controls |
 | --- | --- | --- |
-| `has_moderation_capabilities` (or `include Moderate::Actor`) | `config.user_class` | Who can report/block and be reported/banned |
-| `reportable :title, :description` (or `include Moderate::Reportable`) | — (auto-discovered) | Which content is reportable, and which fields |
+| `has_reporting_and_blocking` (or `include Moderate::Actor`) | `config.user_class` | Who can report/block and be reported/banned |
+| `has_reportable_content :title, :description` (or `include Moderate::Reportable`) | — (auto-discovered) | Which content is reportable, and which fields |
 | `moderates :body, with:, mode:` | `config.default_filter_mode`, `config.filter_adapter`, `config.filter "…"` | Pre-publication filtering per field |
 
-Both sugar macros have an exactly-equivalent `include` form for include-purists — `has_moderation_capabilities` ⇔ `include Moderate::Actor`, `reportable` ⇔ `include Moderate::Reportable`. They compile to the same thing.
+Both sugar macros have an exactly-equivalent `include` form for include-purists — `has_reporting_and_blocking` ⇔ `include Moderate::Actor`, `has_reportable_content` ⇔ `include Moderate::Reportable`. They compile to the same thing.
 
 ---
 

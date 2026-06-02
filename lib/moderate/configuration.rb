@@ -76,6 +76,7 @@ module Moderate
                   :notice_captcha_verifier, :notice_guard, :notice_human_verification_skip_if,
                   :appeal_form_enabled, :appeal_rate_limit, :appeal_guard,
                   :appeal_human_verification_skip_if, :appeal_return_path,
+                  :transparency_report_enabled,
                   :signed_gid_purposes
 
     def initialize
@@ -148,6 +149,16 @@ module Moderate
       @appeal_guard = nil
       @appeal_human_verification_skip_if = nil
       @appeal_return_path = "/"
+
+      # The public Art. 24 transparency report. OFF by default — opt in with
+      # `config.transparency_report_enabled = true`. A *live* transparency portal is
+      # not itself a legal requirement: the DSA obligation is to *publish* a report at
+      # least annually (a static page/file is fine), and micro/small enterprises are
+      # exempt from the transparency tier entirely (Art. 15(2) / Art. 19). So we don't
+      # publicly expose moderation counts unless the host explicitly turns it on. When
+      # off, the mounted `/transparency` route 404s; the aggregation stays queryable in
+      # code so a host can still build/publish its own report.
+      @transparency_report_enabled = false
 
       @signed_gid_purposes = %i[appeal confirm_notice unsubscribe]
     end

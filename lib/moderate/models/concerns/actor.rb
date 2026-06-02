@@ -3,7 +3,7 @@
 module Moderate
   # The "person who acts" in the Trust & Safety system: the model that reports
   # other content, blocks other actors, gets reported, gets banned. Backs the
-  # `has_moderation_capabilities` macro (and its documented equivalent,
+  # `has_reporting_and_blocking` macro (and its documented equivalent,
   # `include Moderate::Actor`).
   #
   # This is the one model the gem treats as the actor/identity, configured via
@@ -20,7 +20,7 @@ module Moderate
   module Actor
     extend ActiveSupport::Concern
 
-    # A user is also reportable. Pulling Reportable in here means `has_moderation_capabilities`
+    # A user is also reportable. Pulling Reportable in here means `has_reporting_and_blocking`
     # alone gives you both halves (act AND be-acted-on) without a second macro.
     include Moderate::Reportable
 
@@ -60,7 +60,7 @@ module Moderate
     # --- Reporting ------------------------------------------------------------
 
     # File a report from this actor against a piece of content (or another actor —
-    # a user with `has_moderation_capabilities` is itself reportable).
+    # a user with `has_reporting_and_blocking` is itself reportable).
     #
     #   current_user.report!(@message, category: :harassment, details: "...")
     #   current_user.report!(@other_user, category: :impersonation)

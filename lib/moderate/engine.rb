@@ -115,8 +115,8 @@ module Moderate
     #
     # `ActiveSupport.on_load(:active_record)` defers until ActiveRecord::Base is
     # actually defined, so we never force-load AR at boot and we play nicely with
-    # the host's load order. Once it fires, every model gains `has_moderation_capabilities`,
-    # `reportable`, and `moderates` as class methods (the macros that lazily
+    # the host's load order. Once it fires, every model gains `has_reporting_and_blocking`,
+    # `has_reportable_content`, and `moderates` as class methods (the macros that lazily
     # include Moderate::Actor / Moderate::Reportable / Moderate::ContentFilterable).
     #
     # `Moderate::Macros` is require_relative'd by the spine, so the constant resolves

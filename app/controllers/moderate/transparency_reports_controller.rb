@@ -4,6 +4,8 @@ module Moderate
   # Public aggregate transparency report for moderation intake, decisions, appeals,
   # and automated flags.
   class TransparencyReportsController < Moderate::ApplicationController
+    before_action :ensure_transparency_report_enabled!
+
     def show
       @period_start = 1.year.ago.beginning_of_day
       @period_end = Time.current
@@ -23,6 +25,16 @@ module Moderate
     end
 
     private
+
+    # Hard kill-switch: the public transparency report is OFF unless the host opts
+    # in with `config.transparency_report_enabled = true`. Raising RoutingError makes
+    # the mounted route behave as if it doesn't exist (a 404), same pattern as the
+    # notice/appeal form kill-switches.
+    def ensure_transparency_report_enabled!
+      return if Moderate.config.transparency_report_enabled
+
+      raise ActionController::RoutingError, "Moderate transparency report is disabled (config.transparency_report_enabled = false)"
+    end
 
     def median_seconds(pairs)
       values = pairs.filter_map { |created_at, resolved_at| resolved_at && created_at ? (resolved_at - created_at).to_i : nil }.sort

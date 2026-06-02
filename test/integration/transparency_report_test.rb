@@ -4,6 +4,9 @@ require "test_helper"
 
 class TransparencyReportTest < ActionDispatch::IntegrationTest
   test "public transparency report renders aggregate moderation counters" do
+    # The public report is opt-in (off by default — see config.transparency_report_enabled).
+    Moderate.config.transparency_report_enabled = true
+
     Moderate::Report.create!(
       notifier_name: "Notice Sender",
       notifier_email: "notice@example.com",

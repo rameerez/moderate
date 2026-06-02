@@ -28,6 +28,22 @@ module Moderate
         ModerateTestRecorder.clear
       end
 
+      test "Report#resolve! and #dismiss! delegate to the service (the README's plain-English API)" do
+        moderator = User.create!(name: "Mod", email: "mod-delegate@example.com")
+        author = User.create!(name: "Author", email: "author-delegate@example.com")
+        comment = Comment.create!(user: author, body: "ok body")
+
+        report = create_report(reportable: comment, field: "body")
+        report.resolve!(by: moderator, remove_content: true, ban_user: true, note: "Hate speech")
+        report.reload
+        assert_equal "actioned", report.status
+        assert_equal moderator, report.resolved_by
+
+        another = create_report(reportable: comment, field: "body")
+        another.dismiss!(by: moderator, note: "No violation")
+        assert_equal "dismissed", another.reload.status
+      end
+
       test "resolving with actions removes content, bans the owner, audits, and fires both decision events" do
         moderator = User.create!(name: "Mod", email: "mod@example.com")
         author = User.create!(name: "Author", email: "author@example.com")

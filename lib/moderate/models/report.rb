@@ -16,7 +16,7 @@ module Moderate
   # automated-processing disclosure (DSA Art. 16(6)/17(3)(c)), the appeal window
   # (DSA Art. 20), and a signed-GlobalID locator for the public flows. It stays
   # host-agnostic: who "owns" reported content, how content is snapshotted, and
-  # what fields may be reported are all answered by the polymorphic `reportable`
+  # what fields may be reported are all answered by the polymorphic `has_reportable_content`
   # (through the `Moderate::Reportable` interface), never by anything domain-specific.
   class Report < ApplicationRecord
     self.table_name = "moderate_reports"
@@ -337,6 +337,23 @@ module Moderate
       update_column(:appeal_deadline_at, at + APPEAL_WINDOW) if appeal_deadline_at.blank?
     end
 
+    # Resolve this report — model-level sugar over Moderate::Services::ResolveReport,
+    # so a host can write `report.resolve!(by: moderator, remove_content: true,
+    # ban_user: true, note: "…")` instead of constructing the service. The service is
+    # where the real work lives (row lock + re-check open, in-transaction enforcement,
+    # out-of-transaction notify, statement-of-reasons + appeal-window stamping); this
+    # only forwards. `by:` is the moderator; the rest (`note:`, `remove_content:`,
+    # `ban_user:`, `resolution_basis:`) pass straight through.
+    def resolve!(by:, **options)
+      Moderate::Services::ResolveReport.new(self, by: by).resolve!(**options)
+    end
+
+    # Dismiss this report (no action taken) — sugar over
+    # Moderate::Services::ResolveReport#dismiss!.
+    def dismiss!(by:, note:)
+      Moderate::Services::ResolveReport.new(self, by: by).dismiss!(note: note)
+    end
+
     # DSA Art. 17(3)(c): did automated means (a wordlist/image/remote classifier)
     # participate in surfacing or deciding this report? The decision email reads this
     # to truthfully state whether automation was used. We treat the disclosure as
@@ -482,7 +499,7 @@ module Moderate
     end
 
     # The reported field must be one the reportable actually allows to be reported
-    # (declared via `reportable :title, :description`). We ask the reportable via its
+    # (declared via `has_reportable_content :title, :description`). We ask the reportable via its
     # `reportable_field_allowed?` predicate; if it doesn't expose one (a record that
     # isn't a managed reportable), we don't constrain the field.
     def reportable_field_must_be_allowed

@@ -36,7 +36,7 @@ module Moderate
   #     https://eur-lex.europa.eu/eli/reg/2022/2065/oj
   #
   # The documented include form is `include Moderate::Reportable` +
-  # `reportable_fields :a, :b`; the `reportable :a, :b` macro is exact sugar.
+  # `reportable_fields :a, :b`; the `has_reportable_content :a, :b` macro is exact sugar.
   module Reportable
     extend ActiveSupport::Concern
 
@@ -59,7 +59,7 @@ module Moderate
       # Self-register in the gem's reportable registry the moment the concern is
       # included, so `Moderate.reportable_classes` is auto-discovered with NO
       # manual list to maintain (README: "Reportable classes are auto-discovered
-      # from the `reportable` macro — no manual registry."). We register the class
+      # from the `has_reportable_content` macro — no manual registry."). We register the class
       # NAME (the registry stores strings and constantizes lazily) so we never pin
       # the class across a Zeitwerk reload in development.
       Moderate.register_reportable(self)
@@ -85,11 +85,11 @@ module Moderate
     #     is valid whether or not the model declared specific reportable fields. (A
     #     user tapping "Report this comment" doesn't name a field; only the public DSA
     #     notice / a field-targeted in-app flow does.) So a Comment that declares
-    #     `reportable :body` can still be reported as a whole with a nil field.
+    #     `has_reportable_content :body` can still be reported as a whole with a nil field.
     #
     #   - A NAMED field must be in the whitelist. With no fields declared, the
     #     whitelist is empty, so any named field is rejected (there's nothing to
-    #     target field-by-field on a bare-`reportable` record).
+    #     target field-by-field on a bare-`has_reportable_content` record).
     #
     # This is the authorization gate the Report model and the report controller both
     # consult before accepting a `reported_field`.
@@ -106,7 +106,7 @@ module Moderate
     # NO default: a model that can be reported MUST tell the gem who's behind it,
     # because guessing wrong here means notifying or banning the wrong person.
     # We raise a NotImplementedError naming the class so the omission is loud at
-    # the first report, not silent. (A `User` model with `has_moderation_capabilities` is itself
+    # the first report, not silent. (A `User` model with `has_reporting_and_blocking` is itself
     # reportable and returns `self` — see Moderate::Actor.)
     def reported_owner
       raise NotImplementedError,
@@ -170,7 +170,7 @@ module Moderate
     #
     # The `moderate_report_link` helper renders nothing when this is false, and the
     # report controller redirects. Hosts can override for richer rules. (A User with
-    # `has_moderation_capabilities` overrides this in Moderate::Actor to compare ids directly,
+    # `has_reporting_and_blocking` overrides this in Moderate::Actor to compare ids directly,
     # since a user IS its own owner.)
     def report_visible_to?(viewer, field:)
       return false unless reportable_field_allowed?(field)
