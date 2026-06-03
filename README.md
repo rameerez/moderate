@@ -11,6 +11,8 @@ Trust & Safety (T&S) is the system within an app that lets users **report** abus
 
 If you have an app where users can upload / generate content or send messages to each other, you probably need a Trust & Safety system.
 
+![Moderate gem sample use case for reporting profiles and blocking users](/docs/images/moderate-user-report-block-actions.webp)
+
 `moderate` ships with mechanisms aligned with the **DSA** (EU Digital Services Act), and also aligned with the **Apple App Store** and Android's **Google Play** directives for User-Generated Content (UGC) in their app stores.
 
 ## 👨‍💻 Example
