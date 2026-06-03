@@ -1,0 +1,52 @@
+<style>
+  .moderate-page { color: var(--moderate-text, #111827); font-family: var(--moderate-font-family, system-ui, sans-serif); }
+  .moderate-hero { background: var(--moderate-accent, #facc15); padding: 3rem 1.25rem; }
+  .moderate-container { max-width: 56rem; margin: 0 auto; }
+  .moderate-eyebrow { margin: 0; font-size: .75rem; font-weight: 800; text-transform: uppercase; letter-spacing: .12em; color: var(--moderate-muted-text, #374151); }
+  .moderate-title { margin: .5rem 0 0; font-size: clamp(2rem, 6vw, 2.5rem); line-height: 1.1; font-weight: 900; }
+  .moderate-period { margin-top: 1rem; font-size: .875rem; font-weight: 700; color: var(--moderate-muted-text, #374151); }
+  .moderate-main { padding: 2.5rem 1.25rem; }
+  .moderate-grid { display: grid; gap: 1.5rem; }
+  @media (min-width: 768px) { .moderate-grid { grid-template-columns: 1fr 1fr; } }
+  .moderate-card { border: 1px solid rgba(17, 24, 39, .08); border-radius: .5rem; background: white; padding: 1.5rem; box-shadow: 0 1px 2px rgba(17, 24, 39, .04); }
+  .moderate-card h2 { margin: 0; font-size: 1.125rem; font-weight: 900; }
+  .moderate-card dl { display: grid; gap: .75rem; margin: 1rem 0 0; font-size: .875rem; }
+  .moderate-card dl > div { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+  .moderate-card dt { color: var(--moderate-muted-text, #4b5563); }
+  .moderate-card dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 800; }
+  .moderate-card p { margin: 1rem 0 0; color: var(--moderate-muted-text, #6b7280); font-size: .875rem; }
+</style>
+
+<div class="moderate-page">
+  <section class="moderate-hero">
+    <div class="moderate-container">
+      <p class="moderate-eyebrow"><%= t("moderate.transparency.eyebrow", default: "Moderation") %></p>
+      <h1 class="moderate-title"><%= t("moderate.transparency.title", default: "Moderation transparency") %></h1>
+      <p class="moderate-period"><%= t("moderate.transparency.period", default: "Period: %{start} - %{end}", start: l(@period_start.to_date, format: :long), end: l(@period_end.to_date, format: :long)) %></p>
+    </div>
+  </section>
+
+  <main class="moderate-main">
+    <div class="moderate-container moderate-grid">
+      <%= render "summary_card", title: t("moderate.transparency.cards.notices_by_intake", default: "Notices by intake"), rows: @summary[:notices_by_intake] %>
+      <%= render "summary_card", title: t("moderate.transparency.cards.dsa_by_reason", default: "DSA notices by legal reason"), rows: @summary[:dsa_notices_by_legal_reason], translation_scope: "moderation.legal_reasons" %>
+      <%= render "summary_card", title: t("moderate.transparency.cards.actions_by_basis", default: "Actions by basis"), rows: @summary[:actions_by_basis], translation_scope: "moderation.resolution_bases" %>
+      <%= render "summary_card", title: t("moderate.transparency.cards.flags_by_source", default: "Automated flags by source"), rows: @summary[:automated_flags_by_source] %>
+      <%= render "summary_card", title: t("moderate.transparency.cards.appeals_by_status", default: "Appeals by status"), rows: @summary[:appeals_by_status] %>
+
+      <article class="moderate-card">
+        <h2><%= t("moderate.transparency.cards.median_times", default: "Median times") %></h2>
+        <dl>
+          <div>
+            <dt><%= t("moderate.transparency.notice_to_decision", default: "Notice to decision") %></dt>
+            <dd><%= distance_of_time_in_words(@summary[:median_notice_action_seconds].seconds) %></dd>
+          </div>
+          <div>
+            <dt><%= t("moderate.transparency.appeal_to_decision", default: "Appeal to decision") %></dt>
+            <dd><%= distance_of_time_in_words(@summary[:median_appeal_action_seconds].seconds) %></dd>
+          </div>
+        </dl>
+      </article>
+    </div>
+  </main>
+</div>

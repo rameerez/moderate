@@ -1,0 +1,40 @@
+# Spanish blocklist for the built-in :wordlist filter adapter
+# (Moderate::Filters::Wordlist).
+#
+# Same format and rules as en.yml — see that file's header for the full
+# explanation. In short: top-level keys are CANONICAL TAXONOMY categories
+# (Moderate::Label::TAXONOMY / OpenAI omni-moderation-latest:
+# https://developers.openai.com/api/docs/guides/moderation); values are Ruby
+# Regexp source strings matched against normalized (lowercased, NFKD-folded,
+# leetspeak-transliterated, single-spaced) text AND its space-stripped form.
+#
+# This list ships alongside en.yml because the wordlist adapter is "multilingual
+# by default": it loads and merges EVERY bundled locale's list, so an app with a
+# mixed-language audience is covered without configuration. Shipping a real
+# Spanish list (not just English) is deliberate. Write patterns lowercase + ASCII:
+# accents are folded out before matching, so "cabrón" is matched by "cabron".
+
+# Insultos / abuso degradante hacia una persona -> harassment.
+harassment:
+  - "\\bputa\\b"
+  - "\\bputo\\b"
+  - "\\bgilipollas\\b"
+  - "\\bcabr[o0]n\\b"
+  - "\\bzorra\\b"
+  - "\\bmaric[o0]n\\b"
+
+# Amenazas de violencia -> hate/threatening.
+hate/threatening:
+  - "\\bte\\s+voy\\s+a\\s+matar\\b"
+  - "\\bvoy\\s+a\\s+matarte\\b"
+
+# Contenido sexual explícito -> sexual.
+sexual:
+  - "\\bporn[o]?\\s+explicit[o0]\\b"
+  - "\\bsex[o0]\\s+explicit[o0]\\b"
+
+# Solicitud de bienes ilícitos / estafas -> illicit.
+illicit:
+  - "\\bcrypto\\s+gratis\\b"
+  - "\\bdinero\\s+rapido\\b"
+  - "\\bwhatsapp\\s+casino\\b"

@@ -1,0 +1,10 @@
+# frozen_string_literal: true
+
+# Load the dummy application and expose its Rake tasks (db:migrate, db:create, etc.).
+# The engine's top-level Rakefile points APP_RAKEFILE here and loads
+# rails/tasks/engine.rake, so `rake db:migrate:reset` (used by CI before the suite)
+# runs against this dummy. `Rails.application.load_tasks` pulls in the standard
+# Rails task set on top of the application loaded by config/environment.rb.
+require_relative "config/application"
+
+Rails.application.load_tasks

@@ -1,0 +1,10 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Minimal `bin/rails` for the dummy app. It boots the application's command stack
+# so `bin/rails db:migrate`, `bin/rails runner`, etc. work for the engine's test
+# tasks. APP_PATH points at config/application; the standard Rails command loader
+# takes it from there.
+APP_PATH = File.expand_path("../config/application", __dir__)
+require_relative "../config/boot"
+require "rails/commands"

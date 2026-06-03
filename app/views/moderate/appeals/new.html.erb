@@ -1,0 +1,78 @@
+<style>
+  .moderate-page { color: var(--moderate-text, #111827); font-family: var(--moderate-font-family, system-ui, sans-serif); }
+  .moderate-hero { background: var(--moderate-accent, #facc15); padding: 3rem 1.25rem; }
+  .moderate-container { max-width: 42rem; margin: 0 auto; }
+  .moderate-eyebrow { margin: 0; font-size: .75rem; font-weight: 800; text-transform: uppercase; letter-spacing: .12em; color: var(--moderate-muted-text, #374151); }
+  .moderate-title { margin: .5rem 0 0; font-size: clamp(2rem, 6vw, 2.5rem); line-height: 1.1; font-weight: 900; }
+  .moderate-main { padding: 2.5rem 1.25rem; }
+  .moderate-panel { margin-bottom: 1.5rem; border: 1px solid rgba(17, 24, 39, .08); border-radius: .5rem; background: var(--moderate-panel, #f9fafb); padding: 1rem; color: var(--moderate-muted-text, #374151); }
+  .moderate-form { display: grid; gap: 1.25rem; }
+  .moderate-grid { display: grid; gap: 1rem; }
+  @media (min-width: 640px) { .moderate-grid { grid-template-columns: 1fr 1fr; } }
+  .moderate-label { display: block; font-size: .875rem; font-weight: 700; }
+  .moderate-input { box-sizing: border-box; margin-top: .5rem; width: 100%; border: 1px solid rgba(17, 24, 39, .14); border-radius: .5rem; background: white; padding: .75rem 1rem; font: inherit; }
+  .moderate-error { border: 1px solid #fecaca; border-radius: .5rem; background: #fef2f2; padding: .75rem 1rem; color: #991b1b; font-size: .875rem; font-weight: 700; }
+  .moderate-button { width: 100%; border: 0; border-radius: 999px; background: var(--moderate-button, #111827); color: white; padding: .85rem 1rem; font: inherit; font-weight: 900; cursor: pointer; }
+  .moderate-turnstile { display: flex; justify-content: center; }
+</style>
+
+<div class="moderate-page">
+  <section class="moderate-hero">
+    <div class="moderate-container">
+      <p class="moderate-eyebrow"><%= t("moderate.appeals.eyebrow", default: "Moderation") %></p>
+      <h1 class="moderate-title"><%= t("moderate.appeals.title", default: "Appeal a decision") %></h1>
+    </div>
+  </section>
+
+  <main class="moderate-main">
+    <div class="moderate-container">
+      <div class="moderate-panel">
+        <p>
+          <strong><%= t("moderate.appeals.decision", default: "Decision") %></strong>
+          <span><%= @report.id %></span>
+        </p>
+        <% if @report.appeal_deadline_at.present? %>
+          <p><%= t("moderate.appeals.deadline", default: "You can request a free internal review until %{deadline}. A person will review it.", deadline: l(@report.appeal_deadline_at, format: :long)) %></p>
+        <% end %>
+      </div>
+
+      <%= form_with model: @appeal, url: appeals_path(token: params[:token]), scope: :appeal, class: "moderate-form" do |form| %>
+        <%= form.hidden_field :source, value: @appeal.source || "notifier" %>
+
+        <div class="moderate-grid">
+          <div>
+            <%= form.label :appellant_name, t("moderate.appeals.fields.name", default: "Name"), class: "moderate-label" %>
+            <%= form.text_field :appellant_name, class: "moderate-input" %>
+          </div>
+          <div>
+            <%= form.label :appellant_email, t("moderate.appeals.fields.email", default: "Email"), class: "moderate-label" %>
+            <%= form.email_field :appellant_email, required: true, class: "moderate-input" %>
+          </div>
+        </div>
+
+        <div>
+          <%= form.label :reason, t("moderate.appeals.fields.reason", default: "Reason for appeal"), class: "moderate-label" %>
+          <%= form.text_area :reason,
+                rows: 8,
+                maxlength: Moderate::Report::MESSAGE_MAX_LENGTH,
+                required: true,
+                class: "moderate-input",
+                placeholder: t("moderate.appeals.placeholders.reason", default: "Explain why you believe the decision should be reviewed and include any useful context.") %>
+        </div>
+
+        <% if turnstile_widget_required? && respond_to?(:cloudflare_turnstile) %>
+          <div class="moderate-turnstile">
+            <%= cloudflare_turnstile_script_tag if respond_to?(:cloudflare_turnstile_script_tag) %>
+            <%= cloudflare_turnstile %>
+          </div>
+        <% end %>
+
+        <% if @appeal.errors.any? %>
+          <div class="moderate-error"><%= @appeal.errors.full_messages.to_sentence %></div>
+        <% end %>
+
+        <%= form.submit t("moderate.appeals.submit", default: "Submit appeal"), class: "moderate-button" %>
+      <% end %>
+    </div>
+  </main>
+</div>

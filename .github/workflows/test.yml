@@ -1,0 +1,171 @@
+name: Tests
+
+on:
+  pull_request:
+    paths-ignore:
+      - "*.md"
+      - "LICENSE.txt"
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "*.md"
+      - "LICENSE.txt"
+
+jobs:
+  # Main test suite - tests Ruby versions and Rails compatibility with SQLite
+  sqlite:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby_version: ["3.3", "3.4", "4.0"]
+        gemfile:
+          - Gemfile
+          - gemfiles/rails_7.1.gemfile
+          - gemfiles/rails_7.2.gemfile
+          - gemfiles/rails_8.1.gemfile
+
+    env:
+      RAILS_ENV: test
+      BUNDLE_GEMFILE: ${{ github.workspace }}/${{ matrix.gemfile }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Ruby ${{ matrix.ruby_version }}
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby_version }}
+          bundler-cache: true
+
+      - name: Prepare database and run tests
+        # Exercise the real migration path in SQLite too so dummy/test schema
+        # drift is caught in the default matrix, not only adapter-specific jobs.
+        #
+        # Use `db:create db:migrate` rather than `db:migrate:reset`: the reset macro
+        # runs db:drop + db:create + db:migrate IN ONE PROCESS, and on SQLite the
+        # db:migrate step then writes through a stale connection to the just-dropped
+        # file, so nothing persists and the suite boots into "pending migrations"
+        # (PG/MySQL survive it because the DB server reconnects). CI runners start
+        # fresh, so no drop is needed.
+        run: bundle exec rake db:create db:migrate test
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-sqlite-ruby-${{ matrix.ruby_version }}-${{ matrix.gemfile }}
+          path: test/reports/
+          retention-days: 7
+
+  # PostgreSQL compatibility tests
+  postgres:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby_version: ["3.4"]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: moderate_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      RAILS_ENV: test
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/moderate_test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Ruby ${{ matrix.ruby_version }}
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby_version }}
+          bundler-cache: true
+
+      - name: Prepare database
+        # Use db:migrate:reset instead of db:test:prepare to avoid loading schema.rb
+        # which has SQLite-specific defaults that fail on PostgreSQL.
+        # db:migrate:reset does: db:drop, db:create, db:migrate (using migrations, not schema.rb)
+        run: bundle exec rake db:migrate:reset
+
+      - name: Run tests
+        run: bundle exec rake test
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-postgres-ruby-${{ matrix.ruby_version }}
+          path: test/reports/
+          retention-days: 7
+
+  # MySQL compatibility tests
+  mysql:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby_version: ["3.4"]
+
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: moderate_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      RAILS_ENV: test
+      DATABASE_URL: mysql2://root:root@127.0.0.1:3306/moderate_test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Ruby ${{ matrix.ruby_version }}
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby_version }}
+          bundler-cache: true
+
+      - name: Prepare database
+        # Use db:migrate:reset instead of db:test:prepare to avoid loading schema.rb
+        # which has SQLite-specific defaults that fail on MySQL (JSON column defaults).
+        # db:migrate:reset does: db:drop, db:create, db:migrate (using migrations, not schema.rb)
+        run: bundle exec rake db:migrate:reset
+
+      - name: Run tests
+        run: bundle exec rake test
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-mysql-ruby-${{ matrix.ruby_version }}
+          path: test/reports/
+          retention-days: 7

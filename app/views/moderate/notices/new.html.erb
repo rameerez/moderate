@@ -1,0 +1,255 @@
+<%#
+  The default, OVERRIDABLE public DSA Art. 16 "notice and action" form.
+
+  This is the X / YouTube / Reddit-style "Report illegal content (EU)" page. It is
+  deliberately plain: no CSS framework is assumed, every label/hint is pulled
+  through I18n (`moderate.notices.*`), and it themes via CSS custom properties
+  (`:root { --moderate-* }`) so a host can restyle it without forking. To take full
+  control of the markup, eject it with `rails generate moderate:views` — your copy
+  at app/views/moderate/notices/new.html.erb then SHADOWS this one automatically
+  (Rails' view lookup puts the host's app/views ahead of the engine's).
+
+  The form binds a `Moderate::Report` (a notice is NOT a fourth table — it's a
+  Report with intake_kind "dsa") under the `:notice` scope, so params arrive as
+  params[:notice][...] for the controller's strong-params. KEEP ALL THE FIELDS if
+  you customize: they are dictated by DSA Article 16, not by product taste, and they
+  map 1:1 to the model's validations — dropping one makes the notice legally
+  invalid. https://eur-lex.europa.eu/eli/reg/2022/2065/oj (Art. 16)
+
+  PREFILL + LOCK (Art. 16(2)(b)/(c)):
+    * The REPORTED-CONTENT fields (subject URL, reason, details, content type) are
+      prefilled from the query string when the host deep-links here, and stay
+      EDITABLE — the notifier may correct them.
+    * The IDENTITY fields (name/email) are prefilled from Devise `current_user` when
+      someone is logged in, and are LOCKED (readonly) so a notice can't carry a
+      spoofed identity. The controller also re-asserts them server-side on submit.
+%>
+<% legal_reasons = Moderate::Report::DSA_LEGAL_REASONS %>
+<% member_states = Moderate::Report::EU_COUNTRY_CODES %>
+<% content_types = Moderate::Report::CONTENT_TYPES %>
+<%#
+  Identity is "locked" (readonly) whenever it was prefilled from the signed-in user.
+  The controller computes this and hands it over as `@identity_locked`, so the view
+  never reaches for `current_user` itself (it isn't exposed as a view helper on the
+  engine's base controller). The controller ALSO re-derives identity server-side on
+  submit, so even a tampered request that re-enables a locked field can't spoof a
+  name/email onto a legal notice. An anonymous notice (no current_user) leaves these
+  fields fully editable.
+%>
+<% identity_locked = @identity_locked %>
+
+<style>
+  /* Framework-agnostic defaults, all overridable via CSS custom properties so a
+     host can match brand colors without touching this markup. */
+  .moderate-notice {
+    --moderate-max-width: 40rem;
+    --moderate-accent: #111;
+    --moderate-border: #d4d4d4;
+    --moderate-muted: #666;
+    --moderate-radius: 8px;
+    max-width: var(--moderate-max-width);
+    margin: 2rem auto;
+    padding: 0 1rem;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    line-height: 1.5;
+    color: #111;
+  }
+  .moderate-notice h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+  .moderate-notice .moderate-intro { color: var(--moderate-muted); margin-bottom: 1.5rem; }
+  .moderate-notice .moderate-field { margin-bottom: 1.25rem; }
+  .moderate-notice label { display: block; font-weight: 600; margin-bottom: 0.35rem; }
+  .moderate-notice .moderate-hint { display: block; font-weight: 400; color: var(--moderate-muted); font-size: 0.85rem; margin-top: 0.25rem; }
+  .moderate-notice input[type="text"],
+  .moderate-notice input[type="url"],
+  .moderate-notice input[type="email"],
+  .moderate-notice select,
+  .moderate-notice textarea {
+    width: 100%;
+    padding: 0.6rem 0.7rem;
+    border: 1px solid var(--moderate-border);
+    border-radius: var(--moderate-radius);
+    font: inherit;
+    box-sizing: border-box;
+  }
+  .moderate-notice input[readonly] { background: #f4f4f4; color: var(--moderate-muted); cursor: not-allowed; }
+  .moderate-notice .moderate-checkbox { display: flex; gap: 0.5rem; align-items: flex-start; }
+  .moderate-notice .moderate-checkbox input { margin-top: 0.25rem; }
+  .moderate-notice .moderate-checkbox label { font-weight: 400; }
+  .moderate-notice button[type="submit"] {
+    background: var(--moderate-accent);
+    color: #fff;
+    border: 0;
+    border-radius: var(--moderate-radius);
+    padding: 0.7rem 1.25rem;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .moderate-notice .moderate-errors {
+    border: 1px solid #e0a0a0;
+    background: #fbeaea;
+    color: #8a1f1f;
+    border-radius: var(--moderate-radius);
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.25rem;
+  }
+</style>
+
+<div class="moderate-notice">
+  <h1><%= t("moderate.notices.title", default: "Report illegal content (EU)") %></h1>
+  <p class="moderate-intro">
+    <%= t("moderate.notices.intro",
+          default: "Use this form to notify us of content you believe is illegal under EU law (Digital Services Act, Article 16). Anyone can submit a notice — you do not need an account. We confirm receipt by email.") %>
+  </p>
+
+  <% if flash[:alert].present? %>
+    <div class="moderate-errors" role="alert">
+      <%= flash[:alert] %>
+    </div>
+  <% elsif flash[:notice].present? %>
+    <div class="moderate-errors" role="status">
+      <%= flash[:notice] %>
+    </div>
+  <% end %>
+
+  <%# Surface validation errors at the top so the submitter sees why a save failed. %>
+  <% if @report.respond_to?(:errors) && @report.errors.any? %>
+    <div class="moderate-errors" role="alert">
+      <%= @report.errors.full_messages.to_sentence %>
+    </div>
+  <% end %>
+
+  <%#
+    `scope: :notice` makes the params arrive as params[:notice][...], matching the
+    controller's `params.require(:notice)`. `url: notices_path` is the engine's
+    POST route, resolved within the mounted engine (e.g. /trust/notices).
+  %>
+  <%= form_with model: @report, scope: :notice, url: notices_path, method: :post do |form| %>
+
+    <%# Legal reason — the DSA statement-of-reasons taxonomy (Art. 16/17 ground). Editable. %>
+    <div class="moderate-field">
+      <%= form.label :legal_reason, t("moderate.notices.fields.legal_reason", default: "Legal reason") %>
+      <%= form.select :legal_reason,
+            legal_reasons.map { |reason| [t("moderate.legal_reasons.#{reason}", default: reason.to_s.tr("_", " ").capitalize), reason] },
+            { prompt: t("moderate.notices.prompts.legal_reason", default: "Select a reason") },
+            required: true %>
+    </div>
+
+    <%# Exact URLs — "the exact electronic location of that information", Art. 16(2)(b).
+        Prefilled from ?content_url=… (X-style deep link) but EDITABLE: the notifier
+        may correct the link to the specific content they are reporting. One URL per
+        line; the model normalizes into subject_urls and keeps subject_url as first. %>
+    <div class="moderate-field">
+      <%= form.label :subject_urls, t("moderate.notices.fields.content_url", default: "Exact URL of the content") %>
+      <textarea name="notice[subject_urls]" id="notice_subject_urls" rows="3" required="required" placeholder="https://"><%= @report.subject_url_list.join("\n") %></textarea>
+      <span class="moderate-hint">
+        <%= t("moderate.notices.hints.content_url", default: "The exact link to the specific content you are reporting.") %>
+      </span>
+    </div>
+
+    <%# Content type — the host-agnostic bucket the snapshot/queue use. Prefilled from
+        ?content_type=… when it names a valid bucket; editable. %>
+    <div class="moderate-field">
+      <%= form.label :content_type, t("moderate.notices.fields.content_type", default: "Type of content") %>
+      <%= form.select :content_type,
+            content_types.map { |type| [t("moderate.content_types.#{type}", default: type.to_s.tr("_", " ").capitalize), type] },
+            { prompt: t("moderate.notices.prompts.content_type", default: "Select a content type") },
+            required: true %>
+    </div>
+
+    <%# Optional host-side handle/identifier the notice is about (a username, an
+        account id, …). Prefilled from ?content_author= or ?content_id= when the host
+        deep-links here; always EDITABLE and optional. %>
+    <div class="moderate-field">
+      <%= form.label :reported_account_identifier, t("moderate.notices.fields.reported_account_identifier", default: "Account or handle (optional)") %>
+      <%= form.text_field :reported_account_identifier %>
+      <span class="moderate-hint">
+        <%= t("moderate.notices.hints.reported_account_identifier", default: "If the content belongs to a specific account, add its username or handle.") %>
+      </span>
+    </div>
+
+    <%# Explanation — the "sufficiently substantiated explanation", Art. 16(2)(a).
+        Maps to the Report `message` column. Editable. %>
+    <div class="moderate-field">
+      <%= form.label :message, t("moderate.notices.fields.explanation", default: "Explanation") %>
+      <%= form.text_area :message, rows: 6, required: true %>
+      <span class="moderate-hint">
+        <%= t("moderate.notices.hints.explanation", default: "Explain why you believe this content is illegal, with enough detail for us to assess it.") %>
+      </span>
+    </div>
+
+    <%# EU member state — establishes jurisdiction and routing. Editable. %>
+    <div class="moderate-field">
+      <%= form.label :legal_country_code, t("moderate.notices.fields.member_state", default: "EU member state where this is illegal") %>
+      <%= form.select :legal_country_code,
+            member_states.map { |code| [t("moderate.member_states.#{code}", default: code.to_s), code] },
+            { prompt: t("moderate.notices.prompts.member_state", default: "Select a country") },
+            required: true %>
+    </div>
+
+    <%#
+      Notifier identity — Art. 16(2)(c). PREFILLED + LOCKED when a Devise
+      `current_user` is signed in: the fields render readonly so a logged-in notifier
+      can't swap in someone else's name/email, and the controller re-asserts the
+      value server-side on submit (a tampered request can't spoof identity onto a
+      legal notice). For an anonymous notifier the fields are blank and editable.
+      Name is required EXCEPT for `protection_of_minors` notices, where the DSA
+      permits anonymity (the model enforces that carve-out).
+      https://eur-lex.europa.eu/eli/reg/2022/2065/oj (Art. 16(2)(c))
+    %>
+    <div class="moderate-field">
+      <%= form.label :notifier_name, t("moderate.notices.fields.notifier_name", default: "Your name") %>
+      <%= form.text_field :notifier_name, readonly: identity_locked %>
+      <span class="moderate-hint">
+        <% if identity_locked %>
+          <%= t("moderate.notices.hints.identity_locked", default: "Taken from your account.") %>
+        <% else %>
+          <%= t("moderate.notices.hints.notifier_name", default: "Optional only for notices about offences involving minors, where the law permits anonymity.") %>
+        <% end %>
+      </span>
+    </div>
+
+    <div class="moderate-field">
+      <%= form.label :notifier_email, t("moderate.notices.fields.notifier_email", default: "Your email") %>
+      <%= form.email_field :notifier_email, required: true, readonly: identity_locked %>
+      <span class="moderate-hint">
+        <% if identity_locked %>
+          <%= t("moderate.notices.hints.identity_locked", default: "Taken from your account.") %>
+        <% else %>
+          <%= t("moderate.notices.hints.notifier_email", default: "We send the confirmation of receipt and our decision here.") %>
+        <% end %>
+      </span>
+    </div>
+
+    <%# Good-faith attestation — Art. 16(2)(d). MUST be checked; the model rejects
+        the save otherwise (`good_faith_confirmed` has `acceptance: true`). %>
+    <div class="moderate-field moderate-checkbox">
+      <%= form.check_box :good_faith_confirmed, required: true %>
+      <%= form.label :good_faith_confirmed,
+            t("moderate.notices.fields.good_faith", default: "I confirm in good faith that the information and allegations in this notice are accurate and complete.") %>
+    </div>
+
+    <%#
+      Cloudflare Turnstile widget — rendered ONLY when the host has the
+      `rails_cloudflare_turnstile` gem installed. When present, the gem mixes
+      RailsCloudflareTurnstile::ViewHelpers into ActionView (via its railtie), so
+      `cloudflare_turnstile` (the widget) and `cloudflare_turnstile_script_tag` (the
+      loader script) are available here and we render both automatically — the host
+      configures nothing beyond the gem + its keys. The controller auto-verifies the
+      challenge server-side (`validate_cloudflare_turnstile` before_action). When the
+      gem is ABSENT this block is skipped entirely and the gate falls back to
+      `config.notice_guard` (no-op by default), so the form just works.
+      https://github.com/instrumentl/rails-cloudflare-turnstile (README)
+    %>
+    <% if turnstile_widget_required? && respond_to?(:cloudflare_turnstile) %>
+      <div class="moderate-field">
+        <%= cloudflare_turnstile_script_tag if respond_to?(:cloudflare_turnstile_script_tag) %>
+        <%= cloudflare_turnstile %>
+      </div>
+    <% end %>
+
+    <div class="moderate-field">
+      <%= form.submit t("moderate.notices.submit", default: "Submit notice") %>
+    </div>
+  <% end %>
+</div>

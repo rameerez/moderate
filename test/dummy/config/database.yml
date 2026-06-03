@@ -1,0 +1,17 @@
+# Database config for the dummy app's test suite.
+#
+# Default is SQLite (zero-setup, the default matrix leg). The Postgres and MySQL
+# matrix legs in .github/workflows/test.yml set DATABASE_URL, which Rails reads and
+# OVERRIDES this file with automatically (ActiveRecord merges ENV["DATABASE_URL"]
+# over the YAML connection) — so we don't need separate adapter blocks here, the
+# one DATABASE_URL drives the whole CI database matrix.
+#
+# We still keep an explicit `url:` reference so the intent is visible and so an
+# adapter named in DATABASE_URL (postgresql/mysql2) wins cleanly over the sqlite3
+# adapter named below.
+test:
+  adapter: sqlite3
+  database: <%= File.expand_path("../db/test.sqlite3", __dir__) %>
+  pool: 5
+  timeout: 5000
+  url: <%= ENV["DATABASE_URL"] %>

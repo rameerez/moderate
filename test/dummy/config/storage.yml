@@ -1,0 +1,10 @@
+# Active Storage services for the dummy app.
+#
+# Only the :test service is defined — the avatar/image-field filtering tests attach
+# a blob to exercise the :image adapter's "flag every uploaded image for human
+# review" path, and the :test service writes to a throwaway tmp dir with no S3,
+# credentials, or network. config/application.rb selects it
+# (config.active_storage.service = :test).
+test:
+  service: Disk
+  root: <%= File.expand_path("../tmp/storage", __dir__) %>

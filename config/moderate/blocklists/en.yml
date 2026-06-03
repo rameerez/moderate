@@ -1,0 +1,81 @@
+# English blocklist for the built-in :wordlist filter adapter
+# (Moderate::Filters::Wordlist).
+#
+# ── Format ───────────────────────────────────────────────────────────────────
+# Top-level keys are CANONICAL TAXONOMY categories (see Moderate::Label::TAXONOMY,
+# itself the OpenAI omni-moderation-latest taxonomy:
+# https://developers.openai.com/api/docs/guides/moderation). Using the canonical
+# vocabulary here — instead of the ad-hoc bucket names a host might invent — is the
+# whole point: every adapter (this offline wordlist, the OpenAI endpoint, a host's
+# own backend) emits the SAME category set, so Moderate::Flag, the DSA Art. 17
+# statement of reasons, and the Art. 24 transparency counters all aggregate over
+# one set. A category may be a bare top-level slug ("hate") or a slash-qualified
+# subcategory ("hate/threatening") — both are valid canonical slugs.
+#
+# Each category maps to a list of REGEX patterns (Ruby Regexp source strings).
+# Patterns are matched against NORMALIZED text — already lowercased, NFKD-folded
+# (accents stripped), leetspeak-transliterated (0->o, 3->e, @->a, ...), and
+# collapsed to single spaces — AND against the same text with all spaces removed
+# (to defeat "f u c k"-style spacing evasion). So write patterns in lowercase,
+# ASCII, space-separated form; the adapter handles the evasion-resistance.
+#
+# ── Why labels, not the raw word, are stored ─────────────────────────────────
+# The adapter records the matched CATEGORY, never the offending substring, so a
+# validation error or a queue entry never echoes abusive language back into the UI
+# or the logs. (Same discipline as Apple Guideline 1.2 / Google Play UGC reviews
+# expect: https://developer.apple.com/app-store/review/guidelines/#user-generated-content
+# https://support.google.com/googleplay/android-developer/answer/9876937)
+#
+# ── This is a SEED, not a complete classifier ────────────────────────────────
+# A static wordlist is a fast, offline, multilingual FIRST line of defense — it
+# satisfies the store bar of "a method for filtering objectionable UGC before
+# posting" and catches the obvious cases with zero dependencies and zero latency.
+# It is deliberately small and conservative (false positives block real users).
+# For nuanced, context-aware moderation, register the :openai adapter or your own.
+# Extend without editing the gem via `config.additional_words` /
+# `config.excluded_words`.
+
+# Slurs / dehumanizing abuse directed at protected groups -> hate.
+# Write plain word-boundary patterns; the adapter's normalization (NFKD fold,
+# leetspeak, punctuation collapse) plus the compact-form match handle spacing and
+# symbol evasion, so there's no need to hand-encode "n i g g e r" variants here.
+hate:
+  - "\\bnigg(er|a)\\b"
+  - "\\bfagg?ot\\b"
+  - "\\bkike\\b"
+  - "\\bspic\\b"
+  - "\\bchink\\b"
+  - "\\btrann(y|ie)\\b"
+
+# Threats of violence / encouraging self-harm of another -> hate/threatening.
+# (Direct threats and incitement to self-harm, e.g. "I'm going to kill you" / "kys".)
+hate/threatening:
+  - "\\bkill\\s+yourself\\b"
+  - "\\bkys\\b"
+  - "\\bi\\s*(am|m)\\s+going\\s+to\\s+kill\\s+you\\b"
+
+# Insults / demeaning abuse aimed at an individual -> harassment.
+harassment:
+  - "\\bbitch\\b"
+  - "\\bcunt\\b"
+  - "\\bfuck(er|ing|ed)?\\b"
+  - "\\basshole\\b"
+  - "\\bretard(ed)?\\b"
+  - "\\bwh[o0]re\\b"
+
+# Explicit sexual content -> sexual.
+sexual:
+  - "\\bporn(o|ography)?\\b"
+  - "\\bnude\\s+pics?\\b"
+  - "\\bexplicit\\s+sex\\b"
+
+# Graphic depiction of violence -> violence/graphic.
+violence/graphic:
+  - "\\bgore\\b"
+  - "\\bbeheading\\b"
+
+# Solicitation of illegal/regulated goods or scams -> illicit.
+illicit:
+  - "\\bfree\\s+crypto\\b"
+  - "\\bquick\\s+money\\b"
+  - "\\bwhatsapp\\s+casino\\b"
