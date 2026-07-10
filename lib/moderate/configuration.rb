@@ -230,6 +230,20 @@ module Moderate
       @adapters.key?(normalize_name(name))
     end
 
+    # Is the adapter registered under `name` background-only? Same probe the
+    # :block validator uses (`validate_block_mode_adapter!`): an adapter is
+    # async ONLY if it explicitly answers `synchronous? == false`; adapters
+    # that don't expose the predicate are assumed synchronous — the
+    # conservative default that keeps simple adapters working. The :flag
+    # enforcement path reads this to decide inline-classify vs routing the
+    # work through Moderate::ClassifyJob (see ContentFilterable).
+    def adapter_async?(name)
+      adapter = adapter_for(name)
+      return false if adapter.nil?
+
+      adapter.respond_to?(:synchronous?) && !adapter.synchronous?
+    end
+
     # --- Filters --------------------------------------------------------------
 
     # Declare a per-field filter policy in the initializer — the twin of

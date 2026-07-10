@@ -16,16 +16,30 @@ module Moderate
   #            Configuration validates that invariant (README: ":block requires a
   #            synchronous adapter").
   #   :flag  — an AFTER_COMMIT side effect. The save SUCCEEDS, then (only if the
-  #            field actually changed and the value trips the filter) a
-  #            `Moderate::Flag` is filed for review.
+  #            field actually changed) the value is classified and a
+  #            `Moderate::Flag` is filed when it trips. HOW it's classified
+  #            depends on the adapter: a synchronous adapter (the wordlist)
+  #            classifies inline right here; an ASYNC adapter (`synchronous? ==
+  #            false` — any remote moderation API) is routed through
+  #            `Moderate::ClassifyJob`, because blocking network I/O must never
+  #            run inside the request that saved the content. The job re-reads
+  #            the current value and files the Flag itself.
   #
   # WHY :flag lives in after_commit and not in a validator (this is the whole
   # reason `:flag` is a `moderates` mode you can't hand-roll with `validates`):
   # validators must be side-effect-free, and a Flag created inside a transaction
   # that later rolls back would silently vanish — you'd think you flagged something
   # you didn't. `after_commit` guarantees the surrounding transaction committed
-  # before we write the Flag. See docs/configuration.md ("`:flag` never lives in a
-  # validator").
+  # before we write the Flag (and that a ClassifyJob never races a rollback). See
+  # docs/configuration.md ("`:flag` never lives in a validator").
+  #
+  # ACTIVE STORAGE ATTACHMENTS work out of the box: `moderates :avatar, with:
+  # :your_image_adapter, mode: :flag` on a `has_one_attached :avatar` model needs
+  # no extra wiring. AR dirty tracking can't see attachment writes — and Active
+  # Storage clears `attachment_changes` before after_commit — so the concern
+  # snapshots "these filtered attachments changed" in a before_save and consumes
+  # the snapshot at commit time. The overridable seam below still exists for
+  # richer cases (derived values, non-AS blobs).
   module ContentFilterable
     extend ActiveSupport::Concern
 
@@ -36,6 +50,10 @@ module Moderate
       class_attribute :moderation_filtered_fields, instance_writer: false, default: [].freeze
 
       validate :moderate_blocked_fields_must_be_allowed
+      # Snapshot attachment writes BEFORE Active Storage's own save callbacks
+      # clear `attachment_changes` — by after_commit they're gone (see
+      # activestorage's Attached::Model). One-shot; consumed + cleared below.
+      before_save :moderate_snapshot_attachment_changes
       after_commit :moderate_flag_filtered_fields
     end
 
@@ -61,20 +79,21 @@ module Moderate
         next unless policy.block?
 
         value = moderation_field_value(field)
-        next if value.blank?
+        next if moderation_value_blank?(value)
 
         result = Moderate.classify(value, policy: policy)
         errors.add(field, :objectionable_content) if result.flagged?
       end
     end
 
-    # :flag enforcement — an after_commit side effect that files a Moderate::Flag.
+    # :flag enforcement — an after_commit side effect that files a Moderate::Flag
+    # (inline for synchronous adapters; via Moderate::ClassifyJob for async ones).
     #
     # We only act when the field actually CHANGED on this commit (re-saving an
     # untouched record must not re-flag it and spam the queue), and we wrap each
-    # field in `begin/ensure` so a clean-up hook (`moderation_field_committed`)
-    # always runs even if classification raises — important for the attachment
-    # seam below, where a host sets a one-shot "changed" flag it must clear.
+    # field in `begin/ensure` so the clean-up hook (`moderation_field_committed`)
+    # always runs even if classification raises — that hook is what clears the
+    # one-shot attachment snapshot.
     def moderate_flag_filtered_fields
       moderation_filtered_fields.each do |field|
         policy = Moderate.filter_policy_for(self, field)
@@ -82,8 +101,18 @@ module Moderate
         next unless moderation_field_changed_for_commit?(field)
 
         begin
+          # ASYNC adapters (remote moderation APIs) never classify inline —
+          # a network call in the request's after_commit would stall the
+          # response for as long as the provider takes. ClassifyJob re-reads
+          # the value at run time (so it always classifies what's actually
+          # persisted) and files the Flag through the same Flag.flag! builder.
+          if Moderate.config.adapter_async?(policy.adapter)
+            Moderate::ClassifyJob.perform_later(self, field)
+            next
+          end
+
           value = moderation_field_value(field)
-          next if value.blank?
+          next if moderation_value_blank?(value)
 
           result = Moderate.classify(value, policy: policy)
           next unless result.flagged?
@@ -119,23 +148,29 @@ module Moderate
     # --- Overridable field seam -----------------------------------------------
     #
     # These three methods are the seam that lets one concern filter BOTH plain text
-    # columns AND non-column content (e.g. an Active Storage attachment), without
-    # the concern knowing anything about attachments. Defaults handle the common
-    # "it's a text attribute" case; a host overrides them for richer content.
+    # columns AND non-column content, without hosts having to re-plumb the common
+    # cases. Defaults handle text attributes AND Active Storage attachments; a
+    # host overrides them for anything richer (derived values, external blobs).
 
-    # The value to classify for `field`. Default: the attribute reader. Override to
-    # return, say, an attachment's blob/URL for an image adapter. The classifier
-    # (text or image) is whatever the field's policy adapter is.
+    # The value to classify for `field`. Default: the attribute reader — which for
+    # a `has_one_attached` field returns the `ActiveStorage::Attached` proxy, the
+    # natural input for an image adapter (it can read `.record`, `.blob`,
+    # `.variant(...)`, or download bytes as it sees fit).
     def moderation_field_value(field)
       public_send(field)
     end
 
-    # Did `field` change on the just-committed save? Default: ask ActiveRecord's
-    # dirty tracking (`saved_change_to_attribute?`). We guard with `respond_to?`
-    # so the concern also works on a PORO/ActiveModel object that lacks AR dirty
-    # tracking (in which case we conservatively assume it changed). Override for
-    # non-attribute content (e.g. track an attachment's "was replaced" flag).
+    # Did `field` change on the just-committed save? Defaults, in order:
+    #   1. the attachment snapshot taken in before_save (AR dirty tracking can't
+    #      see attachment writes, and Active Storage clears `attachment_changes`
+    #      before after_commit — hence the one-shot snapshot),
+    #   2. ActiveRecord's own dirty tracking (`saved_change_to_attribute?`),
+    #   3. `true` for a PORO/ActiveModel object with no dirty tracking at all —
+    #      the conservative assumption.
+    # Override for non-attribute content the defaults can't see.
     def moderation_field_changed_for_commit?(field)
+      return true if @moderate_changed_attachment_fields&.include?(field.to_s)
+
       if respond_to?(:saved_change_to_attribute?)
         saved_change_to_attribute?(field)
       elsif respond_to?(:"saved_change_to_#{field}?")
@@ -146,10 +181,34 @@ module Moderate
     end
 
     # Per-field clean-up after the commit-time flag attempt (success OR failure).
-    # No-op by default; the attachment seam overrides it to reset a one-shot
-    # "changed" flag it set during the save.
-    def moderation_field_committed(_field)
+    # Consumes the one-shot attachment snapshot; override-and-super if you track
+    # extra per-field state of your own.
+    def moderation_field_committed(field)
+      @moderate_changed_attachment_fields&.delete(field.to_s)
       nil
+    end
+
+    # before_save: record which FILTERED fields have a pending attachment write
+    # on this save. `attachment_changes` only exists on Active Storage models —
+    # plain models skip straight through.
+    def moderate_snapshot_attachment_changes
+      return true unless respond_to?(:attachment_changes)
+
+      moderation_filtered_fields.each do |field|
+        next unless attachment_changes.key?(field)
+
+        (@moderate_changed_attachment_fields ||= Set.new) << field
+      end
+      true # never halt the save chain
+    end
+
+    # Blank check that can see through an `ActiveStorage::Attached` proxy — an
+    # attachment with nothing attached must read as "nothing to classify"
+    # (Object#blank? can't tell: the proxy is truthy and has no #empty?).
+    def moderation_value_blank?(value)
+      return !value.attached? if value.respond_to?(:attached?)
+
+      value.blank?
     end
   end
 end

@@ -28,6 +28,13 @@ class Comment < ApplicationRecord
   has_one_attached :image
   moderates :image, with: :image, mode: :flag
 
+  # A SECOND attachment with NO seam overrides (the overrides below are scoped
+  # to :image), so the suite exercises the concern's NATIVE Active Storage
+  # support: the before_save attachment snapshot + attachment-aware blank check
+  # mean `moderates <attachment>` needs zero extra wiring on the host.
+  has_one_attached :photo
+  moderates :photo, with: :image, mode: :flag
+
   # WHO is responsible for this content — required by Moderate::Reportable.
   def reported_owner
     user

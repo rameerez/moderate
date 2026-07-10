@@ -16,6 +16,30 @@ Play **aligned** primitives. (First cut ships as `1.0.0.beta1`.)
 > (see _Upgrading from 0.x_), but everything else is new. Pin `~> 0.1` if you relied on the
 > old behavior and are not ready to adopt the new surface.
 
+### Fixed — since 1.0.0.beta1
+
+- **Async adapters now actually run in `Moderate::ClassifyJob`.** beta1's `:flag`
+  after_commit called `Moderate.classify` inline for *every* adapter — including
+  ones declaring `synchronous? == false` — so a remote moderation API ran its
+  network call inside the request that saved the content, and `ClassifyJob`
+  (whose docs promised this routing) was never enqueued by anything. The concern
+  now checks `config.adapter_async?(policy.adapter)` (new public helper, same
+  probe as the `:block` validator) and enqueues the job instead; the job re-reads
+  the persisted value and files the Flag itself. Hosts that worked around this by
+  enqueuing `ClassifyJob` themselves and short-circuiting
+  `moderation_field_changed_for_commit?` can delete both workarounds.
+
+### Added — since 1.0.0.beta1
+
+- **Active Storage attachments filter out of the box.** `moderates :avatar, with:
+  :your_image_adapter, mode: :flag` on a `has_one_attached` model needs zero extra
+  wiring now: the concern snapshots `attachment_changes` in a `before_save` (AR
+  dirty tracking can't see attachment writes, and Active Storage clears the
+  changes before after_commit), consumes the snapshot at commit time, and both
+  the concern and `ClassifyJob` treat an unattached `ActiveStorage::Attached`
+  proxy as blank (nothing to classify — covers purge-between-enqueue-and-run).
+  The three `moderation_field_*` seam overrides remain for richer cases.
+
 ### Added
 
 - **Reporting.** `Moderate::Report` plus the `has_reportable_content :fields` macro and

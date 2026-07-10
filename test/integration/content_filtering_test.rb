@@ -222,7 +222,7 @@ class ContentFilteringTest < ActiveSupport::TestCase
 
   # --- Image (attachment) field: async adapter, :flag-only --------------------
 
-  test ":flag mode on the :image attachment field flags an uploaded image after commit" do
+  test ":flag mode with an ASYNC adapter never classifies inline — Moderate::ClassifyJob files the flag" do
     Moderate.configure do |config|
       rewire_hooks(config)
       # Image moderation is bring-your-own — the gem ships only the offline text
@@ -234,21 +234,79 @@ class ContentFilteringTest < ActiveSupport::TestCase
       config.filter "Comment", :image, with: :image, mode: :flag
     end
 
-    comment = nil
-    assert_difference -> { Moderate::Flag.count }, 1, "the registered :image adapter flags every uploaded image" do
-      comment = Comment.new(user: @user, body: CLEAN)
-      comment.image.attach(
-        io: StringIO.new("not really an image, the adapter ignores the bytes"),
-        filename: "avatar.png",
-        content_type: "image/png"
-      )
-      assert comment.save, "an image upload under :flag must not be rejected"
+    comment = Comment.new(user: @user, body: CLEAN)
+    comment.image.attach(
+      io: StringIO.new("not really an image, the adapter ignores the bytes"),
+      filename: "avatar.png",
+      content_type: "image/png"
+    )
+
+    # The whole point of async routing: the save's after_commit must NOT call the
+    # (network-bound, in real life) adapter inline — it enqueues the job instead.
+    assert_no_difference -> { Moderate::Flag.count }, "an async adapter must not classify inline" do
+      assert_enqueued_with(job: Moderate::ClassifyJob) do
+        assert comment.save, "an image upload under :flag must not be rejected"
+      end
+    end
+
+    assert_difference -> { Moderate::Flag.count }, 1, "ClassifyJob files the flag for the uploaded image" do
+      perform_enqueued_jobs(only: Moderate::ClassifyJob)
     end
 
     flag = Moderate::Flag.where(field: "image").last
     assert_not_nil flag, "an image flag should be filed for the :image field"
     assert_equal "image", flag.source
     assert_equal comment, flag.flaggable
+  end
+
+  test "a NATIVE attachment field (no seam overrides) is tracked, enqueued, and re-save-safe" do
+    Moderate.configure do |config|
+      rewire_hooks(config)
+      config.register_adapter :image, DummyImageAdapter.new
+      # Comment#photo has NO moderation_field_* overrides (they're scoped to
+      # :image) — this policy rides entirely on the concern's built-in
+      # before_save attachment snapshot.
+      config.filter "Comment", :photo, with: :image, mode: :flag
+    end
+
+    comment = Comment.new(user: @user, body: CLEAN)
+    comment.photo.attach(
+      io: StringIO.new("bytes"),
+      filename: "photo.png",
+      content_type: "image/png"
+    )
+
+    assert_enqueued_with(job: Moderate::ClassifyJob) { assert comment.save }
+    assert_difference -> { Moderate::Flag.count }, 1 do
+      perform_enqueued_jobs(only: Moderate::ClassifyJob)
+    end
+    assert_equal comment, Moderate::Flag.where(field: "photo").last.flaggable
+
+    # Re-saving the record WITHOUT touching the attachment must not re-enqueue —
+    # the snapshot is one-shot, so an untouched photo can't spam the queue.
+    assert_no_enqueued_jobs(only: Moderate::ClassifyJob) do
+      comment.update!(body: "#{CLEAN} edited")
+    end
+  end
+
+  test "ClassifyJob is a no-op when the attachment vanished between enqueue and run" do
+    Moderate.configure do |config|
+      rewire_hooks(config)
+      config.register_adapter :image, DummyImageAdapter.new
+      config.filter "Comment", :photo, with: :image, mode: :flag
+    end
+
+    comment = Comment.new(user: @user, body: CLEAN)
+    comment.photo.attach(io: StringIO.new("bytes"), filename: "photo.png", content_type: "image/png")
+    comment.save!
+
+    # Purge before the job runs (user deleted it, moderation raced) — the job
+    # re-reads the CURRENT value, sees an unattached proxy, and files nothing.
+    comment.photo.purge
+
+    assert_no_difference -> { Moderate::Flag.count } do
+      perform_enqueued_jobs(only: Moderate::ClassifyJob)
+    end
   end
 
   test "a registered adapter can be a string class name and records the adapter name as the flag source" do
@@ -265,11 +323,23 @@ class ContentFilteringTest < ActiveSupport::TestCase
       content_type: "image/png"
     )
 
+    assert comment.save
     assert_difference -> { Moderate::Flag.count }, 1 do
-      assert comment.save
+      perform_enqueued_jobs(only: Moderate::ClassifyJob)
     end
 
     assert_equal "string_image", Moderate::Flag.where(field: "image").last.source
+  end
+
+  test "adapter_async? reports the routing decision (wordlist inline, remote adapters via job)" do
+    Moderate.configure do |config|
+      rewire_hooks(config)
+      config.register_adapter :image, DummyImageAdapter.new
+    end
+
+    refute Moderate.config.adapter_async?(:wordlist), "the built-in wordlist classifies inline"
+    assert Moderate.config.adapter_async?(:image), "an adapter answering synchronous? == false routes through ClassifyJob"
+    refute Moderate.config.adapter_async?(:nonexistent), "unknown adapters default to inline (classify raises its own error)"
   end
 
   private
