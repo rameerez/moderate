@@ -31,6 +31,12 @@ Play **aligned** primitives. (First cut ships as `1.0.0.beta1`.)
   `config.register_adapter`, asynchronous classification via `Moderate::ClassifyJob`, and
   ready-to-copy reference adapters for OpenAI omni-moderation and AWS Rekognition under
   `examples/` (bring-your-own, never a dependency).
+- **Flag close sugar.** `Flag#action!(note:, by: nil)` / `Flag#dismiss!(note:, by: nil)` —
+  model-level closes mirroring `Report#resolve!`/`#dismiss!`, so hosts stop hand-writing
+  status updates. `by:` stays nil for automated closes (don't fake a human in the audit
+  trail). Canonical automated use: dismiss a pending flag whose flagged content was
+  **superseded** (text edited, photo replaced/reverted) — left pending it keeps `flagged?`
+  true and mislabels the NEW content in any host UI keyed on it.
 - **Moderation queue & decisions.** `Moderate::Flag` and the service objects
   `Moderate::Services::{IntakeReport, ResolveReport, ResolveFlag, IntakeAppeal, ResolveAppeal,
   IntakeNotice}`. Decisions are taken under a row lock, re-check open state, apply enforcement

@@ -97,6 +97,26 @@ module Moderate
       status.in?(%w[actioned dismissed])
     end
 
+    # Close this flag as ACTIONED — someone (or an automated policy) took
+    # action on the flagged content. Model-level sugar mirroring
+    # Report#resolve!/#dismiss! so hosts stop hand-writing status updates.
+    # `by:` is the reviewing user when a human decided; leave it nil for
+    # automated closes — recording a human who never looked would poison the
+    # audit trail (DSA statements of reasons read these rows).
+    def action!(note:, by: nil)
+      close!(new_status: "actioned", note: note, by: by)
+    end
+
+    # Close this flag with NO action taken. The canonical automated use is
+    # SUPERSEDED content: when the flagged field changes (text edited, photo
+    # replaced/reverted), a still-pending flag is about content that is no
+    # longer live — leaving it pending keeps `flagged?` true and mislabels
+    # the NEW content in any host UI keyed on it. Hosts should dismiss with a
+    # note saying what superseded it.
+    def dismiss!(note:, by: nil)
+      close!(new_status: "dismissed", note: note, by: by)
+    end
+
     # A label for the flagged thing in the queue. Asks the flaggable for its own
     # `moderation_label` (Moderate::Reportable interface); falls back to a generic
     # "Type id" string for content that doesn't implement it.
@@ -107,6 +127,19 @@ module Moderate
     end
 
     private
+
+    # Shared close path for action!/dismiss!. update! (not update_columns) on
+    # purpose: the `resolution_note presence if closed?` validation is the
+    # guard that every closed flag explains itself — sugar that skipped it
+    # would defeat the reason the sugar exists.
+    def close!(new_status:, note:, by:)
+      update!(
+        status: new_status,
+        resolution_note: note,
+        reviewed_by: by,
+        reviewed_at: Time.current
+      )
+    end
 
     # See the before_save comment: keep the NOT-NULL JSON columns non-null on MySQL.
     def default_json_columns

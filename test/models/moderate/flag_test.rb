@@ -150,7 +150,46 @@ module Moderate
       assert_equal comment.user, flag.owner # owner inferred from reported_owner
     end
 
+    test "action! closes the flag with reviewer, note and timestamp" do
+      flag = build_pending_flag
+      moderator = create_user
+
+      flag.action!(by: moderator, note: "Photo removed, user warned.")
+
+      assert_predicate flag.reload, :closed?
+      assert_equal "actioned", flag.status
+      assert_equal moderator, flag.reviewed_by
+      assert_equal "Photo removed, user warned.", flag.resolution_note
+      assert_not_nil flag.reviewed_at
+    end
+
+    test "dismiss! closes with no reviewer by default — automated closes must not fake a human" do
+      flag = build_pending_flag
+
+      flag.dismiss!(note: "Superseded: the flagged photo was replaced by the user.")
+
+      assert_equal "dismissed", flag.reload.status
+      assert_nil flag.reviewed_by
+      assert_predicate flag.resolution_note, :present?
+      # `flagged?` (pending-only) releases the record the moment the flag closes.
+      assert_not @user.flagged?("name")
+    end
+
+    test "closing without a note is refused — every closed flag must explain itself" do
+      flag = build_pending_flag
+
+      assert_raises(ActiveRecord::RecordInvalid) { flag.dismiss!(note: nil) }
+      assert_predicate flag.reload, :pending?
+    end
+
     private
+
+    def build_pending_flag
+      Moderate::Flag.flag!(
+        flaggable: @user, field: "name", owner: @user, source: "image_filter",
+        mode: "flag", excerpt: "", categories: [ "quality" ], scores: {}, context: {}
+      )
+    end
 
     def create_user(**attributes)
       @user_seq ||= 0
