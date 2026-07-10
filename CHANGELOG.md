@@ -4,19 +4,15 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - unreleased
+## [1.0.0.beta2] - 2026-07-10
 
-A complete, ground-up rewrite. `moderate` graduates from a single-purpose profanity
-validator (0.1.0) into a full **Trust & Safety** engine for Rails apps with user-generated
-content: report, block, filter, a moderation queue, appeals, and EU DSA / App Store / Google
-Play **aligned** primitives. (First cut ships as `1.0.0.beta1`.)
+Second beta on the road to 1.0. Fixes beta1's async-adapter routing bug (the one
+that forced hosts to hand-roll their own enqueue), makes Active Storage
+attachments filterable with zero wiring, and gives `Flag` first-class close
+methods. Drop-in upgrade from beta1: no migrations, no breaking API changes —
+and hosts that worked around the ClassifyJob bug can now delete the workaround.
 
-> **Breaking:** 1.0 keeps the gem name but is an entirely new API. The 0.x profanity
-> validator (`validates :field, moderate: true`) still loads for backward compatibility
-> (see _Upgrading from 0.x_), but everything else is new. Pin `~> 0.1` if you relied on the
-> old behavior and are not ready to adopt the new surface.
-
-### Fixed — since 1.0.0.beta1
+### Fixed
 
 - **Async adapters now actually run in `Moderate::ClassifyJob`.** beta1's `:flag`
   after_commit called `Moderate.classify` inline for *every* adapter — including
@@ -27,9 +23,9 @@ Play **aligned** primitives. (First cut ships as `1.0.0.beta1`.)
   probe as the `:block` validator) and enqueues the job instead; the job re-reads
   the persisted value and files the Flag itself. Hosts that worked around this by
   enqueuing `ClassifyJob` themselves and short-circuiting
-  `moderation_field_changed_for_commit?` can delete both workarounds.
+  `moderation_field_changed_for_commit?` can delete both workarounds. (#3)
 
-### Added — since 1.0.0.beta1
+### Added
 
 - **Active Storage attachments filter out of the box.** `moderates :avatar, with:
   :your_image_adapter, mode: :flag` on a `has_one_attached` model needs zero extra
@@ -38,7 +34,25 @@ Play **aligned** primitives. (First cut ships as `1.0.0.beta1`.)
   changes before after_commit), consumes the snapshot at commit time, and both
   the concern and `ClassifyJob` treat an unattached `ActiveStorage::Attached`
   proxy as blank (nothing to classify — covers purge-between-enqueue-and-run).
-  The three `moderation_field_*` seam overrides remain for richer cases.
+  The three `moderation_field_*` seam overrides remain for richer cases. (#3)
+- **Flag close sugar.** `Flag#action!(note:, by: nil)` / `Flag#dismiss!(note:, by: nil)` —
+  model-level closes mirroring `Report#resolve!`/`#dismiss!`, so hosts stop hand-writing
+  status updates. `by:` stays nil for automated closes (don't fake a human in the audit
+  trail). Canonical automated use: dismiss a pending flag whose flagged content was
+  **superseded** (text edited, photo replaced/reverted) — left pending it keeps `flagged?`
+  true and mislabels the NEW content in any host UI keyed on it. (#4)
+
+## [1.0.0] - unreleased
+
+A complete, ground-up rewrite. `moderate` graduates from a single-purpose profanity
+validator (0.1.0) into a full **Trust & Safety** engine for Rails apps with user-generated
+content: report, block, filter, a moderation queue, appeals, and EU DSA / App Store / Google
+Play **aligned** primitives. (First cut shipped as `1.0.0.beta1`; second as `1.0.0.beta2`.)
+
+> **Breaking:** 1.0 keeps the gem name but is an entirely new API. The 0.x profanity
+> validator (`validates :field, moderate: true`) still loads for backward compatibility
+> (see _Upgrading from 0.x_), but everything else is new. Pin `~> 0.1` if you relied on the
+> old behavior and are not ready to adopt the new surface.
 
 ### Added
 
@@ -55,12 +69,6 @@ Play **aligned** primitives. (First cut ships as `1.0.0.beta1`.)
   `config.register_adapter`, asynchronous classification via `Moderate::ClassifyJob`, and
   ready-to-copy reference adapters for OpenAI omni-moderation and AWS Rekognition under
   `examples/` (bring-your-own, never a dependency).
-- **Flag close sugar.** `Flag#action!(note:, by: nil)` / `Flag#dismiss!(note:, by: nil)` —
-  model-level closes mirroring `Report#resolve!`/`#dismiss!`, so hosts stop hand-writing
-  status updates. `by:` stays nil for automated closes (don't fake a human in the audit
-  trail). Canonical automated use: dismiss a pending flag whose flagged content was
-  **superseded** (text edited, photo replaced/reverted) — left pending it keeps `flagged?`
-  true and mislabels the NEW content in any host UI keyed on it.
 - **Moderation queue & decisions.** `Moderate::Flag` and the service objects
   `Moderate::Services::{IntakeReport, ResolveReport, ResolveFlag, IntakeAppeal, ResolveAppeal,
   IntakeNotice}`. Decisions are taken under a row lock, re-check open state, apply enforcement
