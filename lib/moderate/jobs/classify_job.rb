@@ -149,6 +149,10 @@ module Moderate
     # easy to reproduce and keeps the job self-contained).
     def blank?(value)
       return true if value.nil?
+      # An ActiveStorage::Attached proxy with nothing attached is "blank" — the
+      # attachment may have been purged between enqueue and run, and a plain
+      # #empty?/#nil? probe can't see through the proxy.
+      return !value.attached? if value.respond_to?(:attached?)
       return value.strip.empty? if value.is_a?(String)
       return value.empty? if value.respond_to?(:empty?)
 

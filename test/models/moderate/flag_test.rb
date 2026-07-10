@@ -135,14 +135,17 @@ module Moderate
       # :wordlist). The dummy host registers a tiny async image adapter under :image
       # (test/dummy/app/adapters/dummy_image_adapter.rb) that flags every uploaded
       # image for human review; we re-register + re-establish that policy here (setup's
-      # Moderate.reset! wiped both the adapter and the policy). Attaching one image
-      # should produce exactly one pending Flag on (comment, "image") after commit.
+      # Moderate.reset! wiped both the adapter and the policy). The adapter is ASYNC,
+      # so the after_commit enqueues Moderate::ClassifyJob rather than classifying
+      # inline; performing the job produces exactly one pending Flag on
+      # (comment, "image").
       Moderate.config.register_adapter :image, DummyImageAdapter.new
       Moderate.config.filter "Comment", :image, with: :image, mode: :flag
       comment = Comment.create!(user: @user, body: "clean body")
 
       assert_difference -> { Moderate::Flag.pending.where(flaggable: comment, field: "image").count }, 1 do
         comment.image.attach(io: StringIO.new("fake image bytes"), filename: "pic.png", content_type: "image/png")
+        perform_enqueued_jobs(only: Moderate::ClassifyJob)
       end
 
       flag = Moderate::Flag.pending.where(flaggable: comment, field: "image").last
