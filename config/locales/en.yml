@@ -1,0 +1,34 @@
+# moderate's default English copy. Override any key in your app's own
+# config/locales: Rails loads an engine's locale files BEFORE the host's, so
+# your translation always wins.
+en:
+  moderate:
+    appeals:
+      reported_field: "Content"
+
+    # Human labels for reported / flagged fields — what the moderation queue,
+    # the statement of reasons and the appeal page print instead of the column
+    # name. Resolution (Moderate.reportable_field_label):
+    #
+    #   1. `has_reportable_content :body, labels: { body: "…" }` on the model
+    #   2. moderate.reportable_fields.<model i18n_key>.<field>   e.g. chats/message.body
+    #   3. moderate.reportable_fields.<field>                    the generic ones below
+    #   4. field.humanize
+    #
+    # The generic set is deliberately small and avoids names that are also common
+    # MODEL names (message, comment, photo…): model-scoped and generic keys share
+    # this namespace, so a host's `comment: { body: … }` block would otherwise
+    # replace a generic `comment:` label.
+    reportable_fields:
+      body: "Text"
+      title: "Title"
+      description: "Description"
+      name: "Name"
+      display_name: "Display name"
+      username: "Username"
+      bio: "Bio"
+      avatar: "Profile photo"
+      photos: "Photos"
+      images: "Images"
+      attachments: "Attachments"
+      files: "Files"

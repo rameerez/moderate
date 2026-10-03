@@ -1,0 +1,20 @@
+# moderate's default Spanish copy. See en.yml for how these keys resolve and
+# how to override them from your app.
+es:
+  moderate:
+    appeals:
+      reported_field: "Contenido"
+
+    reportable_fields:
+      body: "Texto"
+      title: "Título"
+      description: "Descripción"
+      name: "Nombre"
+      display_name: "Nombre visible"
+      username: "Nombre de usuario"
+      bio: "Biografía"
+      avatar: "Foto de perfil"
+      photos: "Fotos"
+      images: "Imágenes"
+      attachments: "Archivos adjuntos"
+      files: "Archivos"

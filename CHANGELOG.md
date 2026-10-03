@@ -4,6 +4,37 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Human labels for reportable fields.** `has_reportable_content :body, :files, labels:
+  { body: "Chat message", files: "Chat photo" }` (and `reportable_fields …, labels:`) names
+  each field once, next to its declaration, so moderators and affected users stop reading raw
+  column names («Body») for what was reported. Resolution: the declared label (a String, or a
+  lambda evaluated at read time) → i18n `moderate.reportable_fields.<model>.<field>` (walking
+  reportable STI parents) → `moderate.reportable_fields.<field>` → `field.humanize`. Read it
+  with `Moderate.reportable_field_label(record_or_class_or_type, field)`,
+  `Report#reported_field_label`, `Flag#field_label`, or `record.reportable_field_label(field)`;
+  labels resolve from the stored type, so they survive the content being deleted. A label key
+  for an undeclared field raises. Hosts that kept their own field → label map can delete it.
+- **Labels everywhere the gem names a field.** The public appeal page shows the reported
+  content's label; the statement-of-reasons payload (`affected_user_decision`, `report_decision`)
+  carries `reported_field` + `reported_field_label`; `report_received` carries both and appends
+  the label to its summary; `content_flagged` and the `flag_decision` audit carry `field_label`,
+  and the `content_flagged` summary prints the label instead of `Type#field`.
+- **Default locale files** (`config/locales/en.yml`, `es.yml`): the appeal page's new string and
+  generic labels for common field names (`body` → "Text"/"Texto", `avatar` → "Profile
+  photo"/"Foto de perfil", …).
+
+### Fixed
+
+- **The gem's locale files can no longer override the host's.** The engine appended its
+  `config/locales` to `config.i18n.load_path`, which Rails loads AFTER the app's own locale
+  files — harmless while the directory was empty, but any shipped default would have silently
+  beaten the host's translation of the same key. Rails already loads an engine's
+  `config/locales` before the app's, so the initializer is gone.
+
 ## [1.0.0.beta2] - 2026-07-10
 
 Second beta on the road to 1.0. Fixes beta1's async-adapter routing bug (the one

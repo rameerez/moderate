@@ -31,6 +31,12 @@
           <strong><%= t("moderate.appeals.decision", default: "Decision") %></strong>
           <span><%= @report.id %></span>
         </p>
+        <% if (field_label = @report.reported_field_label) %>
+          <p class="moderate-reported-field">
+            <strong><%= t("moderate.appeals.reported_field", default: "Content") %></strong>
+            <span><%= field_label %></span>
+          </p>
+        <% end %>
         <% if @report.appeal_deadline_at.present? %>
           <p><%= t("moderate.appeals.deadline", default: "You can request a free internal review until %{deadline}. A person will review it.", deadline: l(@report.appeal_deadline_at, format: :long)) %></p>
         <% end %>
