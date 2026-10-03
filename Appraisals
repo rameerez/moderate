@@ -4,6 +4,7 @@
 # README's "Rails 7.1+ schema" claim — the adaptive migration must work here).
 appraise "rails-7.1" do
   gem "rails", "~> 7.1.0"
+  gem "json", "< 3" # json 3 dropped `quirks_mode:`, which ActiveRecord 7.1.6 still passes: "unknown keyword: quirks_mode" in db:migrate
 end
 
 appraise "rails-7.2" do
