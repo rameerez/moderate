@@ -80,7 +80,7 @@ event.to_h        # the whole envelope as a Hash (handy for logging, tests, and 
 Two fields do most of the work:
 
 - **`event.recipients`** — already resolved to *the right people* for this event. For `report_received` it's the reporter (their receipt). For `report_decision` it's the reporter (the outcome). For `affected_user_decision` it's the person whose content/account was acted on (their statement of reasons). You don't compute audiences — `moderate` does, and hands you the array. Iterate it.
-- **`event.payload[:summary]`** — a short, human, already-redaction-safe one-liner describing what happened (e.g. `"New harassment report on Comment #4213 by joh…e@example.com"`). It exists so your **admin Telegram ping is literally one line** — no string-building, no leaking. Everything richer (the model, the category, the moderator's note) is also in `payload` if you want to compose your own copy.
+- **`event.payload[:summary]`** — a short, human, already-redaction-safe one-liner describing what happened (e.g. `"New harassment report on Comment #4213 by joh…e@example.com"`). It exists so your **admin Telegram ping is literally one line** — no string-building, no leaking. Everything richer (the model, the category, the moderator's note) is also in `payload` if you want to compose your own copy. Events about a specific field carry both the raw name and its human label (`reported_field` + `reported_field_label` on reports, `field` + `field_label` on flags) — print the label, keep the raw name for code (see [Reportable content](../README.md#-reportable-content)).
 
 A recipient is usually one of your `User` records (it responds to `email`, `id`, etc.), **except** for DSA-notice events (`notice_received`, and the `affected_user_decision` for a public notice) where the notifier may be an anonymous person — there `moderate` gives you a lightweight recipient that responds to `email`/`name` but is **not** a `User`. The `next unless user.respond_to?(:email)` / `user.is_a?(User)` guards in the recipes above handle that cleanly.
 
@@ -156,6 +156,7 @@ class ModerationMailer < ApplicationMailer
                   subject: "An update about your content") do
       h1 "We took action on your content"
       text event.payload[:reason]                       # the human-readable ground
+      info_row "Content",         event.payload[:reported_field_label] # e.g. "Chat message" (nil for a whole-record report)
       info_row "Action",          event.payload[:action]        # e.g. "Content removed"
       info_row "Automated means", event.payload[:automated] ? "Yes" : "No"
       space

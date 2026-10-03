@@ -9,7 +9,8 @@ module Moderate
   # `Moderate::Report#reportable` association. This concern answers the
   # Trust & Safety questions that polymorphism *can't*:
   #
-  #   - which fields of the record may be reported (`reportable_fields`)
+  #   - which fields of the record may be reported (`reportable_fields`), and
+  #     what humans should call each one (`labels:` / `reportable_field_label`)
   #   - who is *responsible* for the content (`reported_owner`) — the person a
   #     decision's statement of reasons must reach (DSA Art. 17) and who a ban
   #     would apply to
@@ -56,6 +57,15 @@ module Moderate
       # Empty default = "the whole record is reportable, no specific field."
       class_attribute :moderation_reportable_fields, instance_writer: false, default: [].freeze
 
+      # The human labels declared next to the fields (`labels: { body: "Chat
+      # message" }`), keyed by field name String. Values are Strings or callables
+      # (evaluated at read time, so a lambda can call I18n under the CURRENT
+      # locale). Same `class_attribute` reasoning as the field list above: it
+      # inherits down an STI tree and a subclass redeclaration doesn't mutate the
+      # parent. Read through `Moderate.reportable_field_label`, never directly —
+      # that's where the i18n and humanize fallbacks live.
+      class_attribute :moderation_reportable_field_labels, instance_writer: false, default: {}.freeze
+
       # Self-register in the gem's reportable registry the moment the concern is
       # included, so `Moderate.reportable_classes` is auto-discovered with NO
       # manual list to maintain (README: "Reportable classes are auto-discovered
@@ -73,9 +83,53 @@ module Moderate
       #
       #   reportable_fields :title, :description   # writer
       #   reportable_fields                         # => ["title", "description"]
-      def reportable_fields(*fields)
-        self.moderation_reportable_fields = fields.map(&:to_s).freeze if fields.any?
+      #
+      # `labels:` names each field for humans — what the moderation queue, the
+      # statement of reasons, and the appeal page print instead of the raw column
+      # name (a moderator reading «Body» on a chat-message report has to guess
+      # what was reported). Optional and per field; anything unlabeled falls back
+      # to i18n, then to `field.humanize` (see `Moderate.reportable_field_label`).
+      #
+      #   reportable_fields :body, :files, labels: { body: "Chat message", files: "Chat photo" }
+      #
+      # Labels follow the same "last declaration wins" rule as the fields, and a
+      # label for a field you didn't declare raises — a typo'd key would otherwise
+      # silently never show up.
+      def reportable_fields(*fields, labels: nil)
+        if labels && fields.empty?
+          raise ArgumentError, "#{name}: `labels:` needs the fields it labels — " \
+            "declare them together, e.g. `reportable_fields :body, labels: { body: \"Message\" }`"
+        end
+
+        if fields.any?
+          field_names = fields.map(&:to_s).freeze
+          self.moderation_reportable_fields = field_names
+          self.moderation_reportable_field_labels = normalize_reportable_field_labels(labels, field_names)
+        end
+
         moderation_reportable_fields
+      end
+
+      # The human label for one of this class's reported fields. Class-level sugar
+      # for `Moderate.reportable_field_label(self, field)`.
+      def reportable_field_label(field)
+        Moderate.reportable_field_label(self, field)
+      end
+
+      private
+
+      def normalize_reportable_field_labels(labels, field_names)
+        return {}.freeze if labels.blank?
+        raise ArgumentError, "#{name}: `labels:` must be a Hash of field => label" unless labels.respond_to?(:to_h)
+
+        normalized = labels.to_h.transform_keys(&:to_s)
+        unknown = normalized.keys - field_names
+        if unknown.any?
+          raise ArgumentError, "#{name}: `labels:` names #{unknown.map(&:inspect).join(", ")}, " \
+            "not among the reportable fields #{field_names.inspect}"
+        end
+
+        normalized.freeze
       end
     end
 
@@ -98,6 +152,13 @@ module Moderate
       return true if field_s.empty?
 
       self.class.reportable_fields.include?(field_s)
+    end
+
+    # The human label for `field` on this record ("Chat message", not "Body"), or
+    # nil for a blank field (a whole-record report has no field to name). Sugar
+    # for `Moderate.reportable_field_label(self, field)`.
+    def reportable_field_label(field)
+      Moderate.reportable_field_label(self, field)
     end
 
     # WHO is responsible for this content — the account a decision's statement of

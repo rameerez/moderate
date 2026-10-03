@@ -4,6 +4,7 @@ source "https://rubygems.org"
 
 gem "rake", "~> 13.0"
 gem "rails", "~> 7.1.0"
+gem "json", "< 3" # json 3 dropped `quirks_mode:`, which ActiveRecord 7.1.6 still passes: "unknown keyword: quirks_mode" in db:migrate
 
 group :development do
   gem "appraisal"

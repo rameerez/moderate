@@ -51,10 +51,15 @@ module Moderate
     # empty, and a blank reported_field is then allowed — see
     # Reportable#reportable_field_allowed?).
     #
-    # Equivalent to `include Moderate::Reportable` + `reportable_fields(*fields)`.
-    def has_reportable_content(*fields)
+    # `labels:` gives each field the human name moderators and affected users see
+    # ("Chat message" instead of "Body"); see Reportable.reportable_fields.
+    #
+    #   has_reportable_content :body, :files, labels: { body: "Chat message", files: "Chat photo" }
+    #
+    # Equivalent to `include Moderate::Reportable` + `reportable_fields(*fields, labels:)`.
+    def has_reportable_content(*fields, labels: nil)
       include Moderate::Reportable unless include?(Moderate::Reportable)
-      reportable_fields(*fields) if fields.any?
+      reportable_fields(*fields, labels: labels) if fields.any? || labels
       self
     end
 

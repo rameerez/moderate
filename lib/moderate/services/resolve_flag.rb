@@ -81,6 +81,7 @@ module Moderate
             flaggable_type: flag.flaggable_type,
             flaggable_id: flag.flaggable_id,
             field: flag.field,
+            field_label: flag.field_label,
             source: flag.source,
             categories: flag.categories,
             note: note,

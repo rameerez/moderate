@@ -34,6 +34,26 @@ class AppealFormTest < ActionDispatch::IntegrationTest
     assert_select "input[name=?][value=?]", "appeal[source]", "affected_user"
   end
 
+  test "the appeal page names the reported field by its label, never the raw column" do
+    author = User.create!(name: "Author", email: "author-label@example.com")
+    comment = Comment.create!(user: author, body: "a normal comment")
+    report = closed_report(reported_user: author, reportable: comment, reported_field: "body")
+
+    get NEW, params: { token: report.signed_appeal_gid }
+
+    assert_response :success
+    assert_select ".moderate-reported-field strong", "Content"
+    assert_select ".moderate-reported-field span", "Comment text"
+    refute_match(/>\s*body\s*</i, response.body)
+  end
+
+  test "the appeal page shows no field row for a whole-record decision" do
+    get NEW, params: { token: closed_report.signed_appeal_gid }
+
+    assert_response :success
+    assert_select ".moderate-reported-field", count: 0
+  end
+
   test "POST create saves, notifies, audits, and redirects to the configured return path" do
     report = closed_report
     token = report.signed_appeal_gid
@@ -120,9 +140,11 @@ class AppealFormTest < ActionDispatch::IntegrationTest
 
   private
 
-  def closed_report(reported_user: nil)
+  def closed_report(reported_user: nil, reportable: nil, reported_field: nil)
     Moderate::Report.create!(
       reported_user: reported_user,
+      reportable: reportable,
+      reported_field: reported_field,
       notifier_name: "Notice Sender",
       notifier_email: "notice@example.com",
       category: "illegal_content",
