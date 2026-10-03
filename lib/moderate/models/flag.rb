@@ -126,6 +126,14 @@ module Moderate
       "#{flaggable_type} #{flaggable_id}"
     end
 
+    # What humans call the flagged field ("Chat message", not "body"). Same
+    # resolution as Report#reported_field_label, so a queue that lists reports and
+    # flags side by side names a field the same way in both. Works after the
+    # flagged record is gone (falls back to `flaggable_type`).
+    def field_label
+      Moderate.reportable_field_label(flaggable || flaggable_type, field)
+    end
+
     private
 
     # Shared close path for action!/dismiss!. update! (not update_columns) on
@@ -159,9 +167,10 @@ module Moderate
           flaggable_type: flaggable_type,
           flaggable_id: flaggable_id,
           field: field,
+          field_label: field_label,
           source: source,
           categories: Array(categories),
-          summary: "content flagged (#{source}) on #{flaggable_label}##{field}"
+          summary: "content flagged (#{source}) on #{flaggable_label} · #{field_label}"
         }
       )
     end

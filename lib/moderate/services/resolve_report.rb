@@ -186,6 +186,8 @@ module Moderate
       #   - automated: whether automated means participated in detection/decision
       #     (Art. 17(3)(c)) — read off the report's recorded automated_processing
       #   - reason: the moderator's human-readable note
+      #   - reported_field_label: WHICH content the decision is about, in words the
+      #     affected user recognizes ("Chat message", never the column name "body")
       # The HOST renders the redress/appeal copy (it names the jurisdiction); the gem
       # supplies the data + the report so the host can mint the signed appeal link.
       def decision_payload
@@ -193,6 +195,8 @@ module Moderate
           report_id: report.id,
           status: report.status,
           action: action_label,
+          reported_field: report.reported_field,
+          reported_field_label: report.reported_field_label,
           resolution_basis: report.resolution_basis,
           # The contractual ground (in-app reports) vs. the legal ground (DSA notices).
           category: report.category,
@@ -218,6 +222,7 @@ module Moderate
             reported_user_id: report.reported_user_id,
             reportable_type: report.reportable_type,
             reportable_id: report.reportable_id,
+            reported_field: report.reported_field,
             actions: actions,
             resolution_basis: report.resolution_basis,
             automated: automated_processing_used?,

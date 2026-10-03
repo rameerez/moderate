@@ -282,6 +282,16 @@ module Moderate
       subject_url.presence || I18n.t("moderate.reports.legal_notice_label", default: "Legal notice")
     end
 
+    # What humans call the reported field ("Chat message", not "body"), or nil when
+    # the report targets the whole record. Resolved from the reportable's CLASS, so
+    # the label survives the content being deleted: deleting a reportable nullifies
+    # BOTH polymorphic columns (`dependent: :nullify`), so we fall back to the type
+    # frozen into the evidence snapshot. See Moderate.reportable_field_label.
+    def reported_field_label
+      type = reportable_type.presence || snapshot.to_h.with_indifferent_access[:reportable_type]
+      Moderate.reportable_field_label(reportable || type, reported_field)
+    end
+
     # The snapshotted text of the reported field, asked of the reportable. Returns
     # nil when the reportable doesn't expose snapshot text (or there's no record).
     def reported_content_text

@@ -3,13 +3,15 @@
 # The dummy host's CONTENT model — a piece of user-generated content that can be
 # reported and whose text is filtered before save.
 #
-#   reportable :body  : only `:body` is a reportable field (the field whitelist).
+#   reportable :body  : only `:body` is a reportable field (the field whitelist),
+#                       labeled "Comment text" for humans (what the queue, the
+#                       statement of reasons and the appeal page print — never «Body»).
 #   moderates :body   : filter `:body` pre-publication. The dummy initializer pairs
 #                       Comment#body with the :wordlist adapter in :block mode, so an
 #                       objectionable body is rejected synchronously with a
 #                       validation error (errors.add(:body, :objectionable_content)).
 class Comment < ApplicationRecord
-  has_reportable_content :body
+  has_reportable_content :body, labels: { body: "Comment text" }
   moderates :body
 
   # Every comment belongs to a user; that user is who a decision notifies and a ban

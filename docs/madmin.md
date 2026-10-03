@@ -104,7 +104,9 @@ class Moderate::ReportResource < Madmin::Resource
   attribute :kind,        index: true, form: false   # "report" (in-app) or "dsa_notice"
   attribute :category,    index: true, form: false   # community category OR DSA legal_reason
   attribute :reportable,  :polymorphic, index: true, form: false, label: "Target"
-  attribute :reported_field, index: true, form: false, label: "Field"
+  # The field's human label ("Chat message"), not the raw column ("body") — see
+  # `labels:` on has_reportable_content. A virtual attribute, so it needs a type.
+  attribute :reported_field_label, :string, index: true, form: false, label: "Field"
   attribute :reported_user,  index: true, form: false
   attribute :reporter,       index: true, form: false
   attribute :notifier_email, index: true, form: false, label: "Notifier"  # DSA notices
@@ -138,7 +140,7 @@ class Moderate::FlagResource < Madmin::Resource
   attribute :status,     index: true, form: false   # pending / resolved / dismissed
   attribute :source,     index: true, form: false   # wordlist / image / <your adapter> / manual
   attribute :flaggable,  :polymorphic, index: true, form: false, label: "Target"
-  attribute :field,      index: true, form: false
+  attribute :field_label, :string, index: true, form: false, label: "Field"   # "Chat message", not "body"
   attribute :owner,      index: true, form: false
   attribute :categories, index: false, form: false  # e.g. [:hate, :threats]
   attribute :scores,     index: false, form: false  # { hate: 1.0 } (0..1 for ML adapters)

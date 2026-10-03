@@ -1,0 +1,7 @@
+# The dummy HOST's own translations. They exist to prove load order: Rails must
+# load the gem's config/locales BEFORE the host's, so these overrides of the
+# gem's shipped defaults win (test/integration/locale_precedence_test.rb).
+en:
+  moderate:
+    reportable_fields:
+      avatar: "Profile picture"   # gem default: "Profile photo"

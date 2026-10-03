@@ -193,6 +193,37 @@ end
 
 *(Explicit-include equivalent: `include Moderate::Reportable` + `reportable_fields :title, :description`.)*
 
+Give each field the name a human should see. Without a label, a report of a chat message reaches your moderators as «Body» and they have to guess what was reported — declare it once, next to the field:
+
+```ruby
+class Message < ApplicationRecord
+  has_reportable_content :body, :files, labels: { body: "Chat message", files: "Chat photo" }
+end
+
+report.reported_field_label                    # => "Chat message"
+flag.field_label                               # => "Chat message"
+Moderate.reportable_field_label(Message, :body) # => "Chat message" (also takes a record, or a "Message" type string)
+```
+
+`moderate` prints the label wherever it names a field — the public appeal page, the statement-of-reasons payload (`reported_field_label`), the `report_received` / `content_flagged` summaries — and keeps the raw name next to it (`reported_field`, `field`) for your code. Labels are optional and per field; each field resolves to the first of:
+
+1. its `labels:` entry — a String, or a lambda evaluated at read time (`-> { I18n.t("chat.message") }`);
+2. `moderate.reportable_fields.<model>.<field>` in your locale files, where `<model>` is the model's `model_name.i18n_key` (`chats/message` for `Chats::Message`; STI children also try their reportable parent);
+3. `moderate.reportable_fields.<field>` — one label for that field name on every model. `moderate` ships `en` and `es` defaults for the common ones (`body` → "Text" / "Texto", `avatar` → "Profile photo" / "Foto de perfil", …), and your locale files override them;
+4. `field.humanize`.
+
+```yaml
+# config/locales/es.yml — the multi-locale way to say the same thing
+es:
+  moderate:
+    reportable_fields:
+      chats/message:
+        body: "Mensaje de chat"
+        files: "Foto de chat"
+```
+
+Model-scoped and field-wide keys share one namespace, so a model whose key matches a field name (`Listing` and a `listing` field) can't also have a field-wide label for that name — scope it to the model instead. A whole-record report has no field, so its label is `nil`.
+
 You get:
 
 ```ruby

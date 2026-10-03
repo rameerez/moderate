@@ -9,6 +9,8 @@ require "set"
 # context (a console, a non-Rails test) without booting all of Rails. ActiveSupport
 # is a declared runtime dependency in the gemspec.
 require "active_support/core_ext/string/inflections"
+require "active_support/core_ext/string/filters"
+require "active_support/core_ext/object/blank"
 
 require_relative "moderate/version"
 require_relative "moderate/errors"
@@ -137,6 +139,47 @@ module Moderate
       rescue NameError
         nil
       end
+    end
+
+    # --- Reportable field labels ----------------------------------------------
+
+    # The human name of a reported field — what the queue, the statement of
+    # reasons, and the appeal page print instead of the raw column name. A
+    # moderator reading «Body» on a chat-message report has to guess what was
+    # reported; «Chat message» they can act on.
+    #
+    #   Moderate.reportable_field_label(message, :body)          # => "Chat message"
+    #   Moderate.reportable_field_label(Message, "body")         # same, from the class
+    #   Moderate.reportable_field_label("Message", "body")       # same, from a stored type
+    #
+    # Resolution, first non-blank answer wins:
+    #
+    #   1. the `labels:` declared next to the field
+    #      (`has_reportable_content :body, labels: { body: "Chat message" }`) —
+    #      a String, or a callable evaluated now (so a lambda can use I18n);
+    #   2. i18n `moderate.reportable_fields.<model>.<field>`, where <model> is the
+    #      model's `model_name.i18n_key` (`chats/message` for `Chats::Message`),
+    #      walking up to STI parents that are themselves reportable;
+    #   3. i18n `moderate.reportable_fields.<field>` — one label for every model
+    #      that has a field by that name (the gem ships a few generic ones);
+    #   4. `field.to_s.humanize`, so an unlabeled field still renders something.
+    #
+    # Returns nil for a blank field: a whole-record report has no field to name,
+    # and callers decide how to say that in their own UI.
+    #
+    # `record_or_class` may be a record, a class, or a class-name String (a
+    # report's `reportable_type`), so a label still resolves after the reported
+    # record is gone. An unknown class name skips straight to steps 3–4.
+    def reportable_field_label(record_or_class, field)
+      field_s = field.to_s.squish
+      return if field_s.empty?
+
+      klass, class_name = reportable_label_class(record_or_class)
+
+      translated = reportable_label_i18n_keys(klass, class_name, field_s)
+        .lazy.filter_map { |key| reportable_label_i18n(key) }
+
+      declared_reportable_field_label(klass, field_s) || translated.first || field_s.humanize
     end
 
     # --- Notify / audit hooks -------------------------------------------------
@@ -339,6 +382,79 @@ module Moderate
     # is idempotent.
     def reportable_registry
       @reportable_classes ||= Set.new
+    end
+
+    # [Class or nil, class name or nil] for whatever reportable_field_label got.
+    def reportable_label_class(record_or_class)
+      case record_or_class
+      when nil then [nil, nil]
+      when Class then [record_or_class, record_or_class.name]
+      when String, Symbol
+        name = record_or_class.to_s
+        [name.safe_constantize, name.presence]
+      else
+        [record_or_class.class, record_or_class.class.name]
+      end
+    end
+
+    # A label is display copy, so it must never take a page down: a host lambda
+    # that raises is logged and treated as "no declared label" (the i18n/humanize
+    # fallbacks still answer), the same way a view should treat a nil.
+    def declared_reportable_field_label(klass, field_s)
+      return unless klass.respond_to?(:moderation_reportable_field_labels)
+
+      label = klass.moderation_reportable_field_labels[field_s]
+      label = label.call if label.respond_to?(:call)
+      label.to_s.presence
+    rescue StandardError => error
+      logger&.warn("[moderate] label for #{klass.name}##{field_s} raised #{error.class}: #{error.message}")
+      nil
+    end
+
+    # Model-scoped keys first (the class, then its reportable STI parents), then
+    # the field-wide key. A class name that no longer constantizes still gets its
+    # own model key, derived the way ActiveModel::Name would.
+    def reportable_label_i18n_keys(klass, class_name, field_s)
+      model_keys =
+        if klass
+          chain = klass.ancestors.select { |ancestor| ancestor.is_a?(Class) && reportable_label_model?(ancestor) }
+          chain = [klass] if chain.empty?
+          chain.filter_map { |ancestor| reportable_label_model_key(ancestor) }
+        elsif class_name
+          [class_name.underscore]
+        else
+          []
+        end
+
+      model_keys.uniq.map { |model_key| "moderate.reportable_fields.#{model_key}.#{field_s}" } +
+        ["moderate.reportable_fields.#{field_s}"]
+    end
+
+    def reportable_label_model?(klass)
+      defined?(Moderate::Reportable) && klass.include?(Moderate::Reportable)
+    end
+
+    # `model_name` constantizes the class's namespace, which can raise for a class
+    # whose name doesn't match a loaded module; the underscored name is the same
+    # key ActiveModel would derive for a non-isolated namespace.
+    def reportable_label_model_key(klass)
+      return klass.model_name.i18n_key.to_s if klass.respond_to?(:model_name)
+
+      klass.name&.underscore
+    rescue NameError
+      klass.name&.underscore
+    end
+
+    # A translated String, or nil. Two guards: `I18n.t` with no default returns a
+    # "Translation missing" string rather than nil, so we ask `exists?` first;
+    # and the model-scoped and field-wide keys share one namespace, so a field
+    # called `listing` on a host that also has a `Listing` model would read the
+    # model's Hash of labels — anything that isn't a String is not a label.
+    def reportable_label_i18n(key)
+      return unless defined?(I18n) && I18n.exists?(key)
+
+      value = I18n.t(key)
+      value.presence if value.is_a?(String)
     end
 
     # Coerce whatever an adapter returned into a Moderate::Result, stamping the

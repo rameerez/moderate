@@ -87,10 +87,13 @@ module Moderate
           payload: {
             category: report.category,
             intake_kind: report.intake_kind,
+            reported_field: report.reported_field,
+            reported_field_label: field_label,
             # `:summary` is the contract every event carries — a redaction-safe,
             # ready-to-send one-liner for the admin Telegram ping (docs/notifications.md).
-            summary: "New #{report.category} report on #{reportable_label}"
-          }
+            # The field label is host-declared copy, never user content, so it's safe here.
+            summary: ["New #{report.category} report on #{reportable_label}", field_label].compact.join(" · ")
+          }.compact
         )
       end
 
@@ -116,6 +119,10 @@ module Moderate
 
       def recipient_email
         report.notifier_email
+      end
+
+      def field_label
+        report.reported_field_label
       end
 
       # The reportable's own human label, or a neutral fallback — NEVER a host-
