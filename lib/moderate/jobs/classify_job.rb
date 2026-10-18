@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 module Moderate
-  # The background worker for ASYNCHRONOUS filter adapters (the :openai adapter, a
-  # host's hosted classifier, the default :image adapter) running in :flag mode.
+  # The background worker for ASYNCHRONOUS filter adapters (a remote moderation API
+  # such as the OpenAI or Rekognition reference adapters in examples/, or a host's
+  # own classifier) running in :flag mode.
   #
   # ── Why a job exists at all ──────────────────────────────────────────────────
   # An async adapter does blocking I/O (a moderation API call), which must never run
@@ -23,11 +24,12 @@ module Moderate
   # value. If the record was edited or deleted between enqueue and run, we classify
   # what's actually there now (or skip a vanished record), never a stale snapshot.
   #
-  # ── Idempotency ──────────────────────────────────────────────────────────────
+  # ── One flag per run ─────────────────────────────────────────────────────────
   # Flag creation goes through `Moderate::Flag.flag!`, the single builder shared by
-  # the synchronous and asynchronous paths. It's an upsert-by-(flaggable, field,
-  # source) so a retried job (ActiveJob retries on transient failures) doesn't pile
-  # up duplicate queue entries for the same content.
+  # the synchronous and asynchronous paths, and it is the job's last step, so a job
+  # that fails earlier (the adapter's network call) and is retried files one flag.
+  # `flag!` always creates: two runs for the same content (two saves, or a host that
+  # also enqueues the job itself) file two flags, both in the queue.
   #
   # ── An attachment whose file isn't on the service yet ────────────────────────
   # The filter enqueues this job only after Active Storage has uploaded the file
@@ -43,10 +45,10 @@ module Moderate
   # rest of the gem stays host-agnostic. The host configures the queue adapter,
   # retries, and queue name globally as usual.
   class ClassifyJob < ActiveJob::Base
-    # Run on a low-priority queue by default — moderation flagging is important but
-    # not latency-critical (the content is already published in :flag mode). A host
-    # can override the queue globally.
-    queue_as { Moderate.config.respond_to?(:job_queue) && Moderate.config.job_queue || :default }
+    # The :default queue. Moderation flagging is important but not latency-critical
+    # (the content is already published in :flag mode); a host that wants it elsewhere
+    # says so in an initializer: `Moderate::ClassifyJob.queue_as :low`.
+    queue_as :default
 
     # Seconds to wait before the next look at a blob that isn't uploaded yet,
     # multiplied by the attempt number (5s, 10s, 15s, 20s: under a minute in all).
@@ -103,7 +105,7 @@ module Moderate
       )
     end
 
-    # File (or upsert) the Moderate::Flag via the shared builder. We pass exactly the
+    # File the Moderate::Flag via the shared builder. We pass exactly the
     # columns the install migration defines for moderate_flags. `Flag.flag!` owns the
     # `content_flagged` notify event so there's a single emission site across the
     # sync and async paths — the job doesn't fire it itself, to avoid double-notifying.
