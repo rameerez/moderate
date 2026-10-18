@@ -4,6 +4,7 @@ es:
   errors:
     messages:
       objectionable_content: "contiene lenguaje no permitido"
+      upload_not_finished: "aún no ha terminado de subirse"
   moderate:
     appeals:
       reported_field: "Contenido"

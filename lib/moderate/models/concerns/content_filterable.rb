@@ -124,6 +124,10 @@ module Moderate
 
     # :block enforcement — a validation. We deliberately skip :flag fields here
     # (their work happens after_commit) and blank values (nothing to classify).
+    #
+    # `:block` lets nothing in unverified: an attachment that points at a stored blob
+    # whose file isn't on the service (a direct upload that hasn't finished) fails
+    # with `:upload_not_finished` instead of being classified without its file.
     def moderate_blocked_fields_must_be_allowed
       moderation_filtered_fields.each do |field|
         policy = Moderate.filter_policy_for(self, field)
@@ -131,6 +135,7 @@ module Moderate
 
         value = moderation_field_value(field)
         next if moderation_value_blank?(value)
+        next errors.add(field, :upload_not_finished) if Moderate::Attachments.upload_unfinished?(value)
 
         result = Moderate.classify(value, policy: policy)
         errors.add(field, :objectionable_content) if result.flagged?
@@ -205,11 +210,30 @@ module Moderate
       end
 
       return if moderation_value_blank?(value)
+      return moderate_classify_attachment(field, policy) if attachment
 
       result = Moderate.classify(value, policy: policy)
-      Moderate::Attachments.mark_classified!(self, field, value) if attachment
       return unless result.flagged?
 
+      moderate_file_flag(field, policy, value, result)
+    ensure
+      moderation_field_committed(field)
+    end
+
+    # Under the record's row lock, so the guard job can't classify the same files at
+    # the same time (Moderate::Attachments): check, classify, flag, mark.
+    def moderate_classify_attachment(field, policy)
+      Moderate.with_row_lock(self) do
+        value = moderation_field_value(field)
+        next if Moderate::Attachments.classified?(self, field, value)
+
+        result = Moderate.classify(value, policy: policy)
+        moderate_file_flag(field, policy, value, result) if result.flagged?
+        Moderate::Attachments.mark_classified!(self, field, value)
+      end
+    end
+
+    def moderate_file_flag(field, policy, value, result)
       Moderate::Flag.flag!(
         flaggable: self,
         field: field,
@@ -233,8 +257,6 @@ module Moderate
           policy: { class_name: policy.class_name, field: policy.field, mode: policy.mode.to_s }
         }
       )
-    ensure
-      moderation_field_committed(field)
     end
 
     # --- Overridable field seam -----------------------------------------------

@@ -86,17 +86,12 @@ module Moderate
 
       value = field_value(record, field)
       return if blank?(value)
-
-      attachment = Moderate::Attachments.attachment?(value)
-      if attachment
-        return if blob_ids && Moderate::Attachments.blob_ids(value) != Array(blob_ids).sort
-        return if Moderate::Attachments.classified?(record, field, value)
-        return wait_for_upload(record, field, adapter, upload_attempt, blob_ids) unless Moderate::Attachments.uploaded?(value)
+      if Moderate::Attachments.attachment?(value)
+        return classify_attachment(record, field, policy, adapter: adapter, attempt: upload_attempt, blob_ids: blob_ids)
       end
 
       result = Moderate.classify(value, policy: policy)
       file_flag(record, field, policy, result, value) if result.flagged?
-      Moderate::Attachments.mark_classified!(record, field, value) if attachment
     end
 
     private
@@ -168,6 +163,23 @@ module Moderate
     # to its reference, which is fine for the queue's "what was flagged" column.
     def excerpt_for(value)
       value.to_s[0, 500]
+    end
+
+    # Check, classify, flag and mark under the content record's row lock (content
+    # first, as everywhere), so this job and the inline path or the guard can't
+    # classify the same files at once (Moderate::Attachments).
+    def classify_attachment(record, field, policy, adapter:, attempt:, blob_ids:)
+      Moderate.with_row_lock(record) do
+        value = field_value(record, field)
+        next if blank?(value)
+        next if blob_ids && Moderate::Attachments.blob_ids(value) != Array(blob_ids).sort
+        next if Moderate::Attachments.classified?(record, field, value)
+        next wait_for_upload(record, field, adapter, attempt, blob_ids) unless Moderate::Attachments.uploaded?(value)
+
+        result = Moderate.classify(value, policy: policy)
+        file_flag(record, field, policy, result, value) if result.flagged?
+        Moderate::Attachments.mark_classified!(record, field, value)
+      end
     end
 
     def wait_for_upload(record, field, adapter, attempt, blob_ids)

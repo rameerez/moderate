@@ -193,6 +193,81 @@ class AttachmentUploadTest < ActiveSupport::TestCase
     assert_equal [true], @adapter.calls
   end
 
+  # A synchronous adapter that allows everything and counts its calls.
+  class AllowingAdapter
+    attr_reader :calls
+
+    def initialize
+      @calls = 0
+    end
+
+    def synchronous? = true
+
+    def classify(_value)
+      @calls += 1
+      Moderate::Result.allowed(source: "image_filter")
+    end
+  end
+
+  test ":block refuses an attachment whose direct upload hasn't finished, and checks it once it has" do
+    adapter = AllowingAdapter.new
+    Moderate.configure do |config|
+      config.register_adapter :allowing, adapter
+      config.filter "Comment", :photo, with: :allowing, mode: :block
+    end
+    blob = ActiveStorage::Blob.create_before_direct_upload!(
+      filename: "direct.png", byte_size: 5, checksum: OpenSSL::Digest::MD5.base64digest("bytes"), content_type: "image/png"
+    )
+    blob.update!(identified: true)
+    comment = Comment.new(user: @user, body: "hello")
+    comment.photo.attach(blob.signed_id)
+
+    assert_not comment.save
+    assert comment.errors.added?(:photo, :upload_not_finished)
+    assert_equal ["Photo hasn't finished uploading yet"], comment.errors.full_messages
+    assert_equal 0, adapter.calls, "a missing file is never classified"
+    I18n.with_locale(:es) do
+      comment.valid?
+      assert_equal "aún no ha terminado de subirse", comment.errors[:photo].first
+    end
+
+    blob.service.upload(blob.key, StringIO.new("bytes"))
+    assert comment.save, comment.errors.full_messages.to_sentence
+    assert_equal 1, adapter.calls
+  end
+
+  test "a changed set of files is classified again; the same set isn't" do
+    configure(model: "PhotoPost", field: :photos)
+    post = PhotoPost.new(user: @user, body: "hello")
+    post.photos.attach(
+      { io: StringIO.new("one"), filename: "one.png", content_type: "image/png" },
+      { io: StringIO.new("two"), filename: "two.png", content_type: "image/png" }
+    )
+    post.save!
+    assert_equal [true], @adapter.calls
+
+    kept = post.photos.blobs.min_by(&:id)
+    post.update!(photos: [kept.signed_id]) # one file removed: the remaining set is new
+    drain_classify_jobs
+
+    assert_equal [true, true], @adapter.calls, "the one-file set was never classified, so it is now"
+  end
+
+  test "the same blob attached to a second record is classified for that record too" do
+    configure
+    first = Comment.new(user: @user, body: "hello")
+    attach_photo(first)
+    first.save!
+
+    second = Comment.new(user: @user, body: "again")
+    second.photo.attach(first.photo.blob)
+    second.save!
+    drain_classify_jobs
+
+    assert_equal [true, true], @adapter.calls
+    assert_equal 1, Moderate::Flag.where(flaggable: second, field: "photo").count
+  end
+
   test "a save that doesn't touch the attachment doesn't classify it again" do
     configure
     comment = Comment.new(user: @user, body: "hello")

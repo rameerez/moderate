@@ -117,6 +117,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declaration order. Each set of files is classified once: the job takes `blob_ids:` and
   stops if the field holds other files by then, and whoever classifies first marks the
   blobs (`blob.metadata["moderate_classified"]`), so the guard finds the mark and stops.
+  The inline path and the job check, classify, file and mark under the content record's
+  row lock (content first, as everywhere), so the immediate job and the guard can't both
+  classify; the mark is keyed by record, field and a digest of the ordered blob ids, so a
+  changed set (a file added or removed) or the same blob on another record is classified
+  again; the write re-reads and merges the blob's metadata, keeping Active Storage's
+  analyzer keys. The analyzer writes that column without our lock, so in a rare race it can
+  drop the mark and the set is classified once more, which can't file a second pending flag
+  once beta4's unique pending flag per content and field is in. Holding the record's lock
+  across an async adapter's call means a slow provider holds that row (a user's, for an
+  avatar) for the call's length. Under **`mode: :block`**, an attachment whose stored blob
+  isn't on the service yet (a direct upload in flight) fails validation with
+  `errors.messages.upload_not_finished` ("hasn't finished uploading yet", en/es) instead of
+  being classified without its file.
   **If you worked around this** (CarHey's avatar):
   1. delete the `moderation_field_changed_for_commit?` override that returns `false` for
      the attachment field;
