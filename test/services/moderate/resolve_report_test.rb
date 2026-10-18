@@ -16,6 +16,25 @@ module Moderate
     #   - the DOUBLE-RESOLVE guard: a closed report can't be re-decided (no double-ban);
     #   - the TWO decision events fire (reporter receipt + affected-user statement of reasons);
     #   - the automated-processing disclosure (Art. 17(3)(c)) travels in the decision payload.
+    # A comment whose body a moderator can remove, on its own base class so the
+    # report loads it back as itself.
+    class RemovableBodyComment < ::ApplicationRecord
+      self.table_name = "comments"
+
+      belongs_to :user
+      has_reportable_content :body
+
+      def reported_owner = user
+      def moderation_label = "Comment ##{id}"
+
+      def remove_reported_field!(field)
+        return false unless field.to_s == "body"
+
+        update!(body: nil)
+        true
+      end
+    end
+
     class ResolveReportTest < ActiveSupport::TestCase
       setup do
         Moderate.configure do |config|
@@ -226,6 +245,85 @@ module Moderate
         # caller's explicit ground is recorded.
         assert_equal "other_restriction", report.decision_visibility
         assert_equal "law", report.resolution_basis
+      end
+
+      # --- A ban nothing applies is refused ------------------------------------
+
+      test "ban_user without a ban_handler is refused before anything changes" do
+        Moderate.config.ban_handler = nil
+        moderator = User.create!(name: "Mod", email: "mod-noban@example.com")
+        author = User.create!(name: "Author", email: "author-noban@example.com")
+        comment = RemovableBodyComment.create!(user: author, body: "slur")
+        report = create_report(reportable: comment, field: "body")
+        ModerateTestRecorder.clear
+
+        error = assert_raises(Moderate::ConfigurationError) do
+          report.resolve!(by: moderator, note: "Gone.", remove_content: true, ban_user: true)
+        end
+
+        assert_match(/no config.ban_handler/, error.message)
+        assert_predicate report.reload, :open?
+        assert_equal "slur", comment.reload.body, "nothing removed either"
+        assert_empty ModerateTestRecorder.notifications
+        assert_empty ModerateTestRecorder.audits
+      end
+
+      test "Moderate.apply_ban refuses without a ban_handler" do
+        Moderate.config.ban_handler = nil
+
+        assert_raises(Moderate::ConfigurationError) do
+          Moderate.apply_ban(user: User.create!(name: "U"), by: nil, reason: "x")
+        end
+        assert_empty ModerateTestRecorder.notifications_named(:user_banned)
+      end
+
+      test "ban_handler must be callable, and nil puts the default back" do
+        assert_predicate Moderate.config, :ban_handler_configured?
+        assert_raises(ArgumentError) { Moderate.config.ban_handler = "suspend!" }
+
+        Moderate.config.ban_handler = nil
+        assert_not_predicate Moderate.config, :ban_handler_configured?
+        assert_not_predicate Moderate::Configuration.new, :ban_handler_configured?
+      end
+
+      test "a decision without a ban needs no ban_handler" do
+        Moderate.config.ban_handler = nil
+        author = User.create!(name: "Author", email: "author-nobanneeded@example.com")
+        report = create_report(reportable: Comment.create!(user: author, body: "meh"), field: "body")
+
+        report.resolve!(by: User.create!(name: "Mod"), note: "Warned.")
+
+        assert_predicate report.reload, :actioned?
+      end
+
+      # --- content_removed --------------------------------------------------
+
+      test "removing content audits and announces content_removed to its author" do
+        moderator = User.create!(name: "Mod", email: "mod-removed@example.com")
+        author = User.create!(name: "Author", email: "author-removed@example.com")
+        report = create_report(reportable: RemovableBodyComment.create!(user: author, body: "slur"), field: "body")
+        ModerateTestRecorder.clear
+
+        report.resolve!(by: moderator, note: "Slur.", remove_content: true)
+
+        audit = ModerateTestRecorder.audits_named(:content_removed).sole
+        event = ModerateTestRecorder.notifications_named(:content_removed).sole
+        assert_equal report, event.subject
+        assert_equal moderator, event.actor
+        assert_equal [author], event.recipients
+        assert_equal "body", event.payload[:reported_field]
+        assert_equal "Slur.", event.payload[:reason]
+        assert_equal audit.payload, event.payload
+      end
+
+      test "no content_removed when the reportable removed nothing" do
+        author = User.create!(name: "Author", email: "author-kept@example.com")
+        report = create_report(reportable: Comment.create!(user: author, body: "meh"), field: "body")
+
+        report.resolve!(by: User.create!(name: "Mod"), note: "Kept.", remove_content: true)
+
+        assert_empty ModerateTestRecorder.notifications_named(:content_removed)
+        assert_empty ModerateTestRecorder.audits_named(:content_removed)
       end
 
       private

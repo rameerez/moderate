@@ -56,6 +56,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `to_moderation_sgid`; now it exists. Hosts building
   `to_sgid_param(for: Moderate::Report::SIGNED_GLOBAL_ID_PURPOSE)` by hand can use these
   (without `expires_in: nil`, that token changed on every render and died after a month).
+- **The `content_removed` event is emitted.** It was in the documented vocabulary from
+  beta1 and nothing sent it. A decision whose `remove_reported_field!` removed something now
+  audits `content_removed` inside the decision's transaction and announces it with the
+  decision notices, to the content's person, with `reported_field`, its label and the
+  moderator's reason. (`notice_received`, which the DSA form has always sent, joins the
+  vocabulary lists in the README, the configuration guide and the initializer.)
 - **Enforce from a flag.** `flag.action!(by:, note:, remove_content: true)` and
   `flag.action!(by:, note:, ban_user: true)` (any combination, plus `resolution_basis:`)
   escalate to a report and resolve it: the newest open report on the same content and field
@@ -88,6 +94,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ResolveReport.new(report, by:, deliver: false)`** holds the decision notices back for a
   caller that decides inside a lock of its own; `#deliver_decision_notices` sends them.
 
+- **A ban needs a `ban_handler`.** With none configured, `ban_user: true` (on a report or a
+  flag) and `Moderate.apply_ban` raise `Moderate::ConfigurationError` before anything
+  changes. Before, the default no-op handler let the decision record
+  `decision_visibility: "account_suspended"`, audit and announce `user_banned`, and send the
+  person a statement of reasons saying their account was suspended, while nothing had
+  suspended it: a false Art. 17 statement. `config.ban_handler = nil` restores the default;
+  a non-callable raises `ArgumentError`; `config.ban_handler_configured?` tells. Decisions
+  without a ban are unaffected. **Behavior change** for hosts that never wired one and
+  relied on the no-op.
 - **An in-app report is refused when its reporter may not report the content.** A community
   report filed by a signed-in person now validates the reportable's own `report_visible_to?`
   (never your own content; for a chats message, only a conversation you're in), with an

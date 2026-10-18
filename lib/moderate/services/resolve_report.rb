@@ -53,8 +53,13 @@ module Moderate
           resolution_basis: resolution_basis.to_s.strip.presence || "terms"
         }
 
+        # A ban nothing would apply is refused before anything changes (see
+        # Moderate.ensure_ban_handler!): never "account suspended" for a suspension
+        # that didn't happen.
+        Moderate.ensure_ban_handler! if actions[:ban_user] && report.reported_user.present?
+
         transition!("actioned", note: note, actions: actions) do
-          remove_reported_content! if actions[:remove_content]
+          remove_reported_content!(note: note) if actions[:remove_content]
           ban_reported_user!(note: note) if actions[:ban_user]
         end
       end
@@ -72,6 +77,7 @@ module Moderate
       def deliver_decision_notices
         notify_reporter
         notify_affected_user
+        notify_content_removed
       end
 
       private
@@ -120,11 +126,35 @@ module Moderate
 
       # --- Enforcement (host contracts only) ----------------------------------
 
-      def remove_reported_content!
+      # The reportable's own removal (`remove_reported_field!`). When it says it
+      # removed something, the removal is audited here, inside the decision's
+      # transaction, and announced as `content_removed` with the decision notices.
+      def remove_reported_content!(note:)
         return if report.reportable.blank?
         return unless report.reportable.respond_to?(:remove_reported_field!)
 
-        report.reportable.remove_reported_field!(report.reported_field)
+        removed = report.reportable.remove_reported_field!(report.reported_field)
+        return removed unless removed
+
+        @content_removed = content_removed_payload(note)
+        Moderate.audit(:content_removed, subject: report, actor: moderator, recipients: removal_recipients, payload: @content_removed)
+        removed
+      end
+
+      def content_removed_payload(note)
+        {
+          report_id: report.id,
+          reportable_type: report.reportable_type,
+          reportable_id: report.reportable_id,
+          reported_field: report.reported_field,
+          reported_field_label: report.reported_field_label,
+          reason: note,
+          summary: ["Content removed: #{report.reportable_label}", report.reported_field_label].compact.join(" · ")
+        }.compact
+      end
+
+      def removal_recipients
+        [report.reported_user].compact
       end
 
       def ban_reported_user!(note:)
@@ -138,6 +168,14 @@ module Moderate
       end
 
       # --- Notifications (after the lock) -------------------------------------
+
+      # content_removed → the person whose content it was (when there is one) and the
+      # host's admin channels. Only when the removal actually removed something.
+      def notify_content_removed
+        return unless @content_removed
+
+        Moderate.notify(:content_removed, subject: report, actor: moderator, recipients: removal_recipients, payload: @content_removed)
+      end
 
       # report_decision → the reporter (Art. 16(5): inform the notice provider of the
       # decision + redress). We stamp `decision_notified_at` ONLY when the hook

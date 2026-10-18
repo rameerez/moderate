@@ -218,6 +218,18 @@ module Moderate
         assert_equal 0, Moderate::Report.count
       end
 
+      test "a ban with no ban_handler is refused and the flag stays pending" do
+        Moderate.config.ban_handler = nil
+        flag = create_flag
+
+        assert_raises(Moderate::ConfigurationError) do
+          flag.action!(by: User.create!(name: "Mod"), note: "Ban.", ban_user: true)
+        end
+
+        assert_predicate flag.reload, :pending?
+        assert_equal 0, Moderate::Report.count, "the system report rolled back with it"
+      end
+
       test "a classifier subcategory maps onto the community category, else other" do
         assert_equal "hate", escalation_category_for(["hate/threatening"])
         assert_equal "other", escalation_category_for(["violence/graphic"])

@@ -297,10 +297,13 @@ module Moderate
     end
 
     # Apply a ban via the host's `ban_handler` (suspend!, soft-delete, flip a flag,
-    # whatever "banned" means in the host's domain). Keyword-arg signature. No-op by
-    # default — the surrounding decision still audits and notifies even if no ban is
-    # wired, so the action is never silently dropped (docs/configuration.md).
+    # whatever "banned" means in the host's domain). Keyword-arg signature.
+    #
+    # Raises ConfigurationError when no ban_handler is wired: auditing and announcing
+    # `user_banned` for a ban nothing applied would put a false statement in the
+    # audit trail and in the person's inbox.
     def apply_ban(user:, by:, reason:)
+      ensure_ban_handler!
       result = config.ban_handler.call(user: user, by: by, reason: reason)
       payload = {
         user_id: user&.id,
@@ -337,6 +340,17 @@ module Moderate
 
       owner = record.reported_owner
       owner if owner.is_a?(user_class)
+    end
+
+    # Raised before anything changes when a ban is asked for and nothing would apply
+    # it. Public so a decision service can check before it takes any lock.
+    def ensure_ban_handler!
+      return true if config.ban_handler_configured?
+
+      raise ConfigurationError,
+        "a ban was requested but no config.ban_handler is set, so nothing would suspend the account " \
+        "while the audit trail and the statement of reasons said it was. Wire one in config/initializers/moderate.rb, " \
+        "e.g. `config.ban_handler = ->(user:, by:, reason:) { user.suspend!(reason: reason) }`."
     end
 
     # --- Blocking SSOT --------------------------------------------------------

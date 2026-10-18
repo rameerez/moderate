@@ -379,7 +379,7 @@ end
 
 Events carry a stable envelope (`event.name`, `event.subject`, `event.recipients`, `event.actor`, `event.payload`), so a single `notify` hook can drive **goodmail** (user emails), **telegrama** (admin alerts), and **noticed** (in-app feed + push) at once. Notify users via email/in-app **and** ping admins on Telegram from the same place. (Recipes in [`docs/notifications.md`](docs/notifications.md).)
 
-The full event vocabulary: `report_received`, `report_decision`, `affected_user_decision`, `appeal_received`, `appeal_decision`, `user_blocked`, `user_unblocked`, `user_banned`, `content_flagged`, `content_removed`.
+The full event vocabulary: `report_received`, `notice_received`, `report_decision`, `affected_user_decision`, `appeal_received`, `appeal_decision`, `user_blocked`, `user_unblocked`, `user_banned`, `content_flagged`, `content_removed`.
 
 ## ⚖️ DSA & app-store compliance, out of the box
 
@@ -417,7 +417,7 @@ Moderate.configure do |config|
   config.audit       = ->(event) { ... }     # optional; no-op by default
   config.notify      = ->(event) { ... }     # optional; no-op by default
   config.on_block    = ->(blocker:, blocked:, at:) { ... }   # optional
-  config.ban_handler = ->(user:, by:, reason:) { user.suspend! }   # how a "ban" is applied in your app
+  config.ban_handler = ->(user:, by:, reason:) { user.suspend! }   # how a "ban" is applied in your app (required before any ban_user: true)
 
   config.filter "Message", :body, with: :wordlist, mode: :flag
 end
