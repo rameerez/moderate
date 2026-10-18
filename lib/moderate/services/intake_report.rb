@@ -62,6 +62,7 @@ module Moderate
 
         deliver_receipt
         audit_intake
+        block_reported_user
         true
       end
 
@@ -115,6 +116,19 @@ module Moderate
             summary: "Report ##{report.id} filed (#{report.category})"
           }.compact
         )
+      end
+
+      # "Report and block": the reporter asked to block the person responsible too.
+      # After the report is safely filed, through the one block path (Block.block!:
+      # idempotent, audited, on_block, user_blocked). A self-block is a no-op there.
+      def block_reported_user
+        return unless ActiveModel::Type::Boolean.new.cast(report.block_reported_user)
+
+        reporter = report.reporter
+        blocked = report.reported_user
+        return if reporter.blank? || blocked.blank? || !reporter.respond_to?(:block!)
+
+        reporter.block!(blocked)
       end
 
       def recipient_email

@@ -128,6 +128,7 @@ module Moderate
     before_validation :normalize_strings
     before_validation :hydrate_reporter_contact, if: :reporter
     before_validation :infer_reported_user, on: :create
+    before_validation :infer_content_type, on: :create
     before_validation :capture_snapshot, on: :create
     before_validation :capture_automated_processing, on: :create
     # Default the JSON columns to their empty shape before save. WHY: the migration
@@ -192,6 +193,7 @@ module Moderate
     validates :resolution_basis, inclusion: { in: RESOLUTION_BASES }, allow_blank: true
     validate :reporter_cannot_report_self
     validate :reportable_field_must_be_allowed
+    validate :reporter_must_be_allowed_to_report, on: :create
     validate :subject_url_must_be_http_url
     validate :public_notice_requires_subject_url
     validate :dsa_notice_must_be_substantiated
@@ -474,6 +476,22 @@ module Moderate
       self.reported_user = Moderate.responsible_user(reportable)
     end
 
+    # The generic content bucket, from the reportable when the caller didn't name
+    # one: `moderation_content_type` (with or without the field — chats' takes none),
+    # kept if it is one of CONTENT_TYPES and filed as "other" if it isn't, so a
+    # host's own word ("ride") can never fail an intake. A caller's explicit value
+    # (the DSA notice form's select) is left alone.
+    def infer_content_type
+      return if content_type.present? || reportable.blank?
+      return unless reportable.respond_to?(:moderation_content_type)
+
+      reader = reportable.method(:moderation_content_type)
+      value = (reader.arity.zero? ? reader.call : reader.call(reported_field)).to_s.squish.presence
+      return if value.nil?
+
+      self.content_type = CONTENT_TYPES.include?(value) ? value : "other"
+    end
+
     # Capture an IMMUTABLE evidence snapshot at create time. This is the heart of a
     # defensible decision: the content as it was WHEN reported, frozen into JSON, so
     # the evidence survives the author editing or deleting the original afterward
@@ -530,6 +548,22 @@ module Moderate
       return if reportable.reportable_field_allowed?(reported_field)
 
       errors.add(:reported_field, I18n.t("moderate.errors.invalid_reported_field", default: "is not a reportable field"))
+    end
+
+    # An in-app (community) report from a signed-in person must be about something
+    # that person may report: the reportable's own `report_visible_to?` (never your
+    # own content; for chats, only a conversation you're in). The report affordance
+    # hides itself on that rule, but a hidden link is not a check: a signed target
+    # pasted or replayed from elsewhere reached the model unchecked until now. DSA
+    # notices (anyone may notify) and system reports (no reporter) are not affected.
+    # The self-report and field rules above already explain their own refusals.
+    def reporter_must_be_allowed_to_report
+      return unless community? && reporter.present? && reportable.present?
+      return unless reportable.respond_to?(:report_visible_to?)
+      return if errors.include?(:reported_user) || errors.include?(:reported_field)
+      return if reportable.report_visible_to?(reporter, field: reported_field)
+
+      errors.add(:reportable, I18n.t("moderate.errors.not_reportable_by_reporter", default: "isn't something you can report"))
     end
 
     def subject_url_must_be_http_url

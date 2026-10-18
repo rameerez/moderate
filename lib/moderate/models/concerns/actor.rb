@@ -75,7 +75,15 @@ module Moderate
     # `details:` is the README's name for the reporter's free-text reason; it maps
     # onto the Report's `message`. Extra keyword args (e.g. `field:`) pass straight
     # through, so this stays forward-compatible with the Report model's attributes.
-    def report!(reportable, category:, details: nil, **attributes)
+    #
+    # `block: true` also blocks the person responsible for the content once the
+    # report is filed — the "Report and block" checkbox. (Nothing is blocked if the
+    # content has no person behind it, or if it's your own.)
+    #
+    # The report is refused (RecordInvalid, an error on :reportable) when this actor
+    # may not report it — the reportable's own `report_visible_to?`, the same rule
+    # that hides the report link.
+    def report!(reportable, category:, details: nil, block: false, **attributes)
       attributes[:message] = details if details && !attributes.key?(:message)
       reported_field = attributes.delete(:reported_field)
       field = attributes.delete(:field)
@@ -96,6 +104,7 @@ module Moderate
         intake_kind: "community",
         **attributes
       )
+      report.block_reported_user = block
 
       intake = Moderate::Services::IntakeReport.new(
         report: report,
@@ -162,6 +171,11 @@ module Moderate
     # impersonation) attributes to and notifies that same user.
     def reported_owner
       self
+    end
+
+    # A report about a person is about their profile.
+    def moderation_content_type(_field = nil)
+      "user_profile"
     end
 
     # You can never report yourself, and a field still has to be reportable. This

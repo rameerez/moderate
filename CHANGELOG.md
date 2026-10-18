@@ -37,6 +37,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now shows real copy in both languages. **`Moderate::Report.category_options`** gives a
   report form's select its `[label, value]` pairs, honoring `config.report_categories`. Hosts
   that translated the regulator's vocabulary themselves can drop their copies for en/es.
+- **"Report and block": `report!(…, block: true)`** blocks the person responsible for the
+  content once the report is filed, through the one block path (idempotent, audited,
+  `on_block`, `user_blocked`). `Report#block_reported_user`, which has existed since beta1
+  and which nothing read, is what it sets. Nothing is blocked when the content has no person
+  behind it.
+- **Reports know what kind of content they're about.** A community report with no
+  `content_type` takes the reportable's `moderation_content_type` (with or without the field
+  argument, since chats' takes none), stored if it is one of `Report::CONTENT_TYPES`, else
+  `"other"`, so a host's own word never fails an intake. `Moderate::Reportable` defines it
+  (nil) and `Moderate::Actor` answers `"user_profile"`. Hosts that mapped their models to
+  content types in the report controller can delete the map.
+- **`Reportable#to_moderation_sgid`** and the view helper
+  **`moderate_report_target_path(record, field:)`**: the signed report target and the report
+  form's path, public and non-expiring, for markup rendered once for many viewers (a chat
+  bubble broadcast to everyone in the thread, a fragment cache), where
+  `moderate_report_link`'s per-viewer check can't run. The helper always probed for
+  `to_moderation_sgid`; now it exists. Hosts building
+  `to_sgid_param(for: Moderate::Report::SIGNED_GLOBAL_ID_PURPOSE)` by hand can use these
+  (without `expires_in: nil`, that token changed on every render and died after a month).
 - **Enforce from a flag.** `flag.action!(by:, note:, remove_content: true)` and
   `flag.action!(by:, note:, ban_user: true)` (any combination, plus `resolution_basis:`)
   escalate to a report and resolve it: the newest open report on the same content and field
@@ -68,6 +87,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   always did) instead of overwriting the first decision.
 - **`ResolveReport.new(report, by:, deliver: false)`** holds the decision notices back for a
   caller that decides inside a lock of its own; `#deliver_decision_notices` sends them.
+
+- **An in-app report is refused when its reporter may not report the content.** A community
+  report filed by a signed-in person now validates the reportable's own `report_visible_to?`
+  (never your own content; for a chats message, only a conversation you're in), with an
+  error on `:reportable` ("isn't something you can report",
+  `moderate.errors.not_reportable_by_reporter`). The report link always hid itself on that
+  rule, and chats' docs said moderate re-checks it server-side, but nothing did: a signed
+  target replayed or pasted from elsewhere reached the model unchecked. DSA notices and
+  system reports (no reporter) are not affected. **Behavior change:** a host that files
+  community reports on behalf of people who couldn't see the content now gets a validation
+  error; use a manual flag (`Flag.flag_for_review!`) for an administrator's own concern.
 
 ### Fixed
 

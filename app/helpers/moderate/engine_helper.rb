@@ -65,6 +65,20 @@ module Moderate
       moderate_report_link(record, field: field, label: label, **html_options)
     end
 
+    # The path to the in-app report form for `record` (and `field`), with the record
+    # as a signed target — WITHOUT asking who is looking. For markup rendered once
+    # and shown to many viewers (a chat bubble broadcast to every participant, a
+    # fragment cache), where `moderate_report_link`'s per-viewer check can't run at
+    # render time: show it to everyone but the author on the client, and let the
+    # report be refused server-side (Report validates `report_visible_to?`).
+    #
+    #   <%= link_to "Report", moderate_report_target_path(message, field: :body) %>
+    #
+    # The target never expires, so the URL is stable across renders.
+    def moderate_report_target_path(record, field: nil)
+      moderate_report_path_for(record, field: field)
+    end
+
     private
 
     # The path to the in-app intake form for this record/field.

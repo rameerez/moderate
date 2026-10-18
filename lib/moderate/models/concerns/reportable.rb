@@ -240,6 +240,25 @@ module Moderate
       true
     end
 
+    # The generic content bucket this record is (Report::CONTENT_TYPES: "message",
+    # "listing", "user_profile", …), stored on reports filed against it so the queue
+    # and the transparency counts can group by kind. nil (the default) leaves the
+    # report's content_type empty; a value outside CONTENT_TYPES is stored as "other".
+    def moderation_content_type(_field = nil)
+      nil
+    end
+
+    # The signed, purpose-scoped token that names this record in a report link
+    # (`/reports/new?target=…`), resolved back by Report.locate_signed_reportable.
+    # NON-expiring on purpose: it identifies which record to report and grants no
+    # capability, and an expiring token changes on every render, which defeats the
+    # fragment caching of anything that shows a report link (a chat bubble rendered
+    # once per broadcast, for every viewer). Prefer the view helper
+    # `moderate_report_target_path(record, field:)` to building URLs by hand.
+    def to_moderation_sgid
+      to_sgid_param(for: Moderate::Report::SIGNED_GLOBAL_ID_PURPOSE, expires_in: nil)
+    end
+
     # Open reports filed against this record, optionally narrowed to one field.
     # Hosts can use this when they need the actual relation (queue previews,
     # counters, "already reported" affordances) instead of just a boolean.
