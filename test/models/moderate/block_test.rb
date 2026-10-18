@@ -143,9 +143,9 @@ module Moderate
 
       ids = Moderate.blocked_ids_for(viewer).pluck(:id)
       assert_equal [other.id], ids
-      # The facade returns [] (not a relation) for a nil user, so a `where.not` over
-      # it is always safe even with no current user.
-      assert_equal [], Moderate.blocked_ids_for(nil)
+      # A nil user gets an empty relation (the same type as any other call), so a
+      # `where.not` over it is always safe even with no current user.
+      assert_empty Moderate.blocked_ids_for(nil).ids
     end
 
     test "between scope finds the edge in either direction" do

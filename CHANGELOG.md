@@ -120,6 +120,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read `moderation.legal_reasons.*` / `moderation.resolution_bases.*`, a namespace from the
   app the gem was extracted from that no other part of the gem uses; the rest printed raw
   values humanized. Every card now goes through `Moderate.taxonomy_label`.
+- **`Moderate.blocked_ids_for(nil)` returns the same type as every other call**: an empty
+  relation selecting user ids, not `[]`. Composing the two shapes was a real bug in a host
+  (`relation | array` yields User records, and `include?(id)` silently missed). Call `.ids`
+  for an Array.
+- **`Report#pending?` and `Appeal#pending?`** exist, twins of the `pending` scopes all three
+  queues share (`docs/madmin.md` called them and they didn't exist).
 - **`Moderate::Moderation#resolve` works on flags.** It called `record.resolve!`, which
   `Moderate::Flag` didn't have, so a host following the concern's own documentation got a
   `NoMethodError` (as an alert flash) on every flag. It also passes `resolution_basis` when

@@ -91,8 +91,25 @@ class BlockingTest < ActiveSupport::TestCase
     assert_empty Moderate.blocked_ids_for(@alice).to_a
   end
 
-  test "blocked_ids_for returns [] for a nil user (anonymous-safe)" do
-    assert_equal [], Moderate.blocked_ids_for(nil)
+  test "blocked_ids_for is an empty relation for a nil user (anonymous-safe), the same type as always" do
+    ids = Moderate.blocked_ids_for(nil)
+
+    assert_kind_of ActiveRecord::Relation, ids
+    assert_equal [], ids.ids
+    assert_equal Comment.count, Comment.where.not(user_id: ids).count, "composes into where.not like any other call"
+  end
+
+  test "blocked_ids_for composes with another id set without mixing records and ids" do
+    Moderate::Block.block!(blocker: @alice, blocked: @bob)
+
+    assert_equal [@bob.id], Moderate.blocked_ids_for(@alice).ids | Moderate.blocked_ids_for(nil).ids
+  end
+
+  test "pending? reads the same on reports and appeals as on flags" do
+    assert_predicate Moderate::Report.new(status: "open"), :pending?
+    assert_not_predicate Moderate::Report.new(status: "actioned"), :pending?
+    assert_predicate Moderate::Appeal.new(status: "open"), :pending?
+    assert_not_predicate Moderate::Appeal.new(status: "upheld"), :pending?
   end
 
   test "blocked_ids_for includes people I BLOCKED (outgoing direction)" do

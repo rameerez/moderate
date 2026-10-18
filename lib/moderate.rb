@@ -363,10 +363,14 @@ module Moderate
     #   Post.where.not(user_id: Moderate.blocked_ids_for(current_user))
     #
     # Delegates to Moderate::Block (the model that owns the block SQL) so the join
-    # logic lives in exactly one place. Returns an empty array for a blank user.
+    # logic lives in exactly one place.
+    #
+    # ALWAYS a relation selecting user ids (`user_class.where(...).select(:id)`), for
+    # a blank user too (then an empty one): compose it into `where.not(user_id: …)`
+    # and it stays one subquery. Call `.ids` for an Array of id values. (beta2 gave
+    # `[]` for nil and a relation otherwise; a host composing the two got an Array of
+    # User records from `relation | array`, and `include?(id)` silently missed.)
     def blocked_ids_for(user)
-      return [] if user.nil?
-
       Block.related_user_ids(user)
     end
 

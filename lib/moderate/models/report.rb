@@ -250,6 +250,10 @@ module Moderate
       status == "open"
     end
 
+    # Awaiting a decision — the record-level twin of the `pending` scope, so one
+    # predicate reads the same across Report, Flag and Appeal queues.
+    alias_method :pending?, :open?
+
     def actioned?
       status == "actioned"
     end
