@@ -37,7 +37,14 @@ _Upgrading from 1.0.0.beta3_ below). No API change.
   with a unique index. `Flag.flag!` and `Flag.flag_for_review!` insert and, on the collision,
   return the flag already waiting, read with a locking read (the latest committed row on
   every database); no plain read decides anything, and `flag_for_review!` locks only the
-  waiting flag, only on a collision.
+  waiting flag, only on a collision. On MySQL, locking a pending flag (`with_lock`, `lock!`)
+  takes its `pending_key` index entry before its row, the order a colliding insert takes
+  them in, so a filing and a decision on the same field don't deadlock. The one deadlock
+  InnoDB can still pick (an insert's duplicate check queued on the gap a closing flag's index
+  entry moves into) is retried by `Flag.flag!` when it is the whole transaction, and raised
+  as `ActiveRecord::Deadlocked` inside a caller's transaction, which InnoDB rolled back.
+- **The install migration on Trilogy.** `moderate:install`'s migration now treats Rails'
+  Trilogy adapter as MySQL, as it already did mysql2 (MySQL refuses defaults on JSON columns).
 - **Removal-only enforcement no longer locks the person's row.** Only a decision that can
   ban takes the account's lock, so removing one message never waits on (or holds up) other
   work on the author's account.

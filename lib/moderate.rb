@@ -387,6 +387,8 @@ module Moderate
     #     lock, they never hold content while waiting on a flag (the inversion against
     #     ResolveFlag); the read of the waiting flag is an equality match on a unique
     #     index, a lock on that one row while it exists.
+    #   - "The flag" is, for a pending flag, its pending_key index entry and then its
+    #     row (Flag#lock!), the order a colliding insert takes them in on InnoDB.
     #   - The person's lock is taken only when a decision can ban: removal-only
     #     enforcement never waits on, or holds, an account's row.
     #

@@ -84,6 +84,13 @@ module Moderate
     # holds whatever the isolation level or snapshot, because uniqueness is checked
     # against what is committed, and the waiting flag is then read with a LOCKING
     # read (the latest committed row, also under MySQL's REPEATABLE READ).
+    #
+    # On MySQL an insert colliding with a flag that is being decided can be chosen as
+    # a deadlock victim: InnoDB queues the duplicate check as a lock on the gap the
+    # decided flag's index entry moves into. When this call is the whole transaction
+    # (the filters' after_commit, ClassifyJob, the admin button) it is simply tried
+    # again; inside a caller's transaction InnoDB has rolled that transaction back
+    # too, so ActiveRecord::Deadlocked is raised for the caller to retry.
     def self.flag!(flaggable:, field:, owner:, source:, mode:, excerpt:, categories:, scores:, context:)
       attributes = {
         flaggable: flaggable,
@@ -104,6 +111,8 @@ module Moderate
         waiting = waiting_flag(pending_key_for(flaggable.class.polymorphic_name, flaggable.id, field))
         return waiting if waiting&.pending?
         # The waiting flag was decided while we looked: its key is free, insert again.
+      rescue ActiveRecord::Deadlocked
+        raise if connection.transaction_open? # the caller's transaction died with ours
       end
 
       raise ActiveRecord::RecordNotUnique,
@@ -254,6 +263,19 @@ module Moderate
     # flagged record is gone (falls back to `flaggable_type`).
     def field_label
       Moderate.reportable_field_label(flaggable || flaggable_type, field)
+    end
+
+    # Lock the row (`with_lock`, `lock!`) — and, for a pending flag, its entry in the
+    # unique pending_key index FIRST. InnoDB keeps a row in two places, and a flag's
+    # two are taken in opposite orders otherwise: an insert colliding on the key
+    # (Flag.flag!) holds the index entry and then waits for the row, while closing the
+    # flag holds the row and then, freeing the key, needs the entry — a deadlock. One
+    # order, entry then row, everywhere. On PostgreSQL and SQLite it re-locks the
+    # same row (or nothing): harmless.
+    def lock!(lock = true) # rubocop:disable Style/OptionalBooleanParameter -- Rails' signature
+      key = pending_key if persisted? && !has_changes_to_save?
+      self.class.unscoped.where(pending_key: key).lock(lock).ids if key
+      super
     end
 
     private

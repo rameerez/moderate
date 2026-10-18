@@ -87,6 +87,9 @@ module Moderate
       [@moderator, @admin, @author].each(&:destroy)
     end
 
+    # On MySQL this is also the deadlock Flag.flag! retries: the review's duplicate
+    # check waits on the flag's key, whose index entry the closing UPDATE moves into
+    # the very gap that check has queued a lock on; InnoDB rolls the review back.
     test "enforcement holds the flag when a review of the same content arrives: the review waits, then files anew" do
       enforcing = gated(:before_enforce) do
         Moderate::Flag.find(@flag.id).action!(by: @moderator, note: "Slur.", remove_content: true)
@@ -94,8 +97,7 @@ module Moderate
       enforcing[:arrived].pop # holds the flag, hasn't asked for the content yet
 
       reviewing = gated(nil) { Moderate::Flag.flag_for_review!(LockOrderComment.find(@comment.id), field: :body, by: @admin) }
-      wait_until_blocked(reviewing[:backend].pop) # its insert collided; it waits on the flag
-      enforcing[:go] << :go
+      released(enforcing) { wait_until_blocked(reviewing[:backend].pop) } # its insert collided; it waits on the flag
 
       assert_nothing_raised { [enforcing, reviewing].each { |side| side[:thread].join } }
       assert_equal "actioned", @flag.reload.status
@@ -114,8 +116,7 @@ module Moderate
       reviewing[:arrived].pop
 
       enforcing = gated(nil) { Moderate::Flag.find(@flag.id).action!(by: @moderator, note: "Slur.", remove_content: true) }
-      wait_until_blocked(enforcing[:backend].pop) # on the flag the review holds
-      reviewing[:go] << :go
+      released(reviewing) { wait_until_blocked(enforcing[:backend].pop) } # on the flag the review holds
 
       assert_nothing_raised { [reviewing, enforcing].each { |side| side[:thread].join } }
       assert_equal @flag, reviewing[:thread].value, "the review found the flag already waiting"
@@ -136,16 +137,27 @@ module Moderate
       end
       holding.pop
 
-      enforcing = gated(nil) { Moderate::Flag.find(@flag.id).action!(by: @moderator, note: "Slur.", remove_content: true) }
-      finished = enforcing[:thread].join(5)
-      release << :go
-      holder.join
+      begin
+        enforcing = gated(nil) { Moderate::Flag.find(@flag.id).action!(by: @moderator, note: "Slur.", remove_content: true) }
+        finished = enforcing[:thread].join(5)
+      ensure
+        release << :go # whatever happened, the holder lets go of the account's row
+        holder.join
+      end
 
       assert finished, "removal-only enforcement blocked on the person's lock"
       assert_equal "actioned", @flag.reload.status
     end
 
     private
+
+    # Run the block, then let the gated thread go on, whatever happened: a failure
+    # must never leave a transaction parked with its locks held.
+    def released(gate)
+      yield
+    ensure
+      gate[:go] << :go
+    end
 
     # Run `block` on its own thread and connection, reporting its backend id, and
     # pausing it at `point` (nil: no pause).
