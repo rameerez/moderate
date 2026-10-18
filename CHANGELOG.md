@@ -85,7 +85,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order. `ClassifyJob` also checks that every blob behind the value exists on its service:
   if one doesn't (a direct upload still in flight, a lagging replica) it re-enqueues itself
   after 5, 10, 15 and 20 seconds (`UPLOAD_WAIT`, `UPLOAD_ATTEMPTS`), then gives up with a
-  `classification_skipped` audit event. **If you worked around this** (CarHey's avatar):
+  `classification_skipped` audit event. Nothing classifies a file that isn't there: the
+  inline (synchronous adapter) path checks too, and hands a missing file to the job; a
+  direct upload attached before its file arrives (whose Active Storage `upload` is a no-op)
+  waits the same way. A failed upload is never silent: just before Active Storage uploads,
+  the filter queues a guard `ClassifyJob` for `UPLOAD_WAIT` seconds later, so an upload that
+  raises (or a process that dies) still ends in a classification or a `classification_skipped`
+  audit. The filter watches the upload from `before_save`, so this holds in either
+  declaration order. Each set of files is classified once: the job takes `blob_ids:` and
+  stops if the field holds other files by then, and whoever classifies first marks the
+  blobs (`blob.metadata["moderate_classified"]`), so the guard finds the mark and stops.
+  **If you worked around this** (CarHey's avatar):
   1. delete the `moderation_field_changed_for_commit?` override that returns `false` for
      the attachment field;
   2. delete your own `Moderate::ClassifyJob.perform_later(self, "avatar")` after_commit

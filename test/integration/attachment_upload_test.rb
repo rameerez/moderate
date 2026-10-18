@@ -75,27 +75,95 @@ class AttachmentUploadTest < ActiveSupport::TestCase
     assert_equal 1, Moderate::Flag.where(flaggable: comment, field: "photo").count
   end
 
-  test "an async adapter's ClassifyJob is enqueued only after the upload" do
+  test "an async adapter: a guard job before the upload, the classifying job after it, one flag" do
     configure(adapter: DummyImageAdapter.new)
-    on_service_at_enqueue = []
-    subscriber = ActiveSupport::Notifications.subscribe("enqueue.active_job") do |*, payload|
+    seen = []
+    subscriber = ActiveSupport::Notifications.subscribe(/\Aenqueue(_at)?\.active_job\z/) do |name, *, payload|
       job = payload[:job]
       next unless job.is_a?(Moderate::ClassifyJob)
 
       blob = job.arguments.first.photo.blob
-      on_service_at_enqueue << blob.service.exist?(blob.key)
+      seen << [name.start_with?("enqueue_at") ? :scheduled : :now, blob.service.exist?(blob.key)]
     end
 
     comment = Comment.new(user: @user, body: "hello")
     attach_photo(comment)
     comment.save!
 
-    assert_equal [true], on_service_at_enqueue
-    assert_difference -> { Moderate::Flag.where(field: "photo").count }, 1 do
-      perform_enqueued_jobs(only: Moderate::ClassifyJob)
+    assert_equal [[:scheduled, false], [:now, true]], seen,
+      "the guard is queued (for later) before the upload; the immediate job after it"
+    assert_difference -> { Moderate::Flag.where(field: "photo").count }, 1, "the second job finds the first one's mark" do
+      drain_classify_jobs
     end
   ensure
     ActiveSupport::Notifications.unsubscribe(subscriber) if subscriber
+  end
+
+  test "the guard job finds an inline classification done and doesn't classify again" do
+    configure
+    comment = Comment.new(user: @user, body: "hello")
+    attach_photo(comment)
+    comment.save!
+    assert_equal [true], @adapter.calls
+
+    drain_classify_jobs
+
+    assert_equal [true], @adapter.calls
+    assert_equal 1, Moderate::Flag.where(field: "photo").count
+  end
+
+  test "a direct upload still in flight is classified by the job once its file arrives, never before" do
+    configure
+    blob = ActiveStorage::Blob.create_before_direct_upload!(
+      filename: "direct.png", byte_size: 5, checksum: OpenSSL::Digest::MD5.base64digest("bytes"), content_type: "image/png"
+    )
+    # Identified already (an API client that created the blob, a content type it
+    # declared), so Active Storage doesn't read the file at attach time.
+    blob.update!(identified: true)
+    comment = Comment.new(user: @user, body: "hello")
+    comment.photo.attach(blob.signed_id) # the client hasn't PUT the file yet
+
+    comment.save!
+    perform_classify_jobs_once
+
+    assert_empty @adapter.calls, "a synchronous adapter isn't handed a file that isn't there"
+
+    blob.service.upload(blob.key, StringIO.new("bytes"))
+    drain_classify_jobs
+
+    assert_equal [true], @adapter.calls
+    assert_equal 1, Moderate::Flag.where(flaggable: comment, field: "photo").count
+  end
+
+  test "an upload that raises still ends in a classification_skipped audit, never in silence" do
+    configure
+    comment = Comment.new(user: @user, body: "hello")
+    attach_photo(comment)
+
+    ActiveStorage::Blob.any_instance.stubs(:upload_without_unfurling).raises(Errno::ECONNRESET)
+    assert_raises(Errno::ECONNRESET) { comment.save! }
+    ActiveStorage::Blob.any_instance.unstub(:upload_without_unfurling)
+
+    drain_classify_jobs
+
+    assert_empty @adapter.calls
+    skipped = ModerateTestRecorder.audits_named(:classification_skipped)
+    assert_equal(["attachment_not_uploaded"], skipped.map { |event| event.payload[:reason] })
+  end
+
+  test "a job for files the field no longer holds stops: the newer change has its own" do
+    configure(adapter: DummyImageAdapter.new)
+    comment = Comment.new(user: @user, body: "hello")
+    attach_photo(comment)
+    comment.save!
+    old_jobs = enqueued_jobs.dup
+    clear_enqueued_jobs
+    attach_photo(comment) # replaced before the first jobs ran
+    clear_enqueued_jobs
+
+    old_jobs.each { |job| ActiveJob::Base.execute(job) }
+
+    assert_equal 0, Moderate::Flag.where(field: "photo").count
   end
 
   test "an attachment declared above `moderates` is classified once, right away" do
@@ -150,7 +218,7 @@ class AttachmentUploadTest < ActiveSupport::TestCase
     blob.service.delete(blob.key) # a direct upload still in flight, a slow replica
 
     assert_no_difference -> { Moderate::Flag.count } do
-      assert_enqueued_with(job: Moderate::ClassifyJob, args: [comment, "photo", { adapter: nil, upload_attempt: 2 }]) do
+      assert_enqueued_with(job: Moderate::ClassifyJob, args: [comment, "photo", { adapter: nil, upload_attempt: 2, blob_ids: nil }]) do
         Moderate::ClassifyJob.perform_now(comment, "photo")
       end
     end
@@ -180,5 +248,25 @@ class AttachmentUploadTest < ActiveSupport::TestCase
     assert_equal 1, skipped.size
     assert_equal "photo", skipped.first.payload[:field]
     assert_equal "attachment_not_uploaded", skipped.first.payload[:reason]
+  end
+
+  private
+
+  # Run every ClassifyJob, including the ones they re-enqueue, scheduled or not.
+  def drain_classify_jobs
+    20.times do
+      jobs = enqueued_jobs.select { |job| job["job_class"] == "Moderate::ClassifyJob" }
+      return if jobs.empty?
+
+      clear_enqueued_jobs
+      jobs.each { |job| ActiveJob::Base.execute(job) }
+    end
+    flunk "ClassifyJob kept re-enqueuing itself"
+  end
+
+  def perform_classify_jobs_once
+    jobs = enqueued_jobs.select { |job| job["job_class"] == "Moderate::ClassifyJob" }
+    clear_enqueued_jobs
+    jobs.each { |job| ActiveJob::Base.execute(job) }
   end
 end

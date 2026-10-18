@@ -41,33 +41,55 @@ module Moderate
   # the snapshot at commit time. The overridable seam below still exists for
   # richer cases (derived values, non-AS blobs).
   #
-  # An attachment is classified only once its file is on the storage service.
-  # Active Storage uploads a newly attached file in ITS after_commit, and commit
-  # callbacks run in definition order, so on a model that calls `moderates` above
-  # `has_one_attached` the filter's after_commit runs first, before the upload.
-  # When that happens the field's classification (inline, or the ClassifyJob
-  # enqueue) is handed to the pending upload and runs the moment it finishes; in
-  # the other order the upload is already done and it runs at once. Either way:
-  # once, after the upload, never before. (ClassifyJob also waits, with a bounded
-  # retry, for a blob that isn't on the service when the job runs.)
+  # An attachment is classified only once its file is on the storage service, and
+  # it is classified even when the upload fails. Active Storage uploads a newly
+  # attached file in ITS after_commit (in whichever order the two after_commits were
+  # declared), so the concern hooks that upload itself, from before_save:
+  #
+  #   1. just before the upload starts, a ClassifyJob is enqueued UPLOAD_WAIT seconds
+  #      out: the durable intent. If the upload raises, or the process dies, that job
+  #      still runs, waits (bounded) for the file, and classifies it or audits
+  #      `classification_skipped`;
+  #   2. once the upload returns, the field is classified right away when its files
+  #      are on the service: inline for a synchronous adapter, by an immediate
+  #      ClassifyJob for an async one. A direct upload (an attached blob or signed
+  #      id, whose `upload` is a no-op) may not be there yet; then the job from step
+  #      1 takes it.
+  #
+  # Whichever classifies first marks the blobs (Moderate::Attachments); the rest
+  # find the mark and stop, so a field is classified once per set of files.
   module ContentFilterable
     extend ActiveSupport::Concern
 
     # Extended onto one pending Active Storage attachment change (the object
-    # `has_one_attached` / `has_many_attached` upload from their after_commit) so
-    # that work queued with `moderate_after_upload` runs right after that change's
-    # file is on the service. Per object, never a global patch.
+    # `has_one_attached` / `has_many_attached` upload from their after_commit), so
+    # the record hears just before and just after that change uploads its files.
+    # Per object, never a global patch. A failure of ours never breaks the upload.
     module AfterUpload
       def upload(...)
+        moderate_notify(:moderate_upload_starting)
         result = super
-        callbacks = @moderate_after_upload
-        @moderate_after_upload = nil
-        Array(callbacks).each(&:call)
+        moderate_notify(:moderate_upload_finished)
         result
       end
 
-      def moderate_after_upload(&block)
-        (@moderate_after_upload ||= []) << block
+      def moderate_watch(record, field)
+        (@moderate_watchers ||= {})[field.to_s] = record
+      end
+
+      private
+
+      def moderate_notify(event)
+        Array(@moderate_watchers).each do |field, record|
+          record.send(event, field)
+        rescue StandardError => error
+          Moderate.audit(
+            :classification_skipped,
+            subject: record,
+            payload: { field: field, reason: "filter_error", error_class: error.class.name,
+                       summary: "#{record.class.name}##{field}: #{event} raised #{error.class}" }
+          )
+        end
       end
     end
     private_constant :AfterUpload
@@ -119,44 +141,73 @@ module Moderate
     # (inline for synchronous adapters; via Moderate::ClassifyJob for async ones).
     #
     # We only act when the field actually CHANGED on this commit (re-saving an
-    # untouched record must not re-flag it and spam the queue). An attachment
-    # whose file Active Storage hasn't uploaded yet is classified when the upload
-    # finishes (see AfterUpload above), never before.
+    # untouched record must not re-flag it and spam the queue). A field whose upload
+    # the concern is watching is left to that upload's hooks (see AfterUpload).
     def moderate_flag_filtered_fields
       moderation_filtered_fields.each do |field|
+        next if @moderate_watched_uploads&.include?(field)
+
         policy = Moderate.filter_policy_for(self, field)
         next unless policy.flag?
         next unless moderation_field_changed_for_commit?(field)
 
-        upload = moderate_pending_upload(field)
-        if upload
-          upload.extend(AfterUpload) unless upload.is_a?(AfterUpload)
-          upload.moderate_after_upload { moderate_flag_field(field, policy) }
-        else
-          moderate_flag_field(field, policy)
-        end
+        moderate_flag_field(field, policy)
       end
+    end
+
+    # Just before Active Storage uploads `field`'s files: enqueue the job that
+    # classifies them even if this upload fails (see the module comment).
+    def moderate_upload_starting(field)
+      policy = Moderate.filter_policy_for(self, field)
+      return unless policy.flag? && moderation_field_changed_for_commit?(field)
+
+      (@moderate_guarded_uploads ||= Set.new) << field
+      Moderate::ClassifyJob.set(wait: Moderate::ClassifyJob::UPLOAD_WAIT)
+        .perform_later(self, field, blob_ids: Moderate::Attachments.blob_ids(moderation_field_value(field)))
+    end
+
+    # The upload returned: classify now if the files are there (the guard job takes
+    # them otherwise).
+    def moderate_upload_finished(field)
+      @moderate_watched_uploads&.delete(field)
+      return moderation_field_committed(field) unless @moderate_guarded_uploads&.delete?(field)
+
+      moderate_flag_field(field, Moderate.filter_policy_for(self, field), guarded: true)
     end
 
     # Classify one changed field and file its Flag. Wrapped in `ensure` so the
     # clean-up hook (`moderation_field_committed`) always runs even if
     # classification raises — that hook is what clears the one-shot attachment
     # snapshot.
-    def moderate_flag_field(field, policy)
+    #
+    # An attachment whose files aren't all on the service yet is never classified
+    # here: the after-upload guard job takes it (`guarded:`), or a ClassifyJob that
+    # waits for it is enqueued now.
+    def moderate_flag_field(field, policy, guarded: false)
+      value = moderation_field_value(field)
+      attachment = Moderate::Attachments.attachment?(value)
+      return if attachment && moderation_value_blank?(value)
+
+      if attachment && !Moderate::Attachments.uploaded?(value)
+        Moderate::ClassifyJob.perform_later(self, field, blob_ids: Moderate::Attachments.blob_ids(value)) unless guarded
+        return
+      end
+
       # ASYNC adapters (remote moderation APIs) never classify inline — a network
       # call in the request's after_commit would stall the response for as long
       # as the provider takes. ClassifyJob re-reads the value at run time (so it
       # always classifies what's actually persisted) and files the Flag through the
       # same Flag.flag! builder.
       if Moderate.config.adapter_async?(policy.adapter)
-        Moderate::ClassifyJob.perform_later(self, field)
+        blob_ids = (Moderate::Attachments.blob_ids(value) if attachment)
+        Moderate::ClassifyJob.perform_later(self, field, blob_ids: blob_ids)
         return
       end
 
-      value = moderation_field_value(field)
       return if moderation_value_blank?(value)
 
       result = Moderate.classify(value, policy: policy)
+      Moderate::Attachments.mark_classified!(self, field, value) if attachment
       return unless result.flagged?
 
       Moderate::Flag.flag!(
@@ -184,17 +235,6 @@ module Moderate
       )
     ensure
       moderation_field_committed(field)
-    end
-
-    # The Active Storage change still waiting to upload `field`'s file on this
-    # commit, or nil: Active Storage removes the change from `attachment_changes`
-    # when it uploads, so a change that is still there hasn't been uploaded yet.
-    # (A removal — `avatar = nil` — is a change with nothing to upload.)
-    def moderate_pending_upload(field)
-      return unless respond_to?(:attachment_changes)
-
-      change = attachment_changes[field.to_s]
-      change if change.respond_to?(:upload)
     end
 
     # --- Overridable field seam -----------------------------------------------
@@ -240,16 +280,24 @@ module Moderate
       nil
     end
 
-    # before_save: record which FILTERED fields have a pending attachment write
-    # on this save. `attachment_changes` only exists on Active Storage models —
-    # plain models skip straight through.
+    # before_save: record which FILTERED fields have a pending attachment write on
+    # this save, and watch the upload of each (AfterUpload). `attachment_changes`
+    # only exists on Active Storage models — plain models skip straight through. A
+    # removal (`avatar = nil`) is a change with nothing to upload, so nothing to watch.
     def moderate_snapshot_attachment_changes
       return unless respond_to?(:attachment_changes)
 
+      @moderate_watched_uploads = Set.new
       moderation_filtered_fields.each do |field|
-        next unless attachment_changes.key?(field)
+        change = attachment_changes[field]
+        next if change.nil?
 
         (@moderate_changed_attachment_fields ||= Set.new) << field
+        next unless change.respond_to?(:upload)
+
+        change.extend(AfterUpload) unless change.is_a?(AfterUpload)
+        change.moderate_watch(self, field)
+        @moderate_watched_uploads << field
       end
       nil # a callback's return value never halts the save (only `throw :abort` does)
     end

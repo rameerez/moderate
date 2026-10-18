@@ -32,12 +32,19 @@ module Moderate
   # also enqueues the job itself) file two flags, both in the queue.
   #
   # ── An attachment whose file isn't on the service yet ────────────────────────
-  # The filter enqueues this job only after Active Storage has uploaded the file
-  # (see Moderate::ContentFilterable). A blob can still be missing when the job
-  # runs: a direct upload that hasn't finished, a replica that lags. The job then
-  # re-enqueues itself, waiting UPLOAD_WAIT × attempt seconds, up to
-  # UPLOAD_ATTEMPTS runs in all, and gives up with a `classification_skipped`
-  # audit event. It never hands an adapter a file that isn't there.
+  # For an attachment the filter enqueues this job before Active Storage uploads
+  # the file (the guard: it runs even if the upload fails) and, once the upload
+  # returns, classifies right away (see Moderate::ContentFilterable). When the job
+  # runs, a blob can be missing: the upload failed or is still running, a direct
+  # upload hasn't finished, a replica lags. The job then re-enqueues itself,
+  # waiting UPLOAD_WAIT × attempt seconds, up to UPLOAD_ATTEMPTS runs in all, and
+  # gives up with a `classification_skipped` audit event. It never hands an adapter
+  # a file that isn't there.
+  #
+  # `blob_ids:` names the files the job was enqueued for: if the field holds other
+  # files by the time it runs, the newer change has its own job and this one stops.
+  # A field already classified for exactly these files (Moderate::Attachments marks
+  # the blobs) is not classified again.
   #
   # ── Base class ───────────────────────────────────────────────────────────────
   # We subclass `ActiveJob::Base` directly (not the host's ApplicationJob) so the gem
@@ -62,7 +69,8 @@ module Moderate
     #   the field's resolved FilterPolicy (or the global default) decides.
     # @param upload_attempt [Integer] which look at a not-yet-uploaded attachment
     #   this is (the job sets it when it re-enqueues itself; callers leave it).
-    def perform(record, field, adapter: nil, upload_attempt: 1)
+    # @param blob_ids [Array<Integer>, nil] the attachment's blobs when enqueued.
+    def perform(record, field, adapter: nil, upload_attempt: 1, blob_ids: nil)
       # The record may have been destroyed between enqueue and execution — nothing
       # to classify, nothing to flag. (ActiveJob raises DeserializationError for a
       # GlobalID that no longer resolves; that's rescued at the framework level, but
@@ -78,12 +86,17 @@ module Moderate
 
       value = field_value(record, field)
       return if blank?(value)
-      return wait_for_upload(record, field, adapter, upload_attempt) unless uploaded?(value)
+
+      attachment = Moderate::Attachments.attachment?(value)
+      if attachment
+        return if blob_ids && Moderate::Attachments.blob_ids(value) != Array(blob_ids).sort
+        return if Moderate::Attachments.classified?(record, field, value)
+        return wait_for_upload(record, field, adapter, upload_attempt, blob_ids) unless Moderate::Attachments.uploaded?(value)
+      end
 
       result = Moderate.classify(value, policy: policy)
-      return unless result.flagged?
-
-      file_flag(record, field, policy, result, value)
+      file_flag(record, field, policy, result, value) if result.flagged?
+      Moderate::Attachments.mark_classified!(record, field, value) if attachment
     end
 
     private
@@ -157,23 +170,10 @@ module Moderate
       value.to_s[0, 500]
     end
 
-    # Is every file behind an Active Storage value on its service? Anything that
-    # isn't an attachment (text, a host's own object) has nothing to wait for.
-    def uploaded?(value)
-      attachment_blobs(value).all? { |blob| blob.service.exist?(blob.key) }
-    end
-
-    def attachment_blobs(value)
-      return [] unless value.respond_to?(:attached?) && defined?(::ActiveStorage::Blob)
-
-      blobs = value.respond_to?(:blobs) ? value.blobs.to_a : [value.try(:blob)]
-      blobs.grep(::ActiveStorage::Blob)
-    end
-
-    def wait_for_upload(record, field, adapter, attempt)
+    def wait_for_upload(record, field, adapter, attempt, blob_ids)
       if attempt < UPLOAD_ATTEMPTS
         self.class.set(wait: UPLOAD_WAIT * attempt)
-          .perform_later(record, field, adapter: adapter, upload_attempt: attempt + 1)
+          .perform_later(record, field, adapter: adapter, upload_attempt: attempt + 1, blob_ids: blob_ids)
         return
       end
 
