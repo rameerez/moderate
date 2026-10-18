@@ -10,6 +10,7 @@ gem "rake", "~> 13.0"
 
 group :development do
   gem "appraisal"
+  gem "bundler-audit", require: false # `bundle exec bundler-audit check --update`
   gem "web-console"
 
   # Code quality

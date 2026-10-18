@@ -7,6 +7,7 @@ gem "rails", "~> 7.1.0"
 
 group :development do
   gem "appraisal"
+  gem "bundler-audit", require: false
   gem "web-console"
   gem "standard"
   gem "rubocop", "~> 1.0"
