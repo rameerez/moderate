@@ -82,19 +82,28 @@ module Moderate
         flag
       end
 
-      # Enforce under the CONTENT's row lock too (after the flag's, before the
-      # report's — the gem's one lock order), so two flags on the same content can't
-      # both enforce: the second waits, then finds the decision the first took.
+      # Enforce under the CONTENT's row lock and then the PERSON's (after the flag's,
+      # before any report's — the gem's one lock order), so two flags on the same
+      # content, or on two contents of the same person, can't both enforce: the second
+      # waits, then finds the decision the first took.
+      #
+      # Both locks come BEFORE the first read of moderate_reports, and that matters on
+      # MySQL: its locking reads of the reports table (the checks below) take gap locks
+      # under REPEATABLE READ, and two decisions holding gap locks that each then insert
+      # a report deadlock. Waiting on the content or the person first means the second
+      # decision touches the reports table only after the first one has committed.
       # Returns [the ResolveReport that decided, or nil, the report the flag answers to].
       def enforce!(note, enforcement, resolution_basis)
         Moderate.with_row_lock(flag.flaggable) do
-          prior = covering_decision(enforcement)
-          next [nil, prior] if prior
+          Moderate.with_row_lock(flag.owner) do
+            prior = covering_decision(enforcement)
+            next [nil, prior] if prior
 
-          report = escalation_report!(note)
-          decision = ResolveReport.new(report, by: moderator, deliver: false, conduct_since: flag.created_at)
-          decision.resolve!(note: note, resolution_basis: resolution_basis, **enforcement)
-          [decision, report]
+            report = escalation_report!(note)
+            decision = ResolveReport.new(report, by: moderator, deliver: false, conduct_since: flag.created_at)
+            decision.resolve!(note: note, resolution_basis: resolution_basis, **enforcement)
+            [decision, report]
+          end
         end
       end
 

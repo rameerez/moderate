@@ -19,7 +19,10 @@ A fix-only beta: no API change, no migration.
   escalates to, whether the content is gone, the per-person prior ban, and
   `Flag.flag_for_review!`'s waiting flag — is now a locking read (`SELECT … FOR UPDATE`),
   identical on every database; the redundant plain reloads after `with_lock` are gone.
-  PostgreSQL and SQLite were not affected.
+  A flag escalation now takes the person's row lock right after the content's, before it
+  reads the reports table, so two escalations about the same person serialize before
+  either takes a gap lock (MySQL's locking reads take them, and two holders that each
+  insert a report deadlock). PostgreSQL and SQLite were not affected.
 
 ## [1.0.0.beta3] - 2026-10-18
 
