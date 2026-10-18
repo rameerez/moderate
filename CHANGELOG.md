@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Retention: `Moderate.purge(older_than: 1.year, dry_run: false)`** and the
+  `moderate:purge` rake task (`OLDER_THAN_DAYS`, `DRY_RUN`), opt-in. They redact the personal
+  data in reports, notices, flags and appeals whose decision is final (closed, decided more
+  than `older_than` ago, appeal window over, no open appeal): messages, evidence snapshots,
+  reported URLs, notifier and appellant contact details, flag excerpts and context. Every row
+  and every decision stays, so the statement of reasons, a repeat-misuse history and the
+  transparency counts are unchanged; blocks and pending records are never touched;
+  `older_than` below the six-month appeal window raises. Idempotent, batched, audited as
+  `:retention_purged`. `docs/compliance.md` gains a retention section: what the gem stores,
+  that nothing is purged by default, and what the DSA and the GDPR expect.
+
 ### Fixed
 
 - **An attachment is classified once its file is uploaded, never before.** Active Storage

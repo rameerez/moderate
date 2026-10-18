@@ -517,6 +517,16 @@ module Moderate
       }
     end
 
+    # Opt-in retention: redact the personal data in reports, flags and appeals whose
+    # decision is final and older than `older_than` (default 1 year, never less than
+    # the 6-month appeal window), keeping every row and its decision. Nothing calls
+    # it unless the host schedules it. See Moderate::Retention and docs/compliance.md.
+    #
+    #   Moderate.purge(older_than: 1.year)   # => { reports: 12, flags: 40, appeals: 1 }
+    def purge(**options)
+      Retention.purge(**options)
+    end
+
     private
 
     # Median seconds between paired (created_at, resolved_at) timestamps; 0 when empty.
