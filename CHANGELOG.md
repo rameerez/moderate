@@ -62,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decision notices, to the content's person, with `reported_field`, its label and the
   moderator's reason. (`notice_received`, which the DSA form has always sent, joins the
   vocabulary lists in the README, the configuration guide and the initializer.)
+- **`examples/regexp_pattern_adapter.rb`**: a reference adapter for what a word list can't
+  express (phone numbers, links, "contact me on…"), each pattern filed under the category it
+  means, synchronous so `:block` works too, the matched fragments in `raw[:matches]`. The
+  idea is @killondark's (#1, written against the 0.x validator).
 - **Enforce from a flag.** `flag.action!(by:, note:, remove_content: true)` and
   `flag.action!(by:, note:, ban_user: true)` (any combination, plus `resolution_basis:`)
   escalate to a report and resolve it: the newest open report on the same content and field
