@@ -13,6 +13,8 @@ class CreateDummyHostTables < ActiveRecord::Migration[8.0]
       t.string :name
       t.string :email
       t.string :display_name
+      # A ban state the host owns, for the tests of `config.banned` under concurrency.
+      t.datetime :suspended_at
 
       t.timestamps
     end

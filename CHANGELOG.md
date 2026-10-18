@@ -139,6 +139,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ban_handler`) says whether the person is banned now: when it returns false the earlier
   ban no longer counts and the handler runs again. Unset, the earlier ban counts, as before;
   hosts that can unban should set it.
+  Both `config.banned` and the `ban_handler` get the person as read again, with a locking
+  read, once the decision holds their lock: two ban decisions on one person at once ban
+  once (the second records `ban_already_applied_by`), even inside a host transaction that
+  read the person earlier (on MySQL that read pins an older snapshot).
 - **`validates :field, moderate: true` works again.** The README promised the 0.x one-liner
   still worked; it raised `Unknown validator: 'ModerateValidator'`, because its file was
   never loaded (and had it been, it downloaded a word list over HTTP and read a

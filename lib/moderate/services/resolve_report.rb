@@ -266,7 +266,11 @@ module Moderate
       # this conduct, doesn't count: the person may have been unbanned since, and new
       # conduct deserves its own decision.)
       def ban_reported_user!(note:, actions:)
-        user = report.reported_user
+        # The person, read again with a locking read now that we hold their lock: a
+        # concurrent decision that banned them while we waited has committed, and
+        # `config.banned` and the ban_handler must see THAT state, not the copy loaded
+        # before the wait.
+        user = locked_person
         return if user.blank?
 
         if (prior = prior_ban_decision(user)) && still_banned?(user)
@@ -275,6 +279,11 @@ module Moderate
         end
 
         @user_banned = Moderate.apply_ban(user: user, by: moderator, reason: note, announce: false)
+      end
+
+      def locked_person
+        person = report.reported_user
+        person && person.class.unscoped.lock.find_by(person.class.primary_key => person.id)
       end
 
       # An earlier ban of this episode covers this one only while the account is still
