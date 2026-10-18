@@ -425,6 +425,7 @@ The appeal show view is the same shape with `uphold`/`reject`:
 
 Two details worth copying:
 
+- **Resolve needs an action.** A report's `resolve!` with neither `remove_content` nor `ban_user` ticked is refused (the flash says why): it would tell the author a restriction was imposed when none was. Offer "Dismiss" for a decision that restricts nothing.
 - **Gate on `pending?`.** Show the decision forms only while the record is open; render "closed" once it isn't. The decision methods are also guarded server-side (calling `resolve!` on an already-resolved report raises), but hiding the buttons is the better UX.
 - **Require the note.** `required: true` on the textarea, and the gem requires it too — every decision must carry a rationale (that's what feeds the DSA Art. 17 statement of reasons). Belt and suspenders.
 
@@ -503,7 +504,7 @@ To be explicit about the boundary this guide sits on:
 | `moderate` ships (the primitives) | You build (the UI chrome) |
 | --- | --- |
 | The models (`Report`/`Flag`/`Appeal`/`Block`) | The madmin resources (columns, labels, fields) |
-| The queue scopes (`.pending`, `.resolved`, …) | The index/show screens & nav grouping |
+| The queue scopes (`.pending`, `.actioned`, `.dismissed`, `.recent_first`) | The index/show screens & nav grouping |
 | The decision methods (`resolve!`/`dismiss!`/`uphold!`/`reject!`) — atomic enforcement + notify + audit + appeal window | The buttons/forms that call them |
 | The optional `Moderate::Moderation` controller concern | Auth (`current_user`, admin gate) |
 | Helpers + the evidence snapshot on each record | Your branding, layout, extra columns |

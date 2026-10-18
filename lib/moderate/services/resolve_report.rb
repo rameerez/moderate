@@ -54,6 +54,11 @@ module Moderate
       # Resolve WITH action (the report was valid; we acted on the content/account).
       # `resolution_basis` records the legal/contractual ground bucket; it's
       # validated against the migration's check-constraint list by the model.
+      #
+      # A resolve restricts something: `remove_content:`, `ban_user:`, or both. One with
+      # neither is refused (RecordInvalid): recording it would tell the affected person a
+      # restriction was imposed when none was. A decision that restricts nothing is a
+      # `dismiss!`, whose statement says so.
       def resolve!(note:, remove_content: false, ban_user: false, resolution_basis: "terms")
         note = require_note!(note)
         actions = {
@@ -61,6 +66,7 @@ module Moderate
           ban_user: truthy?(ban_user),
           resolution_basis: resolution_basis.to_s.strip.presence || "terms"
         }
+        require_action!(actions)
 
         # A ban nothing would apply is refused before anything changes (see
         # Moderate.ensure_ban_handler!): never "account suspended" for a suspension
@@ -68,7 +74,7 @@ module Moderate
         Moderate.ensure_ban_handler! if actions[:ban_user] && report.reported_user.present?
 
         transition!("actioned", note: note, actions: actions) do
-          remove_reported_content!(note: note) if actions[:remove_content]
+          remove_reported_content!(note: note, actions: actions) if actions[:remove_content]
           ban_reported_user!(note: note, actions: actions) if actions[:ban_user]
         end
       end
@@ -158,14 +164,108 @@ module Moderate
       # The reportable's own removal (`remove_reported_field!`). When it says it
       # removed something, the removal is audited here, inside the decision's
       # transaction, and announced as `content_removed` with the decision notices.
-      def remove_reported_content!(note:)
+      def remove_reported_content!(note:, actions:)
+        # Already removed by an earlier decision on the same content and field: close
+        # against it (like a flag does), the reporter told it's gone, nothing removed
+        # or announced a second time.
+        if (prior = covering_removal)
+          actions[:content_already_removed_by] = prior.id
+          return true
+        end
+
         # Nothing to remove from (the content was deleted, its report nullified) or
         # no way to remove it: refused like a removal that removed nothing.
         removable = report.reportable.present? && report.reportable.respond_to?(:remove_reported_field!)
-        refuse_unremoved! unless removable && report.reportable.remove_reported_field!(report.reported_field)
+        removed_text = text_about_to_be_removed if removable
+        removed = removable && report.reportable.remove_reported_field!(report.reported_field)
+        # Verified, not taken on trust: the host said it removed something, so the field
+        # must read as gone now (re-read under the same lock). A host method that rewrote
+        # the field instead removed nothing: refused, nobody stamped, no digest recorded.
+        refuse_unremoved! unless removed && content_gone?
 
+        actions[:removed_text_digest] = text_digest(removed_text) if removed_text.present?
         @content_removed = content_removed_payload(note)
+        stamp_covered_reports!(removed_text)
         Moderate.audit(:content_removed, **content_removed_event)
+        true
+      end
+
+      def covered_note
+        prior = report.resolution_actions.to_h["content_already_removed_by"]
+        prior ? " (already removed by the decision on Report ##{prior})" : ""
+      end
+
+      # The decision that removed this report's content while this report was pending:
+      # the one that stamped it (covered_by_report_id, see #stamp_covered_reports!),
+      # provided it did remove the content, it still stands (no appeal against it was
+      # upheld: an overturned removal covers nothing, whatever the stamp says), and the
+      # content is gone now (read fresh, under the content's lock). No clocks are
+      # compared: a report that wasn't pending when the content was removed (a repost,
+      # a removal that didn't take, a late report) was never stamped.
+      def covering_removal
+        prior_id = report.covered_by_report_id
+        return if prior_id.blank? || !content_gone?
+
+        # Locking reads (see Moderate.with_row_lock), like every "already done" check.
+        prior = Moderate::Report.actioned.lock.find_by(id: prior_id)
+        return unless prior && truthy?(prior.resolution_actions.to_h["remove_content"])
+        return if Moderate::Appeal.upheld.where(report_id: prior.id).lock.exists?
+
+        prior
+      end
+
+      # The field's text right before this decision removes it, read under the
+      # content's lock with a locking read: what is actually being removed, which may
+      # differ from what this report saw at intake. nil when the content exposes no
+      # text (no moderation_snapshot) or reads blank.
+      def text_about_to_be_removed
+        content = report.reportable.reload(lock: true)
+        return unless content.respond_to?(:moderation_snapshot)
+
+        content.moderation_snapshot(report.reported_field).presence
+      rescue ActiveRecord::RecordNotFound
+        nil
+      end
+
+      def text_digest(text)
+        Digest::SHA256.hexdigest(text.to_s)
+      end
+
+      # Just removed this report's content, under its lock: stamp the OTHER reports
+      # pending on the same content and field whose intake snapshot holds the text that
+      # was ACTUALLY removed (`removed_text`, read right before the removal, not this
+      # report's own intake text), so each can later be closed as "already removed by"
+      # this decision. Nobody is stamped when that text is blank or unreadable. A report
+      # filed concurrently either committed before this read (then its snapshot is the
+      # text it saw: the removed text if it saw the content we removed) or after it
+      # (then it isn't stamped, and a removal on it is refused): never a false cover.
+      def stamp_covered_reports!(text)
+        return if text.blank? || report.reportable_type.blank? || report.reportable_id.blank?
+
+        pending = Moderate::Report.open
+          .where(reportable_type: report.reportable_type, reportable_id: report.reportable_id)
+          .where(reported_field: report.reported_field, covered_by_report_id: nil)
+          .where.not(id: report.id).lock
+        ids = pending.select { |other| other.snapshot.to_h.with_indifferent_access[:content_text] == text }.map(&:id)
+        Moderate::Report.where(id: ids).update_all(covered_by_report_id: report.id) if ids.any?
+      end
+
+      # Is the reported field's content gone, read fresh with a locking read? The
+      # record deleted, the record saying it is (`deleted?`, a soft-delete tombstone),
+      # or the field reading as empty through BOTH the snapshot accessor (what a report
+      # captures) and the field itself (an attachment, a non-text field).
+      def content_gone?
+        content = report.reportable&.reload(lock: true)
+        return true if content.nil?
+        return true if content.respond_to?(:deleted?) && content.deleted?
+
+        field = report.reported_field
+        return false if field.blank?
+        return false if content.respond_to?(:moderation_snapshot) && content.moderation_snapshot(field).present?
+
+        value = content.respond_to?(:moderation_field_value, true) ? content.send(:moderation_field_value, field) : content.try(field)
+        value.respond_to?(:attached?) ? !value.attached? : value.blank?
+      rescue ActiveRecord::RecordNotFound
         true
       end
 
@@ -204,14 +304,20 @@ module Moderate
       # means (suspend, soft-delete, flip a flag…). ONE ban per person per episode: if
       # a decision on this same person, on any content or field, already banned them
       # since this conduct was raised, the account is suspended already — this decision
-      # records which one (`ban_already_applied_by`) instead of banning twice. (An
-      # older ban, before this conduct, doesn't count: the person may have been
-      # unbanned since, and new conduct deserves its own decision.)
+      # records which one (`ban_already_applied_by`) instead of banning twice, unless
+      # your `config.banned` says the account isn't banned any more (unbanned in your
+      # app since), in which case the ban_handler runs again. (An older ban, before
+      # this conduct, doesn't count: the person may have been unbanned since, and new
+      # conduct deserves its own decision.)
       def ban_reported_user!(note:, actions:)
-        user = report.reported_user
+        # The person, read again with a locking read now that we hold their lock: a
+        # concurrent decision that banned them while we waited has committed, and
+        # `config.banned` and the ban_handler must see THAT state, not the copy loaded
+        # before the wait.
+        user = locked_person
         return if user.blank?
 
-        if (prior = prior_ban_decision(user))
+        if (prior = prior_ban_decision(user)) && still_banned?(user)
           actions[:ban_already_applied_by] = prior.id
           return
         end
@@ -219,10 +325,22 @@ module Moderate
         @user_banned = Moderate.apply_ban(user: user, by: moderator, reason: note, announce: false)
       end
 
+      def locked_person
+        person = report.reported_user
+        person && person.class.unscoped.lock.find_by(person.class.primary_key => person.id)
+      end
+
+      # An earlier ban of this episode covers this one only while the account is still
+      # banned. The host knows that (`config.banned`); without it, the earlier ban counts.
+      def still_banned?(user)
+        check = Moderate.config.banned
+        check.nil? || check.call(user) ? true : false
+      end
+
       def prior_ban_decision(user)
         since = @conduct_since || report.created_at
         decided = Moderate::Report.actioned.where(reported_user_id: user.id, resolved_at: since..)
-                                  .where.not(id: report.id)
+          .where.not(id: report.id)
         # A locking read: a ban committed by a concurrent decision while we waited for
         # the person's lock is seen, whatever the isolation level.
         decided.recent_first.lock.find { |prior| truthy?(prior.resolution_actions.to_h["ban_user"]) }
@@ -247,24 +365,23 @@ module Moderate
       end
 
       # report_decision → the reporter (Art. 16(5): inform the notice provider of the
-      # decision + redress). We stamp `decision_notified_at` ONLY when the hook
-      # reported a delivery — that timestamp is the record that the legal
-      # communication actually went out, so it must reflect reality, not intent.
-      # `Moderate.notify` returns the delivered boolean precisely for this gate.
+      # decision + redress). `decision_notified_at` is stamped only when the host's
+      # notifier confirms the message actually went out (Moderate.delivered!): a
+      # queued mail is not a delivered one, and the timestamp starts the appeal
+      # window (Art. 20(2)).
       def notify_reporter
         return if report.notifier_email.blank?
 
-        delivered = Moderate.notify(
+        Moderate.notify(
           :report_decision,
           subject: report,
           actor: moderator,
           recipients: [report.reporter].compact,
           payload: decision_payload.merge(
-            summary: "Decision on Report ##{report.id}: #{report.status}"
+            summary: "Decision on Report ##{report.id}: #{report.status}" \
+                     "#{covered_note}"
           )
         )
-
-        report.update_column(:decision_notified_at, Time.now) if delivered
       end
 
       # affected_user_decision → the content owner: the DSA Art. 17 statement of
@@ -274,11 +391,16 @@ module Moderate
       def notify_affected_user
         return unless report.actioned?
 
+        # Its removal was already announced by the decision that made it; a second
+        # statement only when this one also bans.
+        actions = report.resolution_actions.to_h
+        return if actions["content_already_removed_by"] && !truthy?(actions["ban_user"])
+
         affected = report.reported_user
         return if affected.blank?
         return unless affected.respond_to?(:email) && affected.email.present?
 
-        delivered = Moderate.notify(
+        Moderate.notify(
           :affected_user_decision,
           subject: report,
           actor: moderator,
@@ -287,8 +409,6 @@ module Moderate
             summary: "Statement of reasons for Report ##{report.id}"
           )
         )
-
-        report.update_column(:affected_user_notified_at, Time.now) if delivered
       end
 
       # The shared statement-of-reasons payload (Art. 17(3)). Every field the law
@@ -321,6 +441,10 @@ module Moderate
           # already participated.
           automated: automated_processing_used?,
           reason: report.resolution_note,
+          # "Already actioned by decision X": the content was gone when this was decided.
+          content_already_removed_by: report.resolution_actions.to_h["content_already_removed_by"],
+          # A minimum ("at least until"): confirmed delivery (Moderate.delivered!)
+          # can move it later (Art. 20(2)), never earlier.
           appeal_deadline_at: report.appeal_deadline_at
         }.compact
       end
@@ -366,9 +490,19 @@ module Moderate
       def decision_visibility_for(status, actions)
         return "no_restriction" unless status == "actioned"
         return "account_suspended" if actions[:ban_user]
-        return "content_removed" if actions[:remove_content]
 
-        "other_restriction"
+        "content_removed" # resolve! requires one of the two (require_action!)
+      end
+
+      def require_action!(actions)
+        return if actions[:remove_content] || actions[:ban_user]
+
+        report.errors.add(:base, I18n.t(
+          "moderate.errors.resolve_needs_action",
+          default: "Resolving a report restricts something: remove the content, ban the account, or both. " \
+                   "To close it without a restriction, dismiss it."
+        ))
+        raise ActiveRecord::RecordInvalid, report
       end
 
       def automated_processing_used?

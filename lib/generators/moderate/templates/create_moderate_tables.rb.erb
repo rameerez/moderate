@@ -192,6 +192,11 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
     add_index :moderate_appeals, [:status, :created_at], name: "index_moderate_appeals_on_status_and_created_at"
     add_index :moderate_appeals, :appellant_email, name: "index_moderate_appeals_on_appellant_email"
 
+    # The 1.0 retention columns (redacted_at, held_until) and moderate_classifications
+    # are NOT here: the gem's own AddRetentionAndClassificationsToModerateTables creates
+    # them, for a fresh install (moderate:install copies it after this migration) and
+    # an upgrade alike, so its `down` drops only what it created.
+
     # Appeal's source/status vocabularies are validated in Moderate::Appeal
     # (constants + inclusion validations), not by DB CHECK constraints — same
     # migration-free-taxonomy rationale as moderate_reports above.

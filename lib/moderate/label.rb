@@ -16,7 +16,7 @@ module Moderate
   # reasons, and the Art. 24 transparency counters all aggregate over a single set.
   # See: https://developers.openai.com/api/docs/guides/moderation
   #
-  # Implemented with Ruby's `Data.define` (Ruby 3.2+, which the gemspec requires):
+  # Implemented with Ruby's `Data.define` (Ruby 3.2+; the gemspec requires 3.3+):
   # an immutable, frozen-by-construction value object — exactly what a label
   # should be (you never mutate a verdict after the fact).
   Label = Data.define(:category, :subcategory, :score, :flagged, :input) do
@@ -36,7 +36,7 @@ module Moderate
       super(
         category: normalize_symbol(category),
         subcategory: subcategory.nil? ? nil : normalize_symbol(subcategory),
-        score: score.nil? ? nil : score.to_f,
+        score: score&.to_f,
         flagged: flagged ? true : false,
         input: normalize_symbol(input || :unknown)
       )

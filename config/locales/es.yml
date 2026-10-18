@@ -1,7 +1,34 @@
 # moderate's default Spanish copy. See en.yml for how these keys resolve and
 # how to override them from your app.
 es:
+  errors:
+    messages:
+      objectionable_content: "contiene lenguaje no permitido"
+      upload_not_finished: "aún no ha terminado de subirse"
   moderate:
+    # Flash messages of the Moderate::Moderation controller concern.
+    moderation:
+      resolved: "Denuncia gestionada."
+      dismissed: "Denuncia descartada."
+      flag_resolved: "Marca gestionada."
+      flag_dismissed: "Marca descartada."
+      upheld: "Recurso estimado."
+      rejected: "Recurso desestimado."
+    # Refusals and validation messages (the inline defaults in the code are English).
+    errors:
+      anonymous_notice_child_safety_only: "solo se admiten avisos anónimos sobre delitos contra menores"
+      appeal_already_closed: "Este recurso ya está decidido."
+      appeal_report_must_be_closed: "una decisión solo puede recurrirse una vez tomada"
+      appeal_window_expired: "el plazo para recurrir esta decisión ha terminado"
+      cannot_block_self: "No puedes bloquearte a ti mismo"
+      invalid_reported_field: "no es un campo que se pueda denunciar"
+      invalid_subject_url: "debe ser una URL http(s) válida"
+      missing_subject_url: "es obligatoria"
+      not_reportable_by_reporter: "no es algo que puedas denunciar"
+      nothing_removed: "No se ha retirado nada: %{content} no tiene nada que retirar (ya retirado, eliminado o no retirable). Resuelve sin retirar contenido, o descarta la denuncia."
+      report_already_closed: "Esta denuncia ya está resuelta."
+      reporter_cannot_report_self: "No puedes denunciarte a ti mismo"
+      resolve_needs_action: "Resolver una denuncia impone una restricción: retira el contenido, suspende la cuenta o ambas. Para cerrarla sin restricción, descártala."
     appeals:
       reported_field: "Contenido"
 

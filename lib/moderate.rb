@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "set"
-
 # We lean on a couple of ActiveSupport core extensions (notably String#constantize
 # for the lazy class-name resolution that lets `config.user_class = "User"` work
 # before the User model is loaded). In a Rails host these are always present; we
@@ -33,7 +31,7 @@ require_relative "moderate/macros"
 # the public DSA notice form, and registers the macros on ActiveRecord. Required
 # only when Rails is present so the value objects + macros above can still be used
 # in a plain-Ruby context (a console, a non-Rails script) without booting an engine.
-require_relative "moderate/engine" if defined?(::Rails::Engine)
+require_relative "moderate/engine" if defined?(Rails::Engine)
 
 # `moderate` — a complete Trust & Safety layer for Rails apps with user-generated
 # content: report, block, filter, moderate, appeal, comply (EU DSA / Apple App
@@ -79,7 +77,7 @@ module Moderate
     # Read alias. Some ecosystem gems expose `.configuration`; we keep `.config`
     # as the canonical name (matches the README's `Moderate.config`) and provide
     # `.configuration` only as a courtesy alias for muscle memory.
-    alias_method :configuration, :config
+    alias configuration config
 
     # The host's entry point: `Moderate.configure do |config| ... end`.
     #
@@ -143,6 +141,8 @@ module Moderate
     #
     # Stored as a Set of STRING class names (not Class objects) so we never pin a
     # class in memory across a Zeitwerk reload in development; we constantize on read.
+    #
+    # @api private: called by Moderate::Reportable on inclusion.
     def register_reportable(klass)
       name = klass.is_a?(Class) ? klass.name : klass.to_s
       return if name.nil? || name.empty?
@@ -250,6 +250,8 @@ module Moderate
     # We never let a host hook's exception bubble into a moderation action (a slow
     # or broken mailer must not roll back a decision). On error we audit the failure
     # and return false.
+    #
+    # @api private: the gem's dispatch into config.notify; hosts wire the hook, they don't call this.
     def notify(event_or_name, **payload)
       event = event_or_name.is_a?(Event) ? event_or_name : Event.new(name: event_or_name, **payload)
 
@@ -258,7 +260,7 @@ module Moderate
         # A lambda may legitimately return a delivery handle, a job, true, etc.
         # Anything truthy counts as delivered; nil/false counts as not-delivered.
         result ? true : false
-      rescue => error
+      rescue StandardError => error
         audit(
           name: :notify_failed,
           subject: event.subject,
@@ -278,11 +280,13 @@ module Moderate
     # same `case`. Like notify, an audit hook exception is swallowed (turned into a
     # logged warning) so it can never roll back the action it's recording — audit is
     # observational, never load-bearing.
+    #
+    # @api private: the gem's dispatch into config.audit.
     def audit(event_or_name = nil, **payload)
       event = event_or_name.is_a?(Event) ? event_or_name : Event.new(name: event_or_name, **payload)
       config.audit.call(event)
       true
-    rescue => error
+    rescue StandardError => error
       logger&.warn("[moderate] audit hook failed for #{event&.name}: #{error.class}: #{error.message}")
       false
     end
@@ -292,6 +296,8 @@ module Moderate
     # block row's creation time so hosts can apply time-aware teardown without
     # reaching back into the database. Kept as a facade method so Moderate::Block has
     # one call site and doesn't reach into config internals. No-op by default.
+    #
+    # @api private: called by Moderate::Block.
     def run_on_block(blocker:, blocked:, at:)
       config.on_block.call(blocker: blocker, blocked: blocked, at: at)
     end
@@ -306,13 +312,16 @@ module Moderate
     # `announce: false` (the decision services) audits now but leaves the
     # `user_banned` notice to the caller: it returns the event's keywords for
     # `Moderate.announce_ban`, so the notice can wait for the decision's commit.
+    #
+    # @api private: decisions ban through `report.resolve!(ban_user: true)` or
+    # `flag.action!(ban_user: true)`, which also send the statement of reasons.
     def apply_ban(user:, by:, reason:, announce: true)
       ensure_ban_handler!
       result = config.ban_handler.call(user: user, by: by, reason: reason)
       payload = {
         user_id: user&.id,
         reason: reason,
-        summary: "user #{user&.id || '(unknown)'} banned"
+        summary: "user #{user&.id || "(unknown)"} banned"
       }.compact
       event = { subject: user, actor: by, recipients: [user].compact, payload: payload }
 
@@ -324,6 +333,8 @@ module Moderate
     end
 
     # The `user_banned` notice for a ban applied with `apply_ban(announce: false)`.
+    #
+    # @api private: used by the decision services.
     def announce_ban(**event)
       notify(:user_banned, **event)
     end
@@ -356,14 +367,16 @@ module Moderate
 
     # Raised before anything changes when a ban is asked for and nothing would apply
     # it. Public so a decision service can check before it takes any lock.
+    #
+    # @api private: used by the decision services.
     def ensure_ban_handler!
       return true if config.ban_handler_configured?
 
       raise ConfigurationError,
-            "a ban was requested but no config.ban_handler is set, so nothing would suspend the account " \
-            "while the audit trail and the statement of reasons said it was. Wire one in " \
-            "config/initializers/moderate.rb, e.g. " \
-            "`config.ban_handler = ->(user:, by:, reason:) { user.suspend!(reason: reason) }`."
+        "a ban was requested but no config.ban_handler is set, so nothing would suspend the account " \
+        "while the audit trail and the statement of reasons said it was. Wire one in " \
+        "config/initializers/moderate.rb, e.g. " \
+        "`config.ban_handler = ->(user:, by:, reason:) { user.suspend!(reason: reason) }`."
     end
 
     # --- Transactions -----------------------------------------------------------
@@ -400,6 +413,8 @@ module Moderate
     # the latest committed row on every database. Those reads come after the locks that serialize them
     # (content, and person for a ban), so two decisions never hold gap locks on the
     # reports table at once.
+    #
+    # @api private: the lock order the decision services rely on.
     def with_row_lock(record)
       model = record.class
       return yield unless record.respond_to?(:persisted?) && record.persisted? && model.respond_to?(:lock)
@@ -488,6 +503,8 @@ module Moderate
     # The locale for copy the gem generates itself, falling back to the app's
     # default. Read lazily so a host setting I18n.default_locale after our boot
     # still wins.
+    #
+    # @api private: read config.locale.
     def locale
       config.locale || (defined?(I18n) ? I18n.default_locale : :en)
     end
@@ -517,6 +534,44 @@ module Moderate
       }
     end
 
+    # Opt-in retention: redact the personal data in reports, flags and appeals whose
+    # decision is final and older than `older_than` (default 1 year, never less than
+    # the 6-month appeal window), keeping every row and its decision. Nothing calls
+    # it unless the host schedules it. See Moderate::Retention and docs/compliance.md.
+    #
+    #   Moderate.purge(older_than: 1.year)   # => { reports: 12, flags: 40, appeals: 1 }
+    def purge(**)
+      Retention.purge(**)
+    end
+
+    # The host's notifier confirms that a decision notice ACTUALLY went out — call it
+    # from the mailer's delivery (Action Mailer's `after_deliver`), not when the mail
+    # was queued:
+    #
+    #   Moderate.delivered!(report, :affected_user)  # the statement of reasons
+    #   Moderate.delivered!(report, :decision)       # the reporter's / notifier's outcome
+    #
+    # Stamps `affected_user_notified_at` / `decision_notified_at` once and starts the
+    # six-month appeal window from that moment (DSA Art. 20(2)) if that is later than
+    # the decision-time deadline; never earlier, and a second call changes nothing.
+    # Without it the window stays decision + 6 months.
+    def delivered!(report, recipient, at: Time.current)
+      report.record_delivery!(recipient, at: at)
+    end
+
+    # Keep `report` (its appeals, the flags on its content) out of the purge until
+    # `until:`: an out-of-court dispute, a court case, an authority's request.
+    #
+    #   Moderate.hold(report, until: 1.year.from_now, by: admin, reason: "ODS case 2026-114")
+    #   Moderate.release_hold(report, by: admin)
+    def hold(report, **)
+      Retention.hold(report, **)
+    end
+
+    def release_hold(report, **)
+      Retention.release_hold(report, **)
+    end
+
     private
 
     # Median seconds between paired (created_at, resolved_at) timestamps; 0 when empty.
@@ -530,7 +585,7 @@ module Moderate
     # The internal reportable-name set. Set (not Array) so re-including the concern
     # is idempotent.
     def reportable_registry
-      @reportable_classes ||= Set.new
+      @reportable_registry ||= Set.new
     end
 
     # [Class or nil, class name or nil] for whatever reportable_field_label got.

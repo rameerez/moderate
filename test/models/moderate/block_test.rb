@@ -41,7 +41,10 @@ module Moderate
       audits = []
       notifications = []
       Moderate.config.audit = ->(event) { audits << event }
-      Moderate.config.notify = ->(event) { notifications << event; true }
+      Moderate.config.notify = lambda { |event|
+        notifications << event
+        true
+      }
 
       # First call creates the edge → one audit + one notify; second is a no-op.
       Moderate::Block.block!(blocker: @blocker, blocked: @blocked)
@@ -70,7 +73,7 @@ module Moderate
     test "block! merges hash-like on_block metadata into the audit payload" do
       audits = []
       Moderate.config.audit = ->(event) { audits << event }
-      Moderate.config.on_block = ->(blocker:, blocked:, at:) {
+      Moderate.config.on_block = lambda { |blocker:, blocked:, at:|
         {
           side_effect: "cancelled_invites",
           blocker_id: "hook must not clobber this",

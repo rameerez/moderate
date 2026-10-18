@@ -1,0 +1,448 @@
+# frozen_string_literal: true
+
+require "test_helper"
+
+# An attached file is classified once Active Storage has uploaded it, and never
+# before.
+#
+# Active Storage uploads a newly attached file in its own after_commit callback
+# (`has_one_attached` / `has_many_attached` register it). On Rails 7.1+ commit
+# callbacks run in the order they were defined, so a model that calls `moderates`
+# (which registers the filter's after_commit) ABOVE `has_one_attached` used to run
+# the filter first: a synchronous adapter classified a blob whose file wasn't on
+# the service yet, and an async adapter's ClassifyJob was enqueued while the upload
+# was still in flight (CarHey's 2026-07-10 incident). The dummy's Comment has that
+# order: `moderates :body` comes before `has_one_attached :photo`.
+class AttachmentUploadTest < ActiveSupport::TestCase
+  # A synchronous image adapter that records, for every call, whether the file it
+  # was handed exists on the storage service at that moment.
+  class RecordingAdapter
+    attr_reader :calls
+
+    def initialize
+      @calls = []
+    end
+
+    def synchronous? = true
+
+    def classify(value)
+      blobs = value.respond_to?(:blobs) ? value.blobs.to_a : [value.blob]
+      @calls << blobs.all? { |blob| blob.service.exist?(blob.key) }
+      label = Moderate::Label.new(category: :sexual, subcategory: nil, score: 1.0, flagged: true, input: :image)
+      Moderate::Result.new(allowed: false, labels: [label], source: "image_filter")
+    end
+  end
+
+  setup do
+    @user = User.create!(name: "Author", email: "author@example.com")
+    @adapter = RecordingAdapter.new
+    ModerateTestRecorder.clear
+  end
+
+  def configure(model: "Comment", field: :photo, adapter: @adapter)
+    Moderate.configure do |config|
+      config.audit = ->(event) { ModerateTestRecorder.audit(event) }
+      config.notify = ->(event) { ModerateTestRecorder.notify(event) }
+      config.register_adapter :recording, adapter
+      config.register_adapter :image, DummyImageAdapter.new
+      config.filter model, field, with: (adapter.synchronous? ? :recording : :image), mode: :flag
+    end
+  end
+
+  def attach_photo(record)
+    record.photo.attach(io: StringIO.new("bytes"), filename: "photo.png", content_type: "image/png")
+  end
+
+  test "a synchronous adapter classifies an attachment declared below `moderates` only after its upload" do
+    configure
+
+    comment = Comment.new(user: @user, body: "hello")
+    attach_photo(comment)
+
+    assert_difference -> { Moderate::Flag.where(field: "photo").count }, 1 do
+      comment.save!
+    end
+    assert_equal [true], @adapter.calls, "classified once, with the file already on the service"
+  end
+
+  test "replacing the attachment on a saved record is classified after the new upload" do
+    configure
+    comment = Comment.create!(user: @user, body: "hello")
+
+    attach_photo(comment)
+
+    assert_equal [true], @adapter.calls
+    assert_equal 1, Moderate::Flag.where(flaggable: comment, field: "photo").count
+  end
+
+  test "an async adapter: a guard job before the upload, the classifying job after it, one flag" do
+    configure(adapter: DummyImageAdapter.new)
+    seen = []
+    subscriber = ActiveSupport::Notifications.subscribe(/\Aenqueue(_at)?\.active_job\z/) do |name, *, payload|
+      job = payload[:job]
+      next unless job.is_a?(Moderate::ClassifyJob)
+
+      blob = job.arguments.first.photo.blob
+      seen << [name.start_with?("enqueue_at") ? :scheduled : :now, blob.service.exist?(blob.key)]
+    end
+
+    comment = Comment.new(user: @user, body: "hello")
+    attach_photo(comment)
+    comment.save!
+
+    assert_equal [[:scheduled, false], [:now, true]], seen,
+      "the guard is queued (for later) before the upload; the immediate job after it"
+    assert_difference -> { Moderate::Flag.where(field: "photo").count }, 1, "the second job finds the first one's mark" do
+      drain_classify_jobs
+    end
+  ensure
+    ActiveSupport::Notifications.unsubscribe(subscriber) if subscriber
+  end
+
+  test "the guard job finds an inline classification done and doesn't classify again" do
+    configure
+    comment = Comment.new(user: @user, body: "hello")
+    attach_photo(comment)
+    comment.save!
+    assert_equal [true], @adapter.calls
+
+    drain_classify_jobs
+
+    assert_equal [true], @adapter.calls
+    assert_equal 1, Moderate::Flag.where(field: "photo").count
+  end
+
+  test "a direct upload still in flight is classified by the job once its file arrives, never before" do
+    configure
+    blob = ActiveStorage::Blob.create_before_direct_upload!(
+      filename: "direct.png", byte_size: 5, checksum: OpenSSL::Digest::MD5.base64digest("bytes"), content_type: "image/png"
+    )
+    # Identified already (an API client that created the blob, a content type it
+    # declared), so Active Storage doesn't read the file at attach time.
+    blob.update!(identified: true)
+    comment = Comment.new(user: @user, body: "hello")
+    comment.photo.attach(blob.signed_id) # the client hasn't PUT the file yet
+
+    comment.save!
+    perform_classify_jobs_once
+
+    assert_empty @adapter.calls, "a synchronous adapter isn't handed a file that isn't there"
+
+    blob.service.upload(blob.key, StringIO.new("bytes"))
+    drain_classify_jobs
+
+    assert_equal [true], @adapter.calls
+    assert_equal 1, Moderate::Flag.where(flaggable: comment, field: "photo").count
+  end
+
+  test "an upload that raises still ends in a classification_skipped audit, never in silence" do
+    configure
+    comment = Comment.new(user: @user, body: "hello")
+    attach_photo(comment)
+
+    ActiveStorage::Blob.any_instance.stubs(:upload_without_unfurling).raises(Errno::ECONNRESET)
+    assert_raises(Errno::ECONNRESET) { comment.save! }
+    ActiveStorage::Blob.any_instance.unstub(:upload_without_unfurling)
+
+    drain_classify_jobs
+
+    assert_empty @adapter.calls
+    skipped = ModerateTestRecorder.audits_named(:classification_skipped)
+    assert_equal(["attachment_not_uploaded"], skipped.map { |event| event.payload[:reason] })
+  end
+
+  test "a job for files the field no longer holds stops: the newer change has its own" do
+    configure(adapter: DummyImageAdapter.new)
+    comment = Comment.new(user: @user, body: "hello")
+    attach_photo(comment)
+    comment.save!
+    old_jobs = enqueued_jobs.dup
+    clear_enqueued_jobs
+    attach_photo(comment) # replaced before the first jobs ran
+    clear_enqueued_jobs
+
+    old_jobs.each { |job| ActiveJob::Base.execute(job) }
+
+    assert_equal 0, Moderate::Flag.where(field: "photo").count
+  end
+
+  test "an attachment declared above `moderates` is classified once, right away" do
+    configure(model: "PhotoPost")
+
+    post = PhotoPost.new(user: @user, body: "hello")
+    attach_photo(post)
+
+    assert_difference -> { Moderate::Flag.where(field: "photo").count }, 1 do
+      post.save!
+    end
+    assert_equal [true], @adapter.calls
+  end
+
+  test "has_many_attached files declared below `moderates` are classified after they all upload" do
+    configure(model: "PhotoPost", field: :photos)
+
+    post = PhotoPost.new(user: @user, body: "hello")
+    post.photos.attach(
+      { io: StringIO.new("one"), filename: "one.png", content_type: "image/png" },
+      { io: StringIO.new("two"), filename: "two.png", content_type: "image/png" }
+    )
+
+    assert_difference -> { Moderate::Flag.where(field: "photos").count }, 1 do
+      post.save!
+    end
+    assert_equal [true], @adapter.calls
+  end
+
+  # A synchronous adapter that allows everything and counts its calls.
+  class AllowingAdapter
+    attr_reader :calls
+
+    def initialize
+      @calls = 0
+    end
+
+    def synchronous? = true
+
+    def classify(_value)
+      @calls += 1
+      Moderate::Result.allowed(source: "image_filter")
+    end
+  end
+
+  test ":block refuses an attachment whose direct upload hasn't finished, and checks it once it has" do
+    adapter = AllowingAdapter.new
+    Moderate.configure do |config|
+      config.register_adapter :allowing, adapter
+      config.filter "Comment", :photo, with: :allowing, mode: :block
+    end
+    blob = ActiveStorage::Blob.create_before_direct_upload!(
+      filename: "direct.png", byte_size: 5, checksum: OpenSSL::Digest::MD5.base64digest("bytes"), content_type: "image/png"
+    )
+    blob.update!(identified: true)
+    comment = Comment.new(user: @user, body: "hello")
+    comment.photo.attach(blob.signed_id)
+
+    assert_not comment.save
+    assert comment.errors.added?(:photo, :upload_not_finished)
+    assert_equal ["Photo hasn't finished uploading yet"], comment.errors.full_messages
+    assert_equal 0, adapter.calls, "a missing file is never classified"
+    I18n.with_locale(:es) do
+      comment.valid?
+      assert_equal "aún no ha terminado de subirse", comment.errors[:photo].first
+    end
+
+    blob.service.upload(blob.key, StringIO.new("bytes"))
+    assert comment.save, comment.errors.full_messages.to_sentence
+    assert_equal 1, adapter.calls
+  end
+
+  # --- Claims (Moderate::Attachments.classify_once) ---------------------------
+
+  def save_with_async_photo
+    configure(adapter: DummyImageAdapter.new)
+    comment = Comment.new(user: @user, body: "hello")
+    attach_photo(comment)
+    comment.save!
+    clear_enqueued_jobs
+    comment
+  end
+
+  def write_claim(comment, owner:, claimed_at:)
+    digest = Moderate::Attachments.digest(Moderate::Attachments.blobs(comment.photo))
+    Moderate::Classification.create!(record: comment, field: "photo", digest: digest, claimed_by: owner, claimed_at: claimed_at)
+  end
+
+  def classification_rows(record, field = "photo")
+    Moderate::Classification.where(record_type: record.class.polymorphic_name, record_id: record.id, field: field)
+  end
+
+  test "a live claim by another worker stops the job, which looks once more when the claim expires" do
+    comment = save_with_async_photo
+    write_claim(comment, owner: "other-worker", claimed_at: 1.minute.ago)
+
+    assert_no_difference -> { Moderate::Flag.count } do
+      Moderate::ClassifyJob.perform_now(comment, "photo")
+    end
+    recheck = enqueued_jobs.find { |job| job["job_class"] == "Moderate::ClassifyJob" }
+    assert recheck, "a recheck is queued for the claim's expiry"
+    assert_in_delta (1.minute.ago + Moderate.config.classification_claim_ttl).to_f, Time.iso8601(recheck["scheduled_at"]).to_f, 5
+
+    travel_to(20.minutes.from_now) do
+      clear_enqueued_jobs
+      ActiveJob::Base.execute(recheck) # the other worker died: its claim is stale now
+    end
+
+    assert_equal 1, Moderate::Flag.where(flaggable: comment, field: "photo").count
+    assert_empty enqueued_jobs.select { |job| job["job_class"] == "Moderate::ClassifyJob" }, "one recheck, never a loop"
+  end
+
+  test "a crashed worker's stale claim is taken over" do
+    comment = save_with_async_photo
+    write_claim(comment, owner: "dead-worker", claimed_at: 11.minutes.ago)
+
+    Moderate::ClassifyJob.perform_now(comment, "photo")
+
+    assert_equal 1, Moderate::Flag.where(flaggable: comment, field: "photo").count
+    row = classification_rows(comment).sole
+    assert_nil row.claimed_by, "the claim is cleared on completion"
+    assert_not_nil row.classified_at
+    assert Moderate::Attachments.classified?(comment, "photo", comment.photo)
+    assert_not comment.photo.blob.reload.metadata.key?("moderate_classified"), "nothing of ours in blob metadata"
+  end
+
+  test "files changed while the adapter ran: that result is discarded, the new files are classified" do
+    comment = save_with_async_photo
+    replaced = false
+    adapter = Object.new
+    adapter.define_singleton_method(:synchronous?) { false }
+    adapter.define_singleton_method(:classify) do |_value|
+      unless replaced
+        replaced = true
+        Comment.find(comment.id).photo.attach(io: StringIO.new("new"), filename: "new.png", content_type: "image/png")
+      end
+      label = Moderate::Label.new(category: :sexual, subcategory: nil, score: 1.0, flagged: true, input: :image)
+      Moderate::Result.new(allowed: false, labels: [label], source: "image_filter")
+    end
+    Moderate.config.register_adapter :image, adapter
+    old_blob = comment.photo.blob
+
+    Moderate::ClassifyJob.perform_now(comment, "photo")
+
+    assert_equal 0, Moderate::Flag.where(flaggable: comment, field: "photo").count, "the old files' result is discarded"
+    old_digest = Moderate::Attachments.digest([old_blob])
+    assert_nil classification_rows(comment).find_by(digest: old_digest).claimed_by, "and its claim released"
+
+    drain_classify_jobs
+    assert_equal 1, Moderate::Flag.where(flaggable: comment, field: "photo").count, "the new files are classified"
+    assert Moderate::Attachments.classified?(comment, "photo", Comment.find(comment.id).photo)
+  end
+
+  test "a changed set of files is classified again; the same set isn't" do
+    configure(model: "PhotoPost", field: :photos)
+    post = PhotoPost.new(user: @user, body: "hello")
+    post.photos.attach(
+      { io: StringIO.new("one"), filename: "one.png", content_type: "image/png" },
+      { io: StringIO.new("two"), filename: "two.png", content_type: "image/png" }
+    )
+    post.save!
+    assert_equal [true], @adapter.calls
+
+    kept = post.photos.blobs.min_by(&:id)
+    post.update!(photos: [kept.signed_id]) # one file removed: the remaining set is new
+    drain_classify_jobs
+
+    assert_equal [true, true], @adapter.calls, "the one-file set was never classified, so it is now"
+  end
+
+  test "the same blob attached to a second record is classified for that record too" do
+    configure
+    first = Comment.new(user: @user, body: "hello")
+    attach_photo(first)
+    first.save!
+
+    second = Comment.new(user: @user, body: "again")
+    second.photo.attach(first.photo.blob)
+    second.save!
+    drain_classify_jobs
+
+    assert_equal [true, true], @adapter.calls
+    assert_equal 1, Moderate::Flag.where(flaggable: second, field: "photo").count
+    assert_equal 1, classification_rows(first).where.not(classified_at: nil).count
+    assert_equal 1, classification_rows(second).where.not(classified_at: nil).count, "one row each, independent"
+  end
+
+  test "Active Storage's analyzer rewriting blob metadata mid-call changes nothing" do
+    comment = save_with_async_photo
+    adapter = Object.new
+    adapter.define_singleton_method(:synchronous?) { false }
+    adapter.define_singleton_method(:classify) do |value|
+      blob = value.blob
+      blob.update!(metadata: { "identified" => true, "analyzed" => true, "width" => 10, "height" => 10 })
+      Moderate::Result.allowed(source: "image_filter")
+    end
+    Moderate.config.register_adapter :image, adapter
+
+    Moderate::ClassifyJob.perform_now(comment, "photo")
+
+    assert Moderate::Attachments.classified?(comment, "photo", comment.photo)
+    assert_nil classification_rows(comment).sole.claimed_by
+    assert_equal 10, comment.photo.blob.reload.metadata["width"], "the analyzer's keys are its own"
+  end
+
+  test "a save that doesn't touch the attachment doesn't classify it again" do
+    configure
+    comment = Comment.new(user: @user, body: "hello")
+    attach_photo(comment)
+    comment.save!
+
+    comment.update!(body: "hello again")
+
+    assert_equal [true], @adapter.calls
+  end
+
+  # --- ClassifyJob: a blob that isn't on the service yet ----------------------
+
+  test "ClassifyJob waits for a blob that isn't on the service yet, then classifies it" do
+    configure(adapter: DummyImageAdapter.new)
+    comment = Comment.new(user: @user, body: "hello")
+    attach_photo(comment)
+    comment.save!
+    clear_enqueued_jobs
+
+    blob = comment.photo.blob
+    bytes = blob.download
+    blob.service.delete(blob.key) # a direct upload still in flight, a slow replica
+
+    assert_no_difference -> { Moderate::Flag.count } do
+      assert_enqueued_with(job: Moderate::ClassifyJob, args: [comment, "photo", { adapter: nil, upload_attempt: 2, blob_ids: nil }]) do
+        Moderate::ClassifyJob.perform_now(comment, "photo")
+      end
+    end
+
+    blob.service.upload(blob.key, StringIO.new(bytes))
+    clear_enqueued_jobs
+
+    assert_difference -> { Moderate::Flag.where(field: "photo").count }, 1 do
+      Moderate::ClassifyJob.perform_now(comment, "photo", upload_attempt: 2)
+    end
+  end
+
+  test "ClassifyJob gives up on a blob that never reaches the service, and audits it" do
+    configure(adapter: DummyImageAdapter.new)
+    comment = Comment.new(user: @user, body: "hello")
+    attach_photo(comment)
+    comment.save!
+    clear_enqueued_jobs
+    comment.photo.blob.service.delete(comment.photo.blob.key)
+
+    assert_no_enqueued_jobs(only: Moderate::ClassifyJob) do
+      Moderate::ClassifyJob.perform_now(comment, "photo", upload_attempt: Moderate::ClassifyJob::UPLOAD_ATTEMPTS)
+    end
+
+    assert_equal 0, Moderate::Flag.count
+    skipped = ModerateTestRecorder.audits_named(:classification_skipped)
+    assert_equal 1, skipped.size
+    assert_equal "photo", skipped.first.payload[:field]
+    assert_equal "attachment_not_uploaded", skipped.first.payload[:reason]
+  end
+
+  private
+
+  # Run every ClassifyJob, including the ones they re-enqueue, scheduled or not.
+  def drain_classify_jobs
+    20.times do
+      jobs = enqueued_jobs.select { |job| job["job_class"] == "Moderate::ClassifyJob" }
+      return if jobs.empty?
+
+      clear_enqueued_jobs
+      jobs.each { |job| ActiveJob::Base.execute(job) }
+    end
+    flunk "ClassifyJob kept re-enqueuing itself"
+  end
+
+  def perform_classify_jobs_once
+    jobs = enqueued_jobs.select { |job| job["job_class"] == "Moderate::ClassifyJob" }
+    clear_enqueued_jobs
+    jobs.each { |job| ActiveJob::Base.execute(job) }
+  end
+end

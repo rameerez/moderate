@@ -250,7 +250,7 @@ off the public form's bot gate.
 
 #### The rate-limit hook
 
-On Rails 7.2+ you could use the built-in `rate_limit` API; `moderate` instead implements a tiny per-IP, cache-backed counter (`Rails.cache`) as a `before_action`, so it honors your **runtime** `config.notice_rate_limit` (the class-level macro is evaluated at class load, before your initializer has run). Configure it once:
+You could use Rails' built-in `rate_limit` API; `moderate` instead implements a tiny per-IP, cache-backed counter (`Rails.cache`) as a `before_action`, so it honors your **runtime** `config.notice_rate_limit` (the class-level macro is evaluated at class load, before your initializer has run). Configure it once:
 
 ```ruby
 config.notice_rate_limit = { max: 5, within: 1.hour }   # default

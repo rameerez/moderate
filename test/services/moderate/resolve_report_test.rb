@@ -112,9 +112,10 @@ module Moderate
         assert_equal author, ModerateTestRecorder.notifications_named(:user_banned).first.subject
         assert_equal moderator, ModerateTestRecorder.notifications_named(:user_banned).first.actor
 
-        # Delivered ⇒ the legal-communication timestamps were stamped.
-        assert_predicate report.decision_notified_at, :present?
-        assert_predicate report.affected_user_notified_at, :present?
+        # Handed to the notifier is not delivered: the legal-communication timestamps
+        # wait for Moderate.delivered! (test/models/moderate/appeal_window_test.rb).
+        assert_nil report.decision_notified_at
+        assert_nil report.affected_user_notified_at
       end
 
       test "content removal invokes the reportable's remove_reported_field! contract" do
@@ -124,8 +125,14 @@ module Moderate
         report = create_report(reportable: comment, field: "body")
 
         # The gem's job is to INVOKE the host contract, not to know what "remove" means.
-        # Assert exactly that: the reportable's own method is called with the field.
-        comment.expects(:remove_reported_field!).with("body").returns(true)
+        # Assert exactly that: the reportable's own method is called with the field
+        # (and it removes it, which the gem then verifies).
+        called_with = []
+        comment.define_singleton_method(:remove_reported_field!) do |field|
+          called_with << field
+          update_column(:body, "")
+          true
+        end
         # Stub the reportable the report resolves so the expectation is on our instance.
         report.stubs(:reportable).returns(comment)
 
@@ -134,6 +141,7 @@ module Moderate
 
         assert_equal "actioned", report.reload.status
         assert_equal "content_removed", report.decision_visibility
+        assert_equal ["body"], called_with
       end
 
       test "dismissing closes the report with no enforcement and still opens an appeal window" do
@@ -196,7 +204,7 @@ module Moderate
         comment = Comment.create!(user: author, body: "fine body")
         report = create_report(reportable: comment, field: "body")
 
-        Moderate::Services::ResolveReport.new(report, by: moderator).resolve!(note: "First decision")
+        Moderate::Services::ResolveReport.new(report, by: moderator).resolve!(note: "First decision", ban_user: true)
         first_resolved_at = report.reload.resolved_at
         ModerateTestRecorder.clear # ignore the first (valid) decision's side effects
 
@@ -237,20 +245,23 @@ module Moderate
         refute statement.payload[:automated]
       end
 
-      test "records resolution_basis and a no_action label for a dismissal" do
+      test "a resolve that restricts nothing is refused: it would claim a restriction nobody imposed" do
         moderator = User.create!(name: "Mod")
         author = User.create!(name: "Author")
         comment = Comment.create!(user: author, body: "fine body")
         report = create_report(reportable: comment, field: "body")
 
-        Moderate::Services::ResolveReport.new(report, by: moderator)
-          .resolve!(note: "Acted but no removal/ban", resolution_basis: "law")
+        error = assert_raises(ActiveRecord::RecordInvalid) do
+          Moderate::Services::ResolveReport.new(report, by: moderator).resolve!(note: "Acted but no removal/ban", resolution_basis: "law")
+        end
 
-        report.reload
-        # Neither remove nor ban ⇒ the neutral "other_restriction" scope, and the
-        # caller's explicit ground is recorded.
-        assert_equal "other_restriction", report.decision_visibility
-        assert_equal "law", report.resolution_basis
+        assert_match "dismiss", error.message
+        assert_predicate report.reload, :open?
+        assert_empty ModerateTestRecorder.notifications_named(:affected_user_decision)
+        I18n.with_locale(:es) do
+          assert_raises(ActiveRecord::RecordInvalid) { report.resolve!(by: moderator, note: "x") }
+          assert_match "descártala", report.errors.full_messages.join
+        end
       end
 
       # --- A ban nothing applies is refused ------------------------------------
@@ -297,9 +308,9 @@ module Moderate
         author = User.create!(name: "Author", email: "author-nobanneeded@example.com")
         report = create_report(reportable: Comment.create!(user: author, body: "meh"), field: "body")
 
-        report.resolve!(by: User.create!(name: "Mod"), note: "Warned.")
+        report.dismiss!(by: User.create!(name: "Mod"), note: "No violation.")
 
-        assert_predicate report.reload, :actioned?
+        assert_predicate report.reload, :dismissed?
       end
 
       # --- content_removed --------------------------------------------------
@@ -340,7 +351,7 @@ module Moderate
         author = User.create!(name: "Author", email: "author-plain@example.com")
         plain = PlainComment.create!(user: author, body: "x")
         report = Moderate::Report.create!(reportable: plain, reported_user: author, category: "other",
-                                          message: "plain", good_faith_confirmed: true)
+          message: "plain", good_faith_confirmed: true)
 
         assert_raises(ActiveRecord::RecordInvalid) do
           report.resolve!(by: User.create!(name: "Mod"), note: "Remove.", remove_content: true)

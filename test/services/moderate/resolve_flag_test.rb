@@ -309,7 +309,7 @@ module Moderate
           good_faith_confirmed: true
         )
         legacy.update_columns(status: "actioned", resolution_note: "old", resolved_at: Time.current,
-                              resolution_actions: { "remove_content" => true }, decision_visibility: "content_removed")
+          resolution_actions: { "remove_content" => true }, decision_visibility: "content_removed")
         assert_equal "ok body", flag.flaggable.reload.body, "the legacy shape: recorded a removal, removed nothing"
 
         flag.action!(by: moderator, note: "Remove it for real.", remove_content: true)

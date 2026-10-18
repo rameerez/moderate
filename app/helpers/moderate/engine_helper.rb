@@ -165,6 +165,8 @@ end
 # Expose the helper to the HOST app's views (see the "isolated engine" gotcha in
 # the module doc above). `on_load(:action_view)` defers until ActionView is loaded,
 # so we never force it at boot and we play nice with the host's load order.
-ActiveSupport.on_load(:action_view) do
-  include Moderate::EngineHelper
-end if defined?(ActiveSupport)
+if defined?(ActiveSupport)
+  ActiveSupport.on_load(:action_view) do
+    include Moderate::EngineHelper
+  end
+end

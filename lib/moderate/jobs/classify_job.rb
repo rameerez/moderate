@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 module Moderate
-  # The background worker for ASYNCHRONOUS filter adapters (the :openai adapter, a
-  # host's hosted classifier, the default :image adapter) running in :flag mode.
+  # The background worker for ASYNCHRONOUS filter adapters (a remote moderation API
+  # such as the OpenAI or Rekognition reference adapters in examples/, or a host's
+  # own classifier) running in :flag mode.
   #
   # ── Why a job exists at all ──────────────────────────────────────────────────
   # An async adapter does blocking I/O (a moderation API call), which must never run
@@ -23,11 +24,27 @@ module Moderate
   # value. If the record was edited or deleted between enqueue and run, we classify
   # what's actually there now (or skip a vanished record), never a stale snapshot.
   #
-  # ── Idempotency ──────────────────────────────────────────────────────────────
+  # ── One flag per run ─────────────────────────────────────────────────────────
   # Flag creation goes through `Moderate::Flag.flag!`, the single builder shared by
-  # the synchronous and asynchronous paths. It's an upsert-by-(flaggable, field,
-  # source) so a retried job (ActiveJob retries on transient failures) doesn't pile
-  # up duplicate queue entries for the same content.
+  # the synchronous and asynchronous paths, and it is the job's last step, so a job
+  # that fails earlier (the adapter's network call) and is retried files one flag.
+  # `flag!` always creates: two runs for the same content (two saves, or a host that
+  # also enqueues the job itself) file two flags, both in the queue.
+  #
+  # ── An attachment whose file isn't on the service yet ────────────────────────
+  # For an attachment the filter enqueues this job before Active Storage uploads
+  # the file (the guard: it runs even if the upload fails) and, once the upload
+  # returns, classifies right away (see Moderate::ContentFilterable). When the job
+  # runs, a blob can be missing: the upload failed or is still running, a direct
+  # upload hasn't finished, a replica lags. The job then re-enqueues itself,
+  # waiting UPLOAD_WAIT × attempt seconds, up to UPLOAD_ATTEMPTS runs in all, and
+  # gives up with a `classification_skipped` audit event. It never hands an adapter
+  # a file that isn't there.
+  #
+  # `blob_ids:` names the files the job was enqueued for: if the field holds other
+  # files by the time it runs, the newer change has its own job and this one stops.
+  # A field already classified for exactly these files (Moderate::Attachments marks
+  # the blobs) is not classified again.
   #
   # ── Base class ───────────────────────────────────────────────────────────────
   # We subclass `ActiveJob::Base` directly (not the host's ApplicationJob) so the gem
@@ -35,16 +52,27 @@ module Moderate
   # rest of the gem stays host-agnostic. The host configures the queue adapter,
   # retries, and queue name globally as usual.
   class ClassifyJob < ActiveJob::Base
-    # Run on a low-priority queue by default — moderation flagging is important but
-    # not latency-critical (the content is already published in :flag mode). A host
-    # can override the queue globally.
-    queue_as { Moderate.config.respond_to?(:job_queue) && Moderate.config.job_queue || :default }
+    # The :default queue. Moderation flagging is important but not latency-critical
+    # (the content is already published in :flag mode); a host that wants it elsewhere
+    # says so in an initializer: `Moderate::ClassifyJob.queue_as :low`.
+    queue_as :default
+
+    # Seconds to wait before the next look at a blob that isn't uploaded yet,
+    # multiplied by the attempt number (5s, 10s, 15s, 20s: under a minute in all).
+    UPLOAD_WAIT = 5
+    # Runs of this job, the first included, before it gives up on such a blob.
+    UPLOAD_ATTEMPTS = 5
 
     # @param record [ActiveRecord::Base] the flaggable record (any Moderate::Reportable).
     # @param field  [String, Symbol] the field whose value to classify.
     # @param adapter [String, Symbol, nil] optional explicit adapter name; when nil,
     #   the field's resolved FilterPolicy (or the global default) decides.
-    def perform(record, field, adapter: nil)
+    # @param upload_attempt [Integer] which look at a not-yet-uploaded attachment
+    #   this is (the job sets it when it re-enqueues itself; callers leave it).
+    # @param blob_ids [Array<Integer>, nil] the attachment's blobs when enqueued.
+    # @param claim_recheck [Boolean] this run is the one look the job takes after
+    #   another worker's claim on the same files expires (set by the job itself).
+    def perform(record, field, adapter: nil, upload_attempt: 1, blob_ids: nil, claim_recheck: false)
       # The record may have been destroyed between enqueue and execution — nothing
       # to classify, nothing to flag. (ActiveJob raises DeserializationError for a
       # GlobalID that no longer resolves; that's rescued at the framework level, but
@@ -60,11 +88,13 @@ module Moderate
 
       value = field_value(record, field)
       return if blank?(value)
+      if Moderate::Attachments.attachment?(value)
+        return classify_attachment(record, field, policy, adapter: adapter, attempt: upload_attempt, blob_ids: blob_ids,
+          claim_recheck: claim_recheck)
+      end
 
       result = Moderate.classify(value, policy: policy)
-      return unless result.flagged?
-
-      file_flag(record, field, policy, result, value)
+      file_flag(record, field, policy, result, value) if result.flagged?
     end
 
     private
@@ -86,7 +116,7 @@ module Moderate
       )
     end
 
-    # File (or upsert) the Moderate::Flag via the shared builder. We pass exactly the
+    # File the Moderate::Flag via the shared builder. We pass exactly the
     # columns the install migration defines for moderate_flags. `Flag.flag!` owns the
     # `content_flagged` notify event so there's a single emission site across the
     # sync and async paths — the job doesn't fire it itself, to avoid double-notifying.
@@ -136,6 +166,56 @@ module Moderate
     # to its reference, which is fine for the queue's "what was flagged" column.
     def excerpt_for(value)
       value.to_s[0, 500]
+    end
+
+    # Claim, classify outside any lock, complete (Moderate::Attachments): this job
+    # and the inline path or the guard never classify the same files at once, and a
+    # slow adapter never holds the content's row. When another worker holds a live
+    # claim, the job looks once more when that claim expires, so a worker that died
+    # mid-call doesn't leave the files unclassified.
+    def classify_attachment(record, field, policy, adapter:, attempt:, blob_ids:, claim_recheck:)
+      value = field_value(record, field)
+      return if blob_ids && Moderate::Attachments.blob_ids(value) != Array(blob_ids).sort
+      return wait_for_upload(record, field, adapter, attempt, blob_ids) unless Moderate::Attachments.uploaded?(value)
+
+      outcome = Moderate::Attachments.classify_once(
+        record, field,
+        owner: job_id,
+        read: -> { fresh_value(record, field) },
+        classify: ->(current) { Moderate.classify(current, policy: policy) },
+        file: ->(current, result) { file_flag(record, field, policy, result, current) }
+      )
+      return unless outcome == :claimed && !claim_recheck
+
+      expires_at = Moderate::Attachments.claim_expires_at(record, field, value) || Time.current
+      self.class.set(wait_until: expires_at + 1)
+        .perform_later(record, field, adapter: adapter, blob_ids: blob_ids, claim_recheck: true)
+    end
+
+    # The field as committed now, read through a fresh instance (the job's own copy
+    # caches the attachment it was enqueued with).
+    def fresh_value(record, field)
+      fresh = record.class.unscoped.find_by(id: record.id)
+      fresh && field_value(fresh, field)
+    end
+
+    def wait_for_upload(record, field, adapter, attempt, blob_ids)
+      if attempt < UPLOAD_ATTEMPTS
+        self.class.set(wait: UPLOAD_WAIT * attempt)
+          .perform_later(record, field, adapter: adapter, upload_attempt: attempt + 1, blob_ids: blob_ids)
+        return
+      end
+
+      Moderate.audit(
+        :classification_skipped,
+        subject: record,
+        payload: {
+          field: field,
+          reason: "attachment_not_uploaded",
+          attempts: attempt,
+          summary: "#{record.class.name}##{field} not classified: its file never reached the storage service"
+        }
+      )
     end
 
     def field_value(record, field)

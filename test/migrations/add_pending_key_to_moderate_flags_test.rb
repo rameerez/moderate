@@ -129,9 +129,7 @@ class AddPendingKeyToModerateFlagsTest < ActiveSupport::TestCase
     Moderate::Flag.insert_all!([row])
     id = Moderate::Flag.where(flaggable_id: @comment.id, flaggable_type: type).order(:id).last.id
     @inserted << id
-    if field != "body"
-      connection.execute("UPDATE moderate_flags SET field = #{connection.quote(field)} WHERE id = #{Integer(id)}")
-    end
+    connection.execute("UPDATE moderate_flags SET field = #{connection.quote(field)} WHERE id = #{Integer(id)}") if field != "body"
     id
   end
 end

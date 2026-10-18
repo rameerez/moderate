@@ -144,6 +144,11 @@ Moderate.configure do |config|
   # `ban_user: true` raises instead of claiming a suspension that never happened.
   #
   # config.ban_handler = ->(user:, by:, reason:) { user.suspend!(reason: reason) }
+  #
+  # If your app can lift a ban, tell moderate whether a person is banned NOW, so a
+  # second ban after an unban is applied again instead of counted as already done:
+  #
+  # config.banned = ->(user) { user.suspended? }
 
   # ==========================================================================
   # PUBLIC FORM HUMAN VERIFICATION — optional per-request skips
@@ -174,19 +179,6 @@ Moderate.configure do |config|
   # published. The aggregation is still queryable in code so you can build your own.
   #
   # config.transparency_report_enabled = true
-
-  # ==========================================================================
-  # SIGNED LINKS — purposes for the signed Global IDs in emails & notices
-  # ==========================================================================
-  #
-  # `moderate` mints signed, single-purpose links (e.g. an appeal link in a
-  # decision email, a confirm-receipt link in a DSA notice). These purposes
-  # scope each signature so a link minted for one action can't be replayed for
-  # another. The defaults cover the built-in flows; add your own if you mint
-  # custom signed links against moderate records.
-  #
-  # Default: [:appeal, :confirm_notice, :unsubscribe]
-  # config.signed_gid_purposes = [:appeal, :confirm_notice, :unsubscribe]
 
   # ==========================================================================
   # LOCALE

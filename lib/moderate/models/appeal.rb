@@ -17,6 +17,7 @@ module Moderate
   # Source: https://eur-lex.europa.eu/eli/reg/2022/2065/oj (Art. 20)
   class Appeal < ApplicationRecord
     include Moderate::DeferredNotices
+
     self.table_name = "moderate_appeals"
 
     # Validated by the `validates :status, inclusion` below — NOT a DB constraint, so
@@ -64,7 +65,10 @@ module Moderate
     validates :appellant_email, presence: true, format: { with: URI::MailTo::EMAIL_REGEXP }
     validates :resolution_note, presence: true, if: :closed?
     validate :report_must_be_closed
-    validate :report_must_still_be_appealable
+    # Only when the complaint is FILED: Art. 20 bounds when one may be lodged, not
+    # when it must be decided, so a complaint filed in time is decided (and saved)
+    # whenever the review ends, even after the window has closed.
+    validate :report_must_still_be_appealable, on: :create
 
     def open?
       status == "open"
@@ -148,6 +152,7 @@ module Moderate
     # Enforce the DSA Art. 20 six-month window: refuse appeals filed after the
     # report's `appeal_deadline_at` (stamped to decision-time + APPEAL_WINDOW). If no
     # deadline was stamped yet, we don't block — the window simply hasn't been opened.
+    # Checked on create only (see the declaration above).
     def report_must_still_be_appealable
       return if report.blank? || report.appeal_deadline_at.blank?
       return if Time.current <= report.appeal_deadline_at

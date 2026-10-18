@@ -146,7 +146,7 @@ module Moderate
       def close!(status, note, report)
         context = report ? flag.context.to_h.merge("report_id" => report.id) : flag.context
         flag.update!(status: status, resolution_note: note, reviewed_by: moderator, reviewed_at: Time.current,
-                     context: context)
+          context: context)
         audit_decision(status, note, report)
       end
 

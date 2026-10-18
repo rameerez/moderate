@@ -4,7 +4,7 @@
 # gem's macros are applied to. These are NOT part of the gem; they stand in for
 # whatever a real host app already has. Kept deliberately tiny: just the columns
 # the suite reads (name, email, display_name on User; body + user_id on Comment).
-class CreateDummyHostTables < ActiveRecord::Migration[7.1]
+class CreateDummyHostTables < ActiveRecord::Migration[8.0]
   def change
     create_table :users do |t|
       # `name` is User's single reportable field (User#reportable :name) and the
@@ -13,6 +13,8 @@ class CreateDummyHostTables < ActiveRecord::Migration[7.1]
       t.string :name
       t.string :email
       t.string :display_name
+      # A ban state the host owns, for the tests of `config.banned` under concurrency.
+      t.datetime :suspended_at
 
       t.timestamps
     end

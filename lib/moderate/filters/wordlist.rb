@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "yaml"
-require "set"
 
 module Moderate
   module Filters
@@ -77,6 +76,10 @@ module Moderate
       # at runtime, so compile them ONCE per process and memoize on the class.
       # (config.additional_words / excluded_words are layered in per-call, since the
       # host can in principle reconfigure between calls — and they're cheap.)
+      #
+      # @api private (as are reset!, compile_bundled_patterns, compile_pair,
+      # compact_source and the normalization constants): the public surface of an
+      # adapter is `classify` and `synchronous?`.
       def self.patterns
         @patterns ||= compile_bundled_patterns
       end
@@ -139,7 +142,7 @@ module Moderate
           .sub(/\\b\z/, "")          # drop trailing word boundary
           .gsub(/\\s[*+]?/, "")      # drop \s, \s*, \s+ whitespace matchers
           .gsub(/\[ ([^\]]*)\]/, '[\1]') # drop a literal space inside a char class
-          .delete(" ")               # drop any remaining literal spaces
+          .delete(" ") # drop any remaining literal spaces
       end
 
       def classify(value)

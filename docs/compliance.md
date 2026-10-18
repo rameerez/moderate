@@ -64,7 +64,7 @@ The statement must include, at minimum: the **restriction imposed** (and its sco
 | State the **specific restriction** imposed and its scope (content removed? account suspended?). | Every resolution records its action (`remove_content:`, `ban_user:`) and emits `affected_user_decision` with that action in `event.payload`. | **[gem]** | `test/services/moderate/resolve_report_test.rb` |
 | State the **facts and circumstances** relied on. | The immutable **evidence snapshot** taken at report time travels with the decision; the moderator's mandatory `note:` is the human-readable ground. | **[gem]** | `test/models/moderate/report_test.rb` |
 | State whether **automated means** were used in detection or decision — Art. 17(3)(c). | Reports/flags carry their `source` (`text_filter`, `image_filter`, `external_classifier`, or `manual`). A decision acting on an auto-`Moderate::Flag` is flagged as automated-means in the `affected_user_decision` payload; a human report is not. | **[gem]** | `test/services/moderate/resolve_report_test.rb` |
-| State the **legal or contractual ground**. | For DSA notices, the `legal_reason` (from `Moderate::DSA_LEGAL_REASONS`) is the legal ground; for in-app reports, the community `category` + your `note:` is the contractual (terms-of-service) ground. Both ride in the decision payload. | **[gem + you]** | `test/services/moderate/resolve_report_test.rb` |
+| State the **legal or contractual ground**. | For DSA notices, the `legal_reason` (from `Moderate::Report::DSA_LEGAL_REASONS`) is the legal ground; for in-app reports, the community `category` + your `note:` is the contractual (terms-of-service) ground. Both ride in the decision payload. | **[gem + you]** | `test/services/moderate/resolve_report_test.rb` |
 | Communicate **redress** options (internal complaint, out-of-court, judicial). | The `affected_user_decision` event carries the appeal entry point; you render the redress text in your decision email (the gem ships the data; the copy is yours, because it names your jurisdiction). | **[gem + you]** | `test/services/moderate/resolve_report_test.rb` |
 | Deliver the statement to the **affected recipient** (the content owner), not just the reporter. | Two distinct events fire: `report_decision` → the **reporter**; `affected_user_decision` → the **content owner** (resolved via the reportable's `reported_owner`). You wire both. | **[gem + you]** | `test/services/moderate/resolve_report_test.rb` |
 
@@ -79,7 +79,7 @@ The statement must include, at minimum: the **restriction imposed** (and its sco
 | --- | --- | --- | --- |
 | An **internal** appeal mechanism against moderation decisions. | `Moderate::Appeal` — a complaint filed against a resolved report/notice; the queue is `Moderate::Appeal.pending`. | **[gem]** | `test/models/moderate/appeal_test.rb` |
 | **Free of charge.** | There is no charge anywhere in the appeal path — it's just a record + a queue. (You simply don't bill for it.) | **[gem]** | n/a (no payment code exists in the path) |
-| Open for **at least six months** after the decision. | Each report stores its **appeal window**; the gem's default window is **6 months** and `Moderate::Appeal` refuses to open against a decision whose window has closed. | **[gem]** | `test/models/moderate/appeal_test.rb` |
+| Open for **at least six months**, counted from the day the person **is informed** of the decision (Art. 20(2)). | Each report stores its **appeal window** (`appeal_deadline_at`): six months from the decision (a minimum: the notice says "at least until"), moved to six months from delivery when your notifier confirms the notice actually went out (`Moderate.delivered!`, which stamps `decision_notified_at` / `affected_user_notified_at` once), never earlier. A queued mail doesn't count. `Moderate::Appeal` refuses a complaint filed after it; one filed in time is decided whenever the review ends. | **[gem]** | `test/models/moderate/appeal_window_test.rb`, `test/models/moderate/appeal_test.rb` |
 | Decisions **reversible** — uphold the complaint and reverse the action. | `appeal.uphold!(by:, note:)` overturns the original decision (and runs the reverse enforcement); `appeal.reject!(by:, note:)` confirms it. | **[gem]** | `test/services/moderate/resolve_appeal_test.rb` |
 | **Not solely automated** — a human decides the complaint. | `uphold!`/`reject!` **require** a `by:` moderator and a `note:`; there is no path to auto-decide an appeal. | **[gem]** | `test/services/moderate/resolve_appeal_test.rb` |
 | Inform the complainant of the **appeal decision** and remaining redress (out-of-court / judicial). | Resolving an appeal emits `appeal_decision` to the complainant; you render the out-of-court / judicial redress copy. | **[gem + you]** | `test/services/moderate/resolve_appeal_test.rb` |
@@ -98,7 +98,7 @@ The statement must include, at minimum: the **restriction imposed** (and its sco
 | **Publish** the report (at least annually). | The gem produces the numbers; **you** publish them (a `/transparency` page, a PDF, whatever) — only you know your reporting period and format. | **[you]** | manual: render `Moderate.transparency(from:, to:)` |
 
 > [!TIP]
-> `Moderate.transparency(from: 1.year.ago, to: Time.current)` returns a plain hash you can drop straight into a view, a JSON endpoint, or a rake task that emails it to you each January. The counters are the regulator-aligned ones — same taxonomy as the notice form (`Moderate::DSA_LEGAL_REASONS`) — so the published numbers line up with the intake.
+> `Moderate.transparency(from: 1.year.ago, to: Time.current)` returns a plain hash you can drop straight into a view, a JSON endpoint, or a rake task that emails it to you each January. The counters are the regulator-aligned ones — same taxonomy as the notice form (`Moderate::Report::DSA_LEGAL_REASONS`) — so the published numbers line up with the intake.
 
 ---
 
@@ -162,11 +162,100 @@ If you read nothing else, this is the table that says "we did the thing."
 | **Play UGC** | Report + block, **users and content** | `report!`/`block!` on users; reportable + `blocked_ids_for` on content | ✅ gem |
 | **Play UGC** | Ongoing moderation surface | `Flag.pending` + `:flag`-mode filtering | ✅ gem (you review) |
 | **Play UGC** | Accept terms before UGC | your onboarding gate | ⬜ you (categories align) |
+| **GDPR Art. 5(1)(e)** | Don't keep personal data longer than needed | `Moderate.purge` (opt-in, keeps decisions; see [Retention](#5-retention-what-moderate-keeps-and-for-how-long)) | ✅ gem (you schedule it) |
 
 Legend: **✅ gem** — the mechanism ships and is tested. **⬜ you** — your operational/policy step that the gem makes straightforward.
 
 > [!WARNING]
 > A green checklist is necessary, not sufficient. The stores and the DSA judge you on **behavior over time** — that you actually read the queue, answer notices, and decide appeals — not just that the buttons exist. `moderate` makes every one of those actions a one-liner with a built-in audit trail (`config.audit`), so doing the operational work is cheap. **Do it.** The mechanisms keep you compliant only if you keep using them.
+
+---
+
+## 5. Retention: what `moderate` keeps, and for how long
+
+**Out of the box, nothing is purged.** The gem never deletes or redacts a moderation record on its own: every report, notice, flag, appeal and block stays exactly as it was written until you remove it, or until you schedule the opt-in purge below. That is a safe default for evidence and an unsafe one for privacy, so decide on a retention period and wire the purge before you launch in the EU.
+
+### What the gem stores
+
+| Table | What a row holds | Personal data in it |
+| --- | --- | --- |
+| `moderate_reports` | An in-app report or a DSA notice: category, legal ground, member state, content type; the reporter's message; an **evidence snapshot** (a copy of the reported text, the reported URLs, the reported account identifier, taken at intake so it survives edits); the **decision** (status, basis, actions, moderator note, decision visibility, automated-means disclosure, appeal deadline, notification timestamps); which earlier decision removed its content while it was pending (`covered_by_report_id`). | reporter, reported user, notifier name and email, message, snapshot, URLs |
+| `moderate_flags` | A filter, classifier or manual flag: source, mode, categories, scores; an **excerpt** of the content (up to 500 characters); **context** (the classifier's raw response, a reviewer's note); the review. | owner, excerpt, context |
+| `moderate_appeals` | An Art. 20 complaint: the reason, the appellant's name and email, a snapshot of the decision appealed, the outcome and its note. | appellant, name, email, reason |
+| `moderate_blocks` | One blocker → blocked edge and when it was made. | both people |
+| `moderate_classifications` | Bookkeeping for attachment classification: which record and field, a digest of the attached blob ids, who is classifying it (a claim) and when it was classified, the adapter and whether it flagged. | none beyond the record's id |
+
+**Notices** (receipts, statements of reasons, appeal decisions) are not stored by the gem: it emits events and your mailer sends them. It only stamps when your notifier confirms one went out (`Moderate.delivered!`: `decision_notified_at`, `affected_user_notified_at`). Whatever your mailer or `config.audit` keeps is yours to retain or purge.
+
+Rows go away by themselves only through ordinary associations: deleting a user destroys their blocks and nullifies them as reporter or reported user on reports (`Moderate::Actor`); deleting reported content nullifies the report's pointer to it (the evidence snapshot stays).
+
+### What the law expects, in plain words
+
+Not legal advice, and your national law and your own policies may add to it:
+
+- **Keep the decision and its evidence while it can be challenged.** A decision must stay appealable for at least six months (DSA Art. 20), an appeal filed in time is decided whenever the review ends, and afterwards the person may still take it to an out-of-court dispute settlement body (Art. 21) or a court.
+- **Keep the decision itself for longer.** It is the statement of reasons (Art. 17); it is what a repeat-misuse policy (Art. 23: suspending people who frequently post manifestly illegal content) looks back on; and the annual transparency report (Art. 15, 24) counts notices, actions, automated means, complaints and handling times for a whole reporting period, published after it ends.
+- **Don't keep the personal data longer than that purpose needs** (GDPR Art. 5(1)(c) and (e): data minimisation, storage limitation). The copy of the reported content, the notifier's contact details and the complaint text have done their job once the decision can no longer be challenged. A person may ask for erasure (GDPR Art. 17); the exceptions for legal obligations and legal claims (Art. 17(3)(b) and (e)) are what let you keep a decision that is still contestable.
+
+So: content copies and contact details get a short life, decisions and counts a long one. That split is what the purge implements.
+
+### `Moderate.purge`: opt in
+
+```ruby
+Moderate.purge(older_than: 1.year)
+# => { reports: 12, flags: 40, appeals: 1, classifications: 300, claims_kept: 0,
+#      held: { reports: 1, flags: 2, appeals: 0 } }
+Moderate.purge(older_than: 18.months, dry_run: true) # the same counts, changes nothing
+```
+
+**`1.year` is a default, not a rule.** GDPR storage limitation asks for a period set by *your* purposes (how long a decision can be challenged where you operate, your repeat-misuse policy, your national rules), so set `older_than` to the period your privacy policy states; the gem only refuses one shorter than the six-month appeal window.
+
+```bash
+bin/rails moderate:purge                              # OLDER_THAN_DAYS=365 by default
+bin/rails moderate:purge OLDER_THAN_DAYS=540 DRY_RUN=1
+```
+
+Schedule it like any recurring job (cron, `config/recurring.yml` for Solid Queue, `sidekiq-cron`): `Moderate.purge` is safe to run every night. The rake task prints what it redacted and what it kept for a legal hold.
+
+**Legal holds.** When a decision is under external redress (an out-of-court dispute settlement body, DSA Art. 21; a court case; an authority's request), hold that report and the nightly purge leaves it, its appeals and the flags on its content alone until the date you give:
+
+```ruby
+Moderate.hold(report, until: 1.year.from_now, by: admin, reason: "ODS case 2026-114")
+report.held?                                # => true
+Moderate.release_hold(report, by: admin)    # the dispute ended; the next purge treats it normally
+```
+
+Holding again moves the date; a hold that expires lifts itself. Both are audited (`:legal_hold_placed`, `:legal_hold_released`), and `dry_run` counts held rows under `:held` so you can see what a hold is keeping.
+
+| It redacts | Only when | It keeps |
+| --- | --- | --- |
+| **Reports and notices**: the message (→ `"[redacted]"`), the evidence snapshot, the reported URLs and account identifier, the notifier's name and email, the reporter. | The report is closed, was decided more than `older_than` ago, its appeal window has closed, no appeal on it is open, and it isn't held. | Every row; category, legal ground, member state, content type, status, timestamps; the whole decision (basis, actions, note, visibility, automated-means disclosure); the reported user. |
+| **Flags**: the excerpt (→ `"[redacted]"`) and the context. | The flag was decided more than `older_than` ago, and no held report is about its content and field. | Every row; source, mode, categories, scores, status, the owner, the review. |
+| **Appeals**: the reason (→ `"[redacted]"`) and the appellant's name and email. | The appeal was decided more than `older_than` ago, and its report isn't held. | Every row; status, outcome note, timestamps, the appellant's account. |
+| **Classification rows** (`moderate_classifications`): deleted, not redacted (nothing in them is evidence). | Last touched more than `older_than` ago, and not under a live claim (a worker classifying those files right now; counted under `:claims_kept`). | — |
+
+Guarantees, each with a test in `test/models/moderate/retention_test.rb`:
+
+- **Never** a pending report, flag or appeal, a report still inside its appeal window, a report with an open appeal, or anything a legal hold keeps, whatever their age. `older_than` below the six-month appeal window raises.
+- A redacted row is stamped `redacted_at`, and the purge selects on that column, never on the content: a message that literally reads `"[redacted]"` is purged like any other.
+- `Moderate.transparency` returns the same numbers before and after a purge, so a published report stays reproducible.
+- **Blocks are never touched**: they are live safety state, not a record of the past.
+- Idempotent (a second run finds nothing to do), `dry_run: true` only counts, and a run that changed something is audited as `:retention_purged` with the counts and the cutoff.
+- One `UPDATE` per batch of 500, with no callbacks or validations: a redacted DSA notice no longer has the notifier details its validations require, and a final record should not be re-saved.
+
+What it does **not** do, on purpose:
+
+- **Delete rows.** The default `1.year` keeps every decision forever, as pseudonymous rows that still name the reported account. If your policy says decisions go after N years, delete them yourself once the transparency report that counts them is published: `Moderate::Report.where.not(status: "open").where(resolved_at: ...N.years.ago).destroy_all` (appeals go with their report).
+- **Answer an erasure request.** Whether a given person's records must go now, or can be kept for a legal claim, is a decision for you and your counsel; the records are plain Active Record (`Moderate::Report.where(reporter: user)`, `Moderate::Appeal.where(appellant_email: email)`, `Moderate::Flag.where(owner: user)`).
+- **Know about disputes by itself.** The gem can't see an out-of-court or court case; when one starts, `Moderate.hold` the report.
+
+| Requirement | How `moderate` satisfies it | Who | Proof |
+| --- | --- | --- | --- |
+| Keep decisions contestable for ≥ 6 months (Art. 20) and while an appeal is open. | `Moderate.purge` never touches a record inside its appeal window or with an open appeal, and refuses an `older_than` below it. | **[gem]** | `test/models/moderate/retention_test.rb` |
+| Keep what the annual transparency report counts (Art. 15, 24). | Redaction keeps every row and every counted column; `Moderate.transparency` is unchanged by a purge. | **[gem]** | `test/models/moderate/retention_test.rb` |
+| Storage limitation for personal data (GDPR Art. 5(1)(e)). | `Moderate.purge` / `moderate:purge` redacts content copies and contact details from final records. | **[gem + you]** schedule it, choose `older_than` | `test/models/moderate/retention_test.rb` |
+| Keep evidence during external redress (Art. 21, courts, authorities). | `Moderate.hold(report, until:)` keeps the report, its appeals and the flags on its content out of the purge. | **[gem + you]** place the hold | `test/models/moderate/retention_test.rb` |
+| A written retention period, erasure requests. | Out of scope for a gem: your privacy policy and your counsel decide (`older_than` is yours to set). | **[you]** | manual |
 
 ---
 

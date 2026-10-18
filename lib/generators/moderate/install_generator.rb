@@ -5,6 +5,7 @@ require "rails/generators/active_record"
 
 module Moderate
   module Generators
+    # `rails generate moderate:install`: the adaptive migration and the initializer.
     class InstallGenerator < Rails::Generators::Base
       include ActiveRecord::Generators::Migration
 
@@ -27,7 +28,7 @@ module Moderate
       # migration is ever found twice. One already in the app, by name, is skipped.
       def copy_gem_migrations
         dir = File.expand_path(db_migrate_path, destination_root)
-        Dir[Moderate::Engine.root.join("db/migrate/[0-9]*_*.rb").to_s].sort.each do |source|
+        Dir[Moderate::Engine.root.join("db/migrate/[0-9]*_*.rb").to_s].each do |source|
           version, name = File.basename(source, ".rb").split("_", 2)
           next if Dir.glob(File.join(dir, "[0-9]*_#{name}{,.*}.rb")).any?
 

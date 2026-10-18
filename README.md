@@ -66,6 +66,8 @@ That's the whole idea: **the messy, legally-loaded plumbing every social/UGC app
 
 ## Quickstart
 
+`moderate` needs Ruby 3.3+ and Rails 8.0.5.1+ (8.0 and 8.1 are tested), on SQLite, PostgreSQL or MySQL.
+
 Add the gem:
 
 ```ruby
@@ -283,6 +285,8 @@ end
 
 Why this matters: `:flag` never lives in a validator (validators must be side-effect-free, and a flag created inside a rolled-back transaction would silently vanish) — `moderate` handles that correctly for you.
 
+**Active Storage attachments** (`has_one_attached` / `has_many_attached`) take the same one line, `moderates :avatar, with: :image, mode: :flag`, and no other wiring. The file is classified once it is on the storage service, never before, whichever of `moderates` and `has_one_attached` you declare first, and a failed upload is never silent. Just before Active Storage uploads, `moderate` queues a `Moderate::ClassifyJob` for 5 seconds later; once the upload returns, it classifies right away (inline for a synchronous adapter, by an immediate job for an async one) if the file is there. Whichever comes first claims the files (a row in the gem's `moderate_classifications` table, written under the content record's row lock, held only for the claim), calls your adapter outside any lock, and marks the row classified; the other sees the claim or the mark and stops. So each set of files is classified once per record (a changed set, or the same file on another record, is classified again), and a slow provider never blocks writes to the content's row. A claim expires after `config.classification_claim_ttl` (10 minutes), so a worker that died mid-call doesn't leave the files unclassified. A file that isn't there (a direct upload still in flight, an upload that raised) is left to the job, which looks again 5, 10, 15 and 20 seconds later, then gives up with a `classification_skipped` audit event instead of handing your adapter a missing file. Under `mode: :block`, an attachment whose direct upload hasn't finished fails validation ("Photo hasn't finished uploading yet", en/es, key `errors.messages.upload_not_finished`) rather than being checked without its file: nothing enters unverified.
+
 Check content directly anywhere:
 
 ```ruby
@@ -352,7 +356,7 @@ appeal.reject!(by: admin, note: "...")
 Moderate::Flag.flag_for_review!(message, field: :body, by: admin)   # "Flag for review" from any browse screen
 ```
 
-Every action is atomic, requires a moderator + a note, runs your enforcement (content removal via the reportable's own `remove_reported_field!`, bans via your `ban_handler`), and writes to your audit log. A ban needs a `ban_handler`: without one, `ban_user: true` raises instead of telling someone their account was suspended when nothing suspended it.
+Every action is atomic, requires a moderator + a note, runs your enforcement (content removal via the reportable's own `remove_reported_field!`, bans via your `ban_handler`), and writes to your audit log. A ban needs a `ban_handler`: without one, `ban_user: true` raises instead of telling someone their account was suspended when nothing suspended it. And a report's `resolve!` restricts something (`remove_content:`, `ban_user:`, or both): one with neither is refused, because its statement of reasons would claim a restriction nobody imposed; a decision that restricts nothing is a `dismiss!`.
 
 A flag has no reporter, statement of reasons or appeal window, but removing content or suspending an account is a restriction that needs all three. So `remove_content:` / `ban_user:` on a flag escalate it: the open report on the same content and field (if a person reported it too) or a system one is resolved under the flag's lock, and `flag.report` is that report afterwards. Without them, resolving a flag only triages it.
 
@@ -414,6 +418,7 @@ The full event vocabulary: `report_received`, `notice_received`, `report_decisio
 - **DSA Art. 17 (statement of reasons):** decision notices state the action, the legal/contractual ground, whether automated means were used, and the redress path.
 - **DSA Art. 20 (appeals):** a free, electronic internal complaint mechanism, open ≥ 6 months, decided by a human.
 - **DSA Art. 24 (transparency):** counters you can publish (notices received, actions taken, median handling time, appeal outcomes). The public transparency page is **opt-in** (`config.transparency_report_enabled = true`, off by default) — a live portal isn't itself required (the duty is to *publish* a report, and micro/small enterprises are exempt), so you turn it on only when you want it.
+- **Retention (GDPR storage limitation):** nothing is purged unless you ask. `Moderate.purge(older_than: 1.year)` (or `bin/rails moderate:purge`, opt-in, safe to run nightly) redacts the content copies and contact details from reports, flags and appeals whose decision is final, and keeps every decision and every transparency count. `Moderate.hold(report, until:)` keeps a report under external dispute out of it. What is stored, for how long, and why: [`docs/compliance.md#5-retention-what-moderate-keeps-and-for-how-long`](docs/compliance.md#5-retention-what-moderate-keeps-and-for-how-long).
 - **Apple Guideline 1.2 & Google Play UGC:** filter-before-post, in-app report **and** block, ongoing moderation, published contact — `moderate` covers all four. See the mapped checklist in [`docs/compliance.md`](docs/compliance.md).
 
 > Two taxonomies, on purpose: an in-app **community report** category set (harassment, spam, …) and a separate, regulator-aligned **DSA legal-reason** taxonomy for public notices. `moderate` ships both. The community set is host-customizable via `config.report_categories`; the DSA legal-reason taxonomy is regulator-defined and fixed.
@@ -429,7 +434,7 @@ The full event vocabulary: `report_received`, `notice_received`, `report_decisio
 
 > The value-list taxonomies (community `category`, `status`, `content_type`, the DSA `legal_reason`/`legal_country_code`, `resolution_basis`, plus `Flag` source/mode/status and `Appeal` source/status) are validated **in the models** — frozen constants + ActiveModel `inclusion` validations — **not** by database `CHECK` constraints. That means **adding or customizing a label never requires a migration**: the community category list is host-overridable via `config.report_categories` (defaults to `Moderate::Report::DEFAULT_CATEGORIES`), and the gem can grow its own taxonomies in a point release without touching your schema. The only value guard kept at the DB level is a cheap message-length backstop; everything else the migration adds is structural (NOT NULLs, FKs, the unique block edge, and the self-block CHECK).
 
-The migration is **adaptive**: it matches your app's primary-key type (UUID or bigint) and JSON column type (`jsonb` / `json`) automatically, so it drops cleanly into any Rails 7.1+ schema.
+The migration is **adaptive**: it matches your app's primary-key type (UUID or bigint) and JSON column type (`jsonb` / `json`) automatically, so it drops cleanly into any Rails 8.0+ schema.
 
 ## Configuration reference
 
@@ -450,7 +455,81 @@ end
 
 Reportable classes are auto-discovered from the `has_reportable_content` macro (or `include Moderate::Reportable`) — no manual registry.
 
-## Upgrading between 1.0 betas
+## What is public
+
+From 1.0 on, everything listed here keeps its name, its arguments and its meaning until 2.0. Anything not listed (and anything tagged `@api private` in the source) may change in any release. `test/public_api_test.rb` reads this section and fails if a name listed here doesn't exist, if a public `Moderate.*` method or configuration key isn't listed, or if the event lists drift from what the gem emits.
+
+#### Declarations (`Moderate::Macros`, on every Active Record model)
+
+`#has_reporting_and_blocking` · `#has_reportable_content` (`*fields, labels:`) · `#moderates` (`*fields, mode:, with:`). The include forms are equivalent: `Moderate::Actor`; `Moderate::Reportable` with `Moderate::Reportable::ClassMethods#reportable_fields`; `Moderate::ContentFilterable` with `Moderate::ContentFilterable::ClassMethods#moderates_fields`.
+
+#### `Moderate::Actor` (your user model)
+
+`#report!` (`reportable, category:, details: nil, block: false, field:, …`) · `#block!` · `#unblock!` · `#blocks?` · `#blocked_by?` · `#blocked_with?`
+
+#### `Moderate::Reportable` (your content models)
+
+What you define (each has a default): `#reported_owner` (required in practice) · `#moderation_label` · `#moderation_snapshot` · `#moderation_content_type` · `#report_visible_to?` · `#remove_reported_field!` · `#removable_reported_field?` · `#moderation_subject_url` · `#moderation_return_path` · `#moderation_admin_path`.
+The removal seam's contract: `#remove_reported_field!(field)` removes that field's content as it is when called (clear it, purge the attachment, soft-delete the record so `deleted?` is true), persists that, and returns whether anything was removed; it must not rewrite the field to other content first. The gem verifies it: after a true return the field is read again under the same lock, and unless it reads as gone (through `#moderation_snapshot` and the field itself, or `deleted?`) the decision is refused as "nothing was removed".
+What you get: `#reports` · `#open_reports` · `#reported?` · `#flagged?` · `#moderation_flags` · `#pending_moderation_flags` · `#to_moderation_sgid` · `#reportable_field_label` · `#reportable_field_allowed?` · `Moderate::Reportable::ClassMethods#reportable_field_label`.
+
+#### `Moderate::ContentFilterable` (seams you may override)
+
+`#moderation_field_value` · `#moderation_field_changed_for_commit?` · `#moderation_field_committed`
+
+#### `Moderate` (the module)
+
+`.configure` · `.config` · `.configuration` · `.reset!` · `.user_class` · `.reportable_classes` · `.classify` · `.filter_policy_for` · `.register_adapter` · `.blocked_ids_for` · `.responsible_user` · `.reportable_field_label` · `.taxonomy_label` · `.transparency` · `.delivered!` (`report, :decision | :affected_user, at:`) · `.purge` · `.hold` (`report, until:, by:, reason:`) · `.release_hold` · `Moderate::TAXONOMY_LABEL_SCOPES` · `Moderate::VERSION`
+
+#### `Moderate::Report`
+
+Queries: `.pending` · `.open` · `.actioned` · `.dismissed` · `.recent_first` · `.report_categories` · `.category_options` · `.locate_signed_reportable`.
+Decisions: `#resolve!` (`by:, note:, remove_content: false, ban_user: false, resolution_basis: "terms"`) · `#dismiss!` (`by:, note:`).
+Readers: `#pending?` · `#open?` · `#closed?` · `#actioned?` · `#dismissed?` · `#dsa?` · `#community?` · `#anonymous_notice?` · `#automated_processing_used?` · `#reported_field_label` · `#reportable_label` · `#notifier_label` · `#reported_content_text` · `#subject_url_list` · `#safe_subject_url` · `#safe_subject_urls` · `#safe_subject_url_for` · `#signed_appeal_gid` · `#held?` · `#covered_by` · `#skip_received_notice` · `#appeals` · `#flags`.
+Value lists: `::DEFAULT_CATEGORIES` · `::DSA_LEGAL_REASONS` · `::EU_COUNTRY_CODES` · `::CONTENT_TYPES` · `::RESOLUTION_BASES` · `::STATUSES` · `::INTAKE_KINDS` · `::APPEAL_WINDOW` · `::MESSAGE_MAX_LENGTH`.
+
+#### `Moderate::Flag`
+
+`.pending` · `.actioned` · `.dismissed` · `.recent_first` · `.flag_for_review!` (`record, field:, by:, note: nil`) · `.flag!` (`flaggable:, field:, owner:, source:, mode:, excerpt:, categories:, scores:, context:`, for a host's own classifier pipeline) · `.sources` · `#action!` (`note:, by: nil, remove_content:, ban_user:, resolution_basis:`) · `#resolve!` (its alias) · `#dismiss!` (`note:, by: nil`) · `#pending?` · `#closed?` · `#report` · `#field_label` · `#flaggable_label` · `::STATUSES` · `::SOURCES` · `::MODES`
+
+#### `Moderate::Appeal`
+
+`.pending` · `.open` · `.upheld` · `.rejected` · `.recent_first` · `#uphold!` (`by:, note:`) · `#reject!` (`by:, note:`) · `#pending?` · `#open?` · `#closed?` · `#upheld?` · `#rejected?` · `::STATUSES` · `::SOURCES`
+
+#### `Moderate::Block`
+
+`.block!` (`blocker:, blocked:`) · `.unblock!` (`blocker:, blocked:`) · `.between` · `.recent_first`. Read the edge set with `Moderate.blocked_ids_for(user)`: always a relation of user ids, `.ids` for an Array.
+
+#### Services (the long form of the decision methods, same keywords)
+
+`Moderate::Services::ResolveReport` (`.new(report, by:)`, `#resolve!`, `#dismiss!`) · `Moderate::Services::ResolveFlag` (`.new(flag, by:)`, `#action!`, `#dismiss!`) · `Moderate::Services::ResolveAppeal` (`.new(appeal, by:)`, `#uphold!`, `#reject!`) · `Moderate::Services::IntakeReport` · `Moderate::Services::IntakeNotice` · `Moderate::Services::IntakeAppeal` (each `#save`).
+
+#### Jobs, adapters and value objects
+
+`Moderate::ClassifyJob` (`perform_later(record, field)`; `::UPLOAD_WAIT`, `::UPLOAD_ATTEMPTS`) · the adapter contract: any object with `classify(value)` returning a `Moderate::Result` (or a Hash of its fields), optionally `synchronous?`; `Moderate::Filters::Base` to inherit from · `Moderate::Filters::Wordlist` (`:wordlist`) · `Moderate::Result` (`.allowed`, `#allowed?`, `#flagged?`, `#categories`, `#scores`, `#labels`, `#source`, `#raw`) · `Moderate::Label` (`#slug`, `#canonical?`, `::CATEGORIES`) · `Moderate::Error` · `Moderate::ConfigurationError` · the 0.x validator `validates :field, moderate: true`.
+
+#### Views and controllers
+
+Helpers (`Moderate::EngineHelper`): `#moderate_report_link` · `#report_link` · `#moderate_report_target_path`, and the seam `#moderate_current_viewer`.
+Admin decisions (`Moderate::Moderation`, a controller concern): `#resolve` · `#dismiss` · `#uphold` · `#reject`, and the seams `#moderation_record` · `#moderation_actor` · `#moderation_note` · `#moderation_decision_params` · `#moderation_redirect_path`.
+The engine (`mount Moderate::Engine => "/trust"`): `new_notice_path` / `notices_path`, `new_appeal_path` / `appeals_path` (`token:`, `source:`), `transparency_path`; `record.after_commit_notice` (`Moderate::DeferredNotices#after_commit_notice`) on the gem's records. Generators: `moderate:install`, `moderate:views`. Rake: `moderate:purge`.
+
+#### Configuration (`Moderate.configure do |config| … end`)
+
+`config.user_class` · `config.default_filter_mode` · `config.filter_adapter` · `config.additional_words` · `config.excluded_words` · `config.report_categories` · `config.register_adapter` · `config.filter` · `config.audit` · `config.notify` · `config.on_block` · `config.ban_handler` · `config.banned` · `config.locale` · `config.classification_claim_ttl` · `config.migration_copies_check` · `config.parent_controller` · `config.notice_form_enabled` · `config.notice_rate_limit` · `config.notice_turnstile_site_key` · `config.notice_turnstile_secret_key` · `config.notice_captcha_verifier` · `config.notice_guard` · `config.notice_human_verification_skip_if` · `config.appeal_form_enabled` · `config.appeal_rate_limit` · `config.appeal_guard` · `config.appeal_human_verification_skip_if` · `config.appeal_return_path` · `config.transparency_report_enabled`.
+Read-only: `config.adapters` · `config.filters` · `config.adapter_for` · `config.adapter_registered?` · `config.adapter_async?` · `config.ban_handler_configured?` · `config.validate!`.
+
+#### Events and the notifier contract
+
+Notify events (`Moderate::Event::NOTIFY_NAMES`): `:report_received` · `:notice_received` · `:report_decision` · `:affected_user_decision` · `:appeal_received` · `:appeal_decision` · `:user_blocked` · `:user_unblocked` · `:user_banned` · `:content_flagged` · `:content_removed`
+
+Audit events (`Moderate::Event::AUDIT_NAMES`): `:report_received` · `:appeal_received` · `:report_decision` · `:flag_decision` · `:appeal_decision` · `:flag_filed` · `:user_blocked` · `:user_unblocked` · `:user_banned` · `:content_removed` · `:notify_failed` · `:classification_skipped` · `:retention_purged` · `:legal_hold_placed` · `:legal_hold_released`
+
+Every hook receives one `Moderate::Event`: `#name` · `#subject` · `#actor` · `#recipients` · `#payload` (always with `:summary`) · `#occurred_at` · `#id` · `#summary` · `#to_h`. The contract for `config.notify`: it is called once per event, after the transaction that caused it commits (never for a rolled-back change); a truthy return means "handed off" (for a DSA notice the gem then treats the Art. 16(4) receipt as sent); a decision notice counts as delivered only when your notifier confirms it with `Moderate.delivered!(report, :decision | :affected_user)` from the mail's actual delivery, which stamps `decision_notified_at` / `affected_user_notified_at` once and starts the appeal window from then (DSA Art. 20(2)); an exception is swallowed, audited as `:notify_failed`, and never rolls back the decision. `config.audit` follows the same rules and its return value is ignored. Payload keys may be added in a minor release, never removed or renamed.
+
+## Upgrading from a 1.0 beta
+
+**1.0.0 adds a migration** (retention columns and `moderate_classifications`): run `bin/rails moderate:install:migrations` if your app holds copies of the gem's migrations (`*.moderate.rb`, as every app installed from 1.0.0.beta4 on does), then `bin/rails db:migrate`. An app without copies gets it through the engine, like beta4's. **A missed copy is no longer silent:** at boot, an app that holds copies but not one of this version's migrations raises `Moderate::ConfigurationError` naming it and the command that copies it (under a rake task, such as that command itself, it logs instead); `config.migration_copies_check = :log` or `:off` changes that.
 
 **1.0.0.beta4 adds a migration.** After upgrading, run `bin/rails db:migrate`: the engine adds the gem's own `db/migrate` to your app's migration paths, so it runs with yours. (If your app holds copies of the gem's migrations, `*.moderate.rb` files from `bin/rails moderate:install:migrations`, the engine adds nothing and the copies run instead: run `bin/rails moderate:install:migrations` to copy the new one, then migrate.) A fresh install from 1.0.0.beta4 on gets the same migration from `rails generate moderate:install`, copied right after the tables, so it holds copies: after each later upgrade, run `bin/rails moderate:install:migrations`, then migrate. It gives `moderate_flags` a `pending_key` with a unique index, so at most one flag is pending per content and field. If flags filed before the upgrade would break that index, the migration stops and lists them; close all but one of each and run it again. On MySQL the key column is `utf8mb4_bin`, so keys compare by case; that collation still ignores trailing spaces (PAD SPACE), which is why `moderate` strips a flag's `field`, and why a legacy flag whose field ends in a space can be one of those the migration lists. See [`CHANGELOG.md`](CHANGELOG.md) for what each beta changes.
 
@@ -459,7 +538,7 @@ Reportable classes are auto-discovered from the `has_reportable_content` macro (
 `moderate` 1.0 is a ground-up rewrite: the old gem was a profanity validator; 1.0 is a full Trust & Safety system. The one piece of the old API that remains is the validator, now backed by the `:wordlist` adapter:
 
 ```ruby
-validates :body, moderate: true     # still works — equivalent to `moderates :body, mode: :block`
+validates :body, moderate: true     # still works — the same check as `moderates :body, with: :wordlist, mode: :block`
 ```
 
 Everything else is new. There's no automated data migration (0.x stored nothing). See [`CHANGELOG.md`](CHANGELOG.md).
@@ -470,6 +549,7 @@ We use Minitest. Run the suite (a dummy Rails app under `test/dummy`, against SQ
 
 ```bash
 bundle exec rake test
+bundle exec rubocop   # CI expects zero offenses
 ```
 
 ## Development

@@ -137,6 +137,16 @@ end
 class ModerationMailer < ApplicationMailer
   # `event` and `recipient` arrive via `.with(...)` and are available as `params[:event]` / `params[:recipient]`.
 
+  # DSA Art. 20(2): the appeal window runs from when the person was informed. Confirm a
+  # decision notice when it actually leaves, not when deliver_later queued it.
+  after_deliver do
+    event = params[:event]
+    case event&.name
+    when :affected_user_decision then Moderate.delivered!(event.subject, :affected_user)
+    when :report_decision        then Moderate.delivered!(event.subject, :decision)
+    end
+  end
+
   def report_received
     event = params[:event]
     goodmail_mail(to: params[:recipient].email, from: "trust@myapp.com",
@@ -161,7 +171,8 @@ class ModerationMailer < ApplicationMailer
       info_row "Automated means", event.payload[:automated] ? "Yes" : "No"
       space
       text "If you believe this was a mistake, you can appeal — it's free and reviewed by a person."
-      button "Appeal this decision", event.payload[:appeal_url] # moderate mints a signed link for you
+      button "Appeal this decision",                    # the engine's appeal form, behind a signed link
+             moderate.new_appeal_url(token: event.subject.signed_appeal_gid, source: "affected_user")
       sign
     end
   end
@@ -184,7 +195,8 @@ Why this shape:
 - **`.with(event:, recipient:)`** is the standard Action Mailer params path, so the same arguments survive `deliver_later` serialization (the event's records are GlobalID-serializable AR objects).
 - **`public_send(event.name)`** lets the *event name* select the mailer action — `report_received` → `#report_received` — so adding a new email is "add a method," not "add a branch."
 - **`goodmail_mail`** is goodmail's mailer helper: it renders the DSL block, wires `List-Unsubscribe`, and hands a normal multipart message to Action Mailer. Use its DSL (`h1`, `text`, `info_row`, `button`, `sign`, …) instead of ERB templates. `info_row`/`price_row` are perfect for the reference/date/action rows a decision email needs.
-- **The appeal link** in a decision email is the signed link `moderate` mints for you (`config.signed_gid_purposes` includes `:appeal`); read it from `event.payload[:appeal_url]` rather than building your own route.
+- **The appeal link** in a decision email points at the engine's appeal form with the report's signed token: `moderate.new_appeal_url(token: event.subject.signed_appeal_gid, source: "affected_user")` (`source: "notifier"` in the reporter's `report_decision` email). The token names only that report and can't be replayed to find anything else; `event.payload[:appeal_deadline_at]` is a minimum: say "you can appeal at least until …".
+- **Confirm delivery with `Moderate.delivered!`** (the `after_deliver` above). A decision notice your hook queued is not one the person has received: the gem stamps `decision_notified_at` / `affected_user_notified_at` only on that confirmation, once, and moves the appeal deadline to six months after it (never earlier). Without it, the deadline stays decision + six months. A notifier that isn't Action Mailer calls it wherever it learns the message went out (a provider webhook, a push receipt).
 
 > [!TIP]
 > Per-product or per-tenant branding? `goodmail_mail` accepts `config: { company_name:, brand_color:, logo_url: }` for a scoped, thread-local override — handy if your app is white-labeled. See goodmail's "Per-message branding."
@@ -352,7 +364,7 @@ Moderate.configure do |config|
 end
 ```
 
-`audit` fires for **every** event (including the silent ones like `user_blocked` that you usually don't notify on), it's append-only by intent, and it's where DSA **Art. 24 transparency counters** ultimately draw from (notices received, actions taken, appeal outcomes). Wire it once next to `notify` and you have both halves: humans get told, history gets kept.
+`audit` fires for every intake, decision, block, ban and removal (including the silent ones like `user_blocked` that you usually don't notify on), plus the gem's own housekeeping: `report_received`, `appeal_received`, `report_decision`, `flag_decision`, `appeal_decision`, `flag_filed`, `user_blocked`, `user_unblocked`, `user_banned`, `content_removed`, `notify_failed`, `classification_skipped`, `retention_purged`, `legal_hold_placed`, `legal_hold_released` (`Moderate::Event::AUDIT_NAMES`). It's append-only by intent, and it's the trail behind the DSA **Art. 24 transparency counters** (notices received, actions taken, appeal outcomes), which `Moderate.transparency` computes from the moderation tables themselves. Wire it once next to `notify` and you have both halves: humans get told, history gets kept.
 
 > [!NOTE]
 > Same envelope (`name` / `subject` / `actor` / `recipients` / `payload` / `to_h`), two destinations. Keep both hooks fast and side-effect-light; push real work (emails, HTTP, heavy writes) to background jobs.

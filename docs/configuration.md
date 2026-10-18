@@ -276,6 +276,14 @@ config.ban_handler = ->(user:, by:, reason:) { user.suspend!(reason: reason) }
 
 Leave it unset and everything works except a ban: `ban_user: true` (on a report or a flag) and `Moderate.apply_ban` raise `Moderate::ConfigurationError` before anything changes. A ban nothing applies would still audit `user_banned` and send the person a statement of reasons saying their account was suspended, which is a false statement, so the gem refuses it instead. Assigning `nil` puts the default back.
 
+### `banned` — is this person banned right now?
+
+```ruby
+config.banned = ->(user) { user.suspended? }   # optional; set it if your app can unban
+```
+
+One ban per person per episode: a second ban decision on someone a decision in the same episode already banned is recorded as covered by that one (`resolution_actions["ban_already_applied_by"]`), and the `ban_handler` isn't called twice. That only holds while the account is still banned. If your app can lift a ban (an admin unbans, a suspension expires), set `banned`: when it returns false, the earlier ban no longer covers the new decision and the `ban_handler` runs again, so the "account suspended" statement of reasons is true. Unset, the earlier ban counts, whatever happened since.
+
 ---
 
 ## Misc
@@ -287,6 +295,24 @@ config.locale = :en   # default: your app's I18n.default_locale
 ```
 
 The locale for copy `moderate` generates on its own — filter validation messages, the DSA statement-of-reasons taxonomy labels, the notice-form strings. Leave it unset to follow `I18n.default_locale`.
+
+### `migration_copies_check`
+
+```ruby
+config.migration_copies_check = :raise   # default; or :log, or :off
+```
+
+An app that holds copies of the gem's migrations (`*.moderate.rb`, from `rails generate moderate:install` or `bin/rails moderate:install:migrations`) runs only those copies, so a release whose new migration you didn't copy would never run it. At boot `moderate` compares your copies with its migrations by name: if one is missing it raises `Moderate::ConfigurationError` naming it and the command that copies it (`bin/rails moderate:install:migrations`, then `bin/rails db:migrate`). Under a rake task it logs instead, so that command can run. `:log` always logs (to `Rails.logger` and stderr); `:off` skips the check. An app without copies is never checked: it gets the gem's migrations through the engine.
+
+### `classification_claim_ttl`
+
+```ruby
+config.classification_claim_ttl = 10.minutes   # default (600 seconds)
+```
+
+How long one worker's claim on a set of attached files lasts. An attachment is classified by whoever claims it first (the inline path, the immediate `ClassifyJob` or the after-upload guard); the others see the live claim and stop, and the adapter runs outside any lock. Make it longer than your slowest adapter call: a claim that expires mid-call lets another worker classify the same files, and the first result is then discarded. When a worker dies mid-call, the files wait this long before a job takes them over. It must be more than 0 and at most a day; anything else raises at boot.
+
+An adapter that **raises** leaves its claim in place until it expires, and the failure doesn't schedule a retry by itself. A later attempt takes the files over: the after-upload guard job, a job's single recheck at the claim's expiry, the next save of that field, or your job backend retrying the same job (it keeps its job id, so the claim is still its own). `Moderate.purge` never deletes a row whose claim is live, whatever its age (`:claims_kept` in its counts).
 
 ---
 

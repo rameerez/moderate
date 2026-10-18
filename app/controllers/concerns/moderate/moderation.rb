@@ -41,7 +41,7 @@ module Moderate
       record = moderation_record
       record.resolve!(**moderation_decision_params)
       redirect_after_moderation(record, notice: moderation_t(moderation_outcome_key(record, :resolved)))
-    rescue => error
+    rescue StandardError => error
       redirect_after_moderation(record, alert: moderation_error(:resolve, error))
     end
 
@@ -50,7 +50,7 @@ module Moderate
       record = moderation_record
       record.dismiss!(by: moderation_actor, note: moderation_note)
       redirect_after_moderation(record, notice: moderation_t(moderation_outcome_key(record, :dismissed)))
-    rescue => error
+    rescue StandardError => error
       redirect_after_moderation(record, alert: moderation_error(:dismiss, error))
     end
 
@@ -63,7 +63,7 @@ module Moderate
       record = moderation_record
       record.uphold!(by: moderation_actor, note: moderation_note)
       redirect_after_moderation(record, notice: moderation_t(:upheld))
-    rescue => error
+    rescue StandardError => error
       redirect_after_moderation(record, alert: moderation_error(:uphold, error))
     end
 
@@ -71,7 +71,7 @@ module Moderate
       record = moderation_record
       record.reject!(by: moderation_actor, note: moderation_note)
       redirect_after_moderation(record, notice: moderation_t(:rejected))
-    rescue => error
+    rescue StandardError => error
       redirect_after_moderation(record, alert: moderation_error(:reject, error))
     end
 

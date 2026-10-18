@@ -38,7 +38,10 @@ module Moderate
 
     test "flag! notifies :content_flagged with the flag as the event subject" do
       notifications = []
-      Moderate.config.notify = ->(event) { notifications << event; true }
+      Moderate.config.notify = lambda { |event|
+        notifications << event
+        true
+      }
 
       flag = Moderate::Flag.flag!(
         flaggable: @user,
@@ -342,7 +345,7 @@ module Moderate
     def build_pending_flag
       Moderate::Flag.flag!(
         flaggable: @user, field: "name", owner: @user, source: "image_filter",
-        mode: "flag", excerpt: "", categories: [ "quality" ], scores: {}, context: {}
+        mode: "flag", excerpt: "", categories: ["quality"], scores: {}, context: {}
       )
     end
 

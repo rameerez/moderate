@@ -296,7 +296,7 @@ class NoticeFormTest < ActionDispatch::IntegrationTest
 
   test "a configured human verification skip bypasses Turnstile and hides the widget" do
     NoticeFormTest.stub_turnstile!(pass: false)
-    Moderate.config.notice_human_verification_skip_if = ->(controller) {
+    Moderate.config.notice_human_verification_skip_if = lambda { |controller|
       controller.request.user_agent.to_s.include?("Hotwire Native")
     }
     headers = { "User-Agent" => "Hotwire Native iOS" }
@@ -372,9 +372,7 @@ class NoticeFormTest < ActionDispatch::IntegrationTest
     Moderate::ApplicationController.define_method(:current_user) { user }
     yield
   ensure
-    if Moderate::ApplicationController.method_defined?(:current_user)
-      Moderate::ApplicationController.send(:remove_method, :current_user)
-    end
+    Moderate::ApplicationController.send(:remove_method, :current_user) if Moderate::ApplicationController.method_defined?(:current_user)
   end
 
   # A complete, valid Art. 16 notice about an external URL (no in-app reportable

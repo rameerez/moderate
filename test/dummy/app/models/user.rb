@@ -19,6 +19,7 @@ class User < ApplicationRecord
   # test resets config and re-declares the policy — the concern just needs to know
   # WHICH fields to run on commit; the per-field adapter/mode comes from config.
   include Moderate::ContentFilterable
+
   moderates_fields :name
 
   # `email` / `display_name` are read by Moderate::Report#hydrate_reporter_contact

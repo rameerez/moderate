@@ -20,6 +20,7 @@ module Moderate
   # (through the `Moderate::Reportable` interface), never by anything domain-specific.
   class Report < ApplicationRecord
     include Moderate::DeferredNotices
+
     self.table_name = "moderate_reports"
 
     STATUSES = %w[open actioned dismissed].freeze
@@ -87,6 +88,11 @@ module Moderate
     # locate the *report itself* (and vice versa) — GlobalID verifies the purpose on
     # the way back out. See https://github.com/rails/globalid#signed-global-ids.
     # The strings are gem-stable ("moderate_*") and host-agnostic.
+    #
+    # @api private: build a report target with `record.to_moderation_sgid` (or the
+    # `moderate_report_target_path` helper) and read one back with
+    # `Report.locate_signed_reportable`; appeal links with `report.signed_appeal_gid`.
+    # The strings never change (tokens already sent out carry them).
     SIGNED_GLOBAL_ID_PURPOSE = "moderate_report"
     APPEAL_SIGNED_GLOBAL_ID_PURPOSE = "moderate_appeal"
 
@@ -99,6 +105,9 @@ module Moderate
     # receipt for this seeded record", "also block the reported user"). They never
     # persist; the services read them. Kept here so both the model and its services
     # share one definition.
+    #
+    # `skip_received_notice` is public (seed and import scripts set it).
+    # `block_reported_user` is @api private: say `report!(…, block: true)`.
     attr_accessor :skip_received_notice, :block_reported_user
 
     # All actor associations resolve to the HOST's configured user class, read
@@ -113,6 +122,10 @@ module Moderate
     belongs_to :reportable, polymorphic: true, optional: true
 
     has_many :appeals, class_name: "Moderate::Appeal", dependent: :destroy
+
+    # The decision that removed this report's content while this report was pending
+    # (stamped by that decision); see ResolveReport's covering removal.
+    belongs_to :covered_by, class_name: "Moderate::Report", foreign_key: :covered_by_report_id, optional: true
 
     # The auto-filter flags that touched the SAME (record, field) this report is
     # about. Used to disclose automated means at intake (Art. 17(3)(c)) — if the
@@ -197,7 +210,9 @@ module Moderate
     validate :reportable_field_must_be_allowed
     validate :reporter_must_be_allowed_to_report, on: :create
     validate :subject_url_must_be_http_url
-    validate :public_notice_requires_subject_url
+    # At intake only: a report whose content is deleted later has its pointer
+    # nullified, and must still be decidable.
+    validate :public_notice_requires_subject_url, on: :create
     validate :dsa_notice_must_be_substantiated
     validate :anonymous_notice_only_for_child_safety
 
@@ -240,6 +255,8 @@ module Moderate
     # Resolve a signed token back into the Report it was minted for (used by the
     # public appeal flow, where the appellant arrives via an emailed signed link).
     # Locked to `self` so the token can only ever name a Report.
+    #
+    # @api private: the public appeal form's lookup.
     def self.locate_signed_appeal_report(token)
       return if token.blank?
 
@@ -311,16 +328,17 @@ module Moderate
       Moderate.reportable_field_label(reportable || type, reported_field)
     end
 
-    # The snapshotted text of the reported field, asked of the reportable. Returns
-    # nil when the reportable doesn't expose snapshot text (or there's no record).
+    # The reported field's text as it was when the report was filed: the evidence
+    # snapshot taken at intake, so it survives the content being edited or deleted.
+    # nil when the reportable exposed no text, or once a purge redacted the report.
     def reported_content_text
-      return unless reportable.respond_to?(:moderation_snapshot)
-
-      reportable.moderation_snapshot(reported_field)
+      snapshot.to_h.with_indifferent_access[:content_text]
     end
 
     # --- Signed GIDs for emailed links ---------------------------------------
 
+    # @api private: an expiring token for the reported content. Use the reportable's
+    # `to_moderation_sgid`, which doesn't expire.
     def signed_reportable_gid
       reportable&.to_sgid_param(for: SIGNED_GLOBAL_ID_PURPOSE)
     end
@@ -355,6 +373,8 @@ module Moderate
     # `update_column` skips validations/callbacks on purpose — this is a timestamp
     # stamp, not a content change, and must succeed even on an already-validated row.
     # Idempotent: only sets the first acknowledgement.
+    #
+    # @api private: stamped by the intake services.
     def acknowledge!(at: Time.current)
       update_column(:acknowledged_at, at) if acknowledged_at.blank?
     end
@@ -362,6 +382,8 @@ module Moderate
     # DSA Art. 20(1): open the redress (appeal) window for at least six months after
     # the decision. Stamped once when the report is decided; idempotent so re-running
     # a decision flow doesn't slide the deadline.
+    #
+    # @api private: stamped by the decision services.
     def close_redress_window!(at: resolved_at || Time.current)
       update_column(:appeal_deadline_at, at + APPEAL_WINDOW) if appeal_deadline_at.blank?
     end
@@ -373,14 +395,47 @@ module Moderate
     # out-of-transaction notify, statement-of-reasons + appeal-window stamping); this
     # only forwards. `by:` is the moderator; the rest (`note:`, `remove_content:`,
     # `ban_user:`, `resolution_basis:`) pass straight through.
-    def resolve!(by:, **options)
-      Moderate::Services::ResolveReport.new(self, by: by).resolve!(**options)
+    def resolve!(by:, **)
+      Moderate::Services::ResolveReport.new(self, by: by).resolve!(**)
     end
 
     # Dismiss this report (no action taken) — sugar over
     # Moderate::Services::ResolveReport#dismiss!.
     def dismiss!(by:, note:)
       Moderate::Services::ResolveReport.new(self, by: by).dismiss!(note: note)
+    end
+
+    # Which delivery timestamp each decision notice confirms (Moderate.delivered!).
+    DELIVERY_COLUMNS = {
+      decision: :decision_notified_at,          # report_decision, to the reporter / notifier
+      affected_user: :affected_user_notified_at # affected_user_decision, the statement of reasons
+    }.freeze
+
+    # DSA Art. 20(2): the (at least) six-month appeal window starts when the person
+    # is INFORMED of the decision, not when it was taken. The decision stamps
+    # `appeal_deadline_at` six months from itself, a minimum. When the host confirms
+    # that a decision notice actually went out (Moderate.delivered!, called from the
+    # mailer's delivery, not when it was queued), its timestamp is stamped, once, and
+    # the deadline moves to six months after it, never earlier. Later confirmations
+    # change nothing.
+    #
+    # @api private: call Moderate.delivered!(report, :decision | :affected_user).
+    def record_delivery!(recipient, at: Time.current)
+      column = DELIVERY_COLUMNS.fetch(recipient.to_sym) do
+        raise ArgumentError, "unknown decision notice #{recipient.inspect}; one of: #{DELIVERY_COLUMNS.keys.join(", ")}"
+      end
+
+      with_lock do
+        next if self[column].present? || resolved_at.blank?
+
+        update_columns(column => at, appeal_deadline_at: [appeal_deadline_at, at + APPEAL_WINDOW].compact.max)
+      end
+      self
+    end
+
+    # Under a legal hold right now (Moderate.hold)? The purge leaves it alone.
+    def held?(at: Time.current)
+      held_until.present? && held_until > at
     end
 
     # DSA Art. 17(3)(c): did automated means (a wordlist/image/remote classifier)
@@ -394,7 +449,7 @@ module Moderate
 
       return true if boolean.cast(automation["used"])
 
-      automation.except("used").values.any? { |value| value == true || value == "true" }
+      automation.except("used").values.any? { |value| [true, "true"].include?(value) }
     end
 
     private
@@ -533,9 +588,16 @@ module Moderate
         legal_country_code: legal_country_code,
         content_type: content_type,
         reported_account_identifier: reported_account_identifier,
-        content_text: reported_content_text,
+        content_text: live_content_text,
         captured_at: Time.current.iso8601
       }.compact
+    end
+
+    # The reported field's text now, asked of the reportable (what the snapshot keeps).
+    def live_content_text
+      return unless reportable.respond_to?(:moderation_snapshot)
+
+      reportable.moderation_snapshot(reported_field)
     end
 
     def capture_automated_processing
@@ -644,7 +706,9 @@ module Moderate
       return unless anonymous?
       return if legal_reason == "protection_of_minors"
 
-      errors.add(:anonymous, I18n.t("moderate.errors.anonymous_notice_child_safety_only", default: "anonymous notices are only allowed for offences against minors"))
+      errors.add(:anonymous,
+        I18n.t("moderate.errors.anonymous_notice_child_safety_only",
+          default: "anonymous notices are only allowed for offences against minors"))
     end
 
     # Accept either a multi-URL list or newline-separated text, fold in the single
@@ -691,7 +755,7 @@ module Moderate
       if result&.flagged?
         evidence["used"] = true
         evidence["field"] = reported_field
-        evidence["sources"] = Array(evidence["sources"]).concat([result.source]).compact.uniq
+        evidence["sources"] = Array(evidence["sources"]).push(result.source).compact.uniq
         evidence["categories"] = Array(evidence["categories"]).concat(result.categories).compact.uniq
         evidence["scores"] = result.scores
         # `raw` is the untouched provider payload (Moderate::Result#raw) — kept for
@@ -711,7 +775,7 @@ module Moderate
       policy = Moderate.filter_policy_for(reportable, reported_field)
       return unless policy.block?
 
-      value = reported_content_text
+      value = live_content_text
       return if value.blank?
 
       Moderate.classify(value, policy: policy)

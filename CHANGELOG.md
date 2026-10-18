@@ -4,6 +4,337 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-10-19
+
+The first stable release. The public API is frozen until 2.0: everything listed in the
+README's "What is public" section keeps its name, arguments and meaning, and
+`test/public_api_test.rb` keeps that list honest. Since 1.0.0.beta4: Ruby 3.3+ and Rails
+8.0.5.1+, attachments classified once and only once their files exist, opt-in retention with
+legal holds, an appeal window that runs from confirmed delivery, and **one migration** (see
+_Upgrading from 1.0.0.beta4_). Coming from an earlier beta, apply each beta's _Upgrading_
+notes below in order, then these; coming from 0.x, see _Upgrading from 0.x_ at the end of
+this entry.
+
+### Upgrading from 1.0.0.beta4
+
+- **One migration: run `bin/rails db:migrate`** (after `bin/rails moderate:install:migrations`
+  if your app holds copies of the gem's migrations, `*.moderate.rb`, as every app installed
+  from 1.0.0.beta4 on does; boot now fails, naming it, if you forget). `db/migrate/20261018210000_add_retention_and_classifications_to_moderate_tables.rb`
+  adds `redacted_at` to `moderate_reports`, `moderate_flags` and `moderate_appeals`,
+  `held_until` and `covered_by_report_id` (both indexed) to `moderate_reports`, and creates
+  `moderate_classifications`. It
+  sorts after beta4's `pending_key` migration and needs no backfill. Like that one it is the
+  only thing that creates what it adds: `rails generate moderate:install` leaves it out of
+  `create_moderate_tables` and copies the migration after it, an app without copies gets it
+  through the engine, and its `down` drops only what it created.
+
+- **What changes for an app upgrading from beta4** (each is detailed below):
+  - Ruby 3.3+ and Rails 8.0.5.1+ (Rails 8.0 hosts on json 3 need `json < 3`, as before).
+  - `config.signed_gid_purposes` is gone: delete the line if you set it.
+  - `report.resolve!` with neither `remove_content:` nor `ban_user:` is refused: dismiss
+    instead.
+  - `decision_notified_at` / `affected_user_notified_at` (and the appeal window's
+    extension) wait for `Moderate.delivered!` from your mailer's delivery.
+  - `Report#reported_content_text` is the intake snapshot.
+  - If your app can lift a ban, set `config.banned`.
+  - If you worked around the attachment upload race (CarHey's avatar), remove the
+    workaround.
+  - Attachment classification queues two `ClassifyJob`s per upload (the guard and the
+    immediate one); each set of files is still classified once.
+
+### Added
+
+- **A missed migration copy fails at boot.** An app holding copies of the gem's migrations
+  (`*.moderate.rb`) runs only those, so a release migration it didn't copy would never
+  run, silently. At boot (`after_initialize`) the engine compares the copies with its own
+  migrations by name and, when one is missing, raises `Moderate::ConfigurationError`
+  naming it and `bin/rails moderate:install:migrations`; under a rake task (that command,
+  `db:migrate`) it logs instead. **`config.migration_copies_check`** (`:raise`, `:log`,
+  `:off`) changes it. Apps without copies aren't checked.
+- **The public API is frozen and listed.** The README's new "What is public" section names
+  everything that keeps its name, arguments and meaning until 2.0: the macros, `report!` /
+  `block!`, the reportable contract, the decision methods (`resolve!` / `dismiss!` /
+  `action!` / `uphold!` / `reject!`) and their services, `flag_for_review!`, `taxonomy_label`,
+  `reportable_field_label`, `blocked_ids_for`, `purge`, `hold` / `release_hold`,
+  `delivered!`, every configuration key, the view
+  helpers, the controller concern and its seams, the adapter contract, and the event
+  vocabulary with the notifier contract. The vocabulary is now code:
+  `Moderate::Event::NOTIFY_NAMES` and `Moderate::Event::AUDIT_NAMES`.
+  `test/public_api_test.rb` fails when a listed name doesn't exist, when a public
+  `Moderate.*` method or configuration key isn't listed, when the event lists drift from
+  what the gem emits, or when the README or docs/ name a `Moderate…` constant or method that
+  doesn't exist (it caught `Moderate::DSA_LEGAL_REASONS` in docs/compliance.md; it is
+  `Moderate::Report::DSA_LEGAL_REASONS`).
+- **What isn't public is marked.** `@api private`: `Moderate.notify`, `.audit`, `.apply_ban`,
+  `.announce_ban`, `.ensure_ban_handler!`, `.run_on_block`, `.with_row_lock`,
+  `.register_reportable`, `.locale`; `Report::SIGNED_GLOBAL_ID_PURPOSE` /
+  `APPEAL_SIGNED_GLOBAL_ID_PURPOSE`, `Report#signed_reportable_gid`, `#acknowledge!`,
+  `#close_redress_window!`, `#block_reported_user`, `Report.locate_signed_appeal_report`;
+  `DeferredNotices.defer` / `.connection_for` / `Envelope`; the wordlist's compiler
+  internals. `Moderate::Engine::LIB_ROOT`, `MODERATE_LIB` and `ZEITWERK_IGNORED` are private
+  constants. Nothing tagged was removed; a host still calling one should move:
+  `Moderate.apply_ban` → `flag.action!(ban_user: true)` or `report.resolve!(ban_user: true)`
+  (which also send the statement of reasons and open the appeal window);
+  `to_sgid_param(for: Moderate::Report::SIGNED_GLOBAL_ID_PURPOSE)` and
+  `report.signed_reportable_gid` → `record.to_moderation_sgid` or
+  `moderate_report_target_path(record, field:)`.
+- **docs/notifications.md lists the audit events** instead of claiming `audit` fires for every
+  event (`content_flagged`, for one, is notify-only: the flag row is its record).
+- **Retention: `Moderate.purge(older_than: 1.year, dry_run: false)`** and the
+  `moderate:purge` rake task (`OLDER_THAN_DAYS`, `DRY_RUN`), opt-in. They redact the personal
+  data in reports, notices, flags and appeals whose decision is final (closed, decided more
+  than `older_than` ago, appeal window over, no open appeal): messages, evidence snapshots,
+  reported URLs, notifier and appellant contact details, flag excerpts and context. Every row
+  and every decision stays, so the statement of reasons, a repeat-misuse history and the
+  transparency counts are unchanged; blocks and pending records are never touched;
+  `older_than` below the six-month appeal window raises. Idempotent, batched, audited as
+  `:retention_purged`. `docs/compliance.md` gains a retention section: what the gem stores,
+  that nothing is purged by default, and what the DSA and the GDPR expect. A purged row is
+  stamped `redacted_at`, and the purge selects on that column, never on the content (a
+  message that literally read `"[redacted]"` would otherwise have kept its snapshot, URLs,
+  contacts and reporter, and `dry_run` under-counted it). The returned counts are
+  `:reports`, `:flags`, `:appeals`, `:classifications`, `:claims_kept` and `:held`.
+  `1.year` is documented as a default the host sets per its own purposes.
+- **Legal holds: `Moderate.hold(report, until:, by: nil, reason: nil)` /
+  `Moderate.release_hold(report)`** and `Report#held?`. A held report, its appeals and the
+  flags on its content are left out of the purge until the date (an out-of-court dispute
+  under DSA Art. 21, a court case, an authority's request); `dry_run` and the rake task
+  report held rows separately; both are audited (`:legal_hold_placed`,
+  `:legal_hold_released`).
+- **RuboCop runs in CI** (a `rubocop` job next to the test matrix) and the codebase has zero
+  offenses. `.rubocop.yml` now describes the code as it is: size metrics off (the gem
+  explains itself in long, commented methods), complexity metrics capped where the code is,
+  140-column lines, continuation lines indented one step, and the ecosystem's `has_*` macro
+  names allowed. The rest was fixed: safe autocorrections plus a few by hand (`rescue
+  StandardError`, double-quoted strings, documentation comments on the small classes,
+  `FileUtils.rm_f`). New cops are enabled.
+
+### Fixed
+
+- **`Report#reported_content_text` is the evidence snapshot**, as its documentation always
+  said: the reported field's text when the report was filed, surviving edits and deletion
+  (nil once a purge redacts the report). It read the live content.
+- **Refusals, validation messages and the admin concern's flash messages ship in English
+  and Spanish** (`moderate.errors.*`, `moderate.moderation.*`); they existed only as inline
+  English defaults. A test keeps every such key covered in both files. (The notice, appeal
+  and transparency pages' own copy still has inline English defaults, overridable under
+  `moderate.notices.*`, `moderate.appeals.*`, `moderate.transparency.*`.)
+- **docs/madmin.md listed a `.resolved` scope** that doesn't exist; the scopes are
+  `.pending`, `.actioned`, `.dismissed` and `.recent_first`.
+- **A second report on content an earlier decision already removed closes against it.**
+  Flags had "already dealt with"; reports had no truthful way to close: removing again
+  removed nothing and was refused. A decision that removes content now reads, under the
+  content's lock and right before removing, the text it is about to remove (recorded as
+  `resolution_actions["removed_text_digest"]`), and stamps the OTHER reports pending on
+  that content and field whose intake snapshot holds exactly that text, once the removal is
+  verified (below),
+  (`covered_by_report_id`, readable as `Report#covered_by`); with no readable text it
+  stamps nobody. A stamped report resolved with `remove_content: true` closes against that
+  decision while the decision stands (no appeal against it upheld: an overturned removal
+  covers nothing, though the stamp stays as history) and the content is gone now (read
+  fresh under the lock; deleted content counts), and records
+  `resolution_actions["content_already_removed_by"]`. No clocks are compared: a report that
+  wasn't pending when the content was removed (a repost, a removal that didn't take, a late
+  or backdated report) was never stamped, so a report filed after a removal is never
+  credited to it; the normal removal or refusal ("Nothing was removed") applies. A report
+  filed during the removal, or one whose snapshot holds older text than what was removed,
+  is stamped only if its snapshot holds the removed text. Nothing is removed, audited or
+  announced a second time, the author gets no second statement of
+  reasons (unless this decision also bans), and the reporter's `report_decision` carries
+  `content_already_removed_by` and says "already removed by the decision on Report #X".
+- **A removal is verified, not taken on trust.** When the reportable's
+  `remove_reported_field!` returns true, the field is read again under the same lock; unless
+  it reads as gone (through `moderation_snapshot` and the field itself, or `deleted?`) the
+  decision is refused as "Nothing was removed", nobody is stamped and no digest recorded. A
+  host method that rewrote the field instead of removing it used to be recorded as a
+  removal. The seam's contract is now written in the README: remove the field's content as
+  it is when called, persist it, return whether anything was removed, and never rewrite the
+  field first.
+- **A report whose content was deleted can be decided.** The intake check that a report
+  without content names a URL ran on every save, so once the content was deleted (its
+  pointer nullified) no decision on the report could be saved. It now runs at intake.
+- **A report resolved with neither removal nor ban is refused.** It recorded
+  `decision_visibility: "other_restriction"` and sent the author a statement of reasons
+  for a restriction nobody imposed. `resolve!` restricts something (`remove_content:`,
+  `ban_user:`, or both); with neither it now raises `ActiveRecord::RecordInvalid` with
+  `moderate.errors.resolve_needs_action` (en/es: "… To close it without a restriction,
+  dismiss it."), and the report stays open. **Behavior change:** a host that resolved
+  reports with only a note (a "warning") should `dismiss!` them, or apply its own measure
+  and dismiss. `other_restriction` stays in the decision taxonomy for labels.
+- **A ban after a host-side unban is applied again.** One ban per person per episode: a
+  second ban decision in the same episode was recorded as covered by the first
+  (`ban_already_applied_by`), so after the host lifted the ban the `ban_handler` wasn't
+  called and the statement of reasons said "account suspended" for an account nothing had
+  suspended. **`config.banned = ->(user) { … }`** (optional, documented beside
+  `ban_handler`) says whether the person is banned now: when it returns false the earlier
+  ban no longer counts and the handler runs again. Unset, the earlier ban counts, as before;
+  hosts that can unban should set it.
+  Both `config.banned` and the `ban_handler` get the person as read again, with a locking
+  read, once the decision holds their lock: two ban decisions on one person at once ban
+  once (the second records `ban_already_applied_by`), even inside a host transaction that
+  read the person earlier (on MySQL that read pins an older snapshot).
+- **`validates :field, moderate: true` works again.** The README promised the 0.x one-liner
+  still worked; it raised `Unknown validator: 'ModerateValidator'`, because its file was
+  never loaded (and had it been, it downloaded a word list over HTTP and read a
+  configuration key 1.0 doesn't have). It is now what the README says: the built-in
+  `:wordlist` in `:block` mode, adding the same `:objectionable_content` error (or your
+  `message:`). The unreachable 0.x `Moderate::Text` and `Moderate::WordList` are deleted.
+- **A field rejected by `:block` reads as copy.** `errors.add(field, :objectionable_content)`
+  had no translation, so a person saw "Body Translation missing. Options considered
+  were: …". The gem ships `errors.messages.objectionable_content` in English ("contains
+  language that isn't allowed") and Spanish; override it per model and attribute the usual
+  Active Record way.
+- **docs/notifications.md's statement-of-reasons mailer had no working appeal link.** It
+  read `event.payload[:appeal_url]`, which the gem has never set, so a copied mailer
+  rendered an "Appeal this decision" button to nowhere (Art. 17(3)(f) requires the redress
+  path). It now builds the link the way a working host does:
+  `moderate.new_appeal_url(token: event.subject.signed_appeal_gid, source: "affected_user")`.
+- **An attachment is classified once its file is uploaded, never before.** Active Storage
+  uploads a new attachment in its own `after_commit`, and commit callbacks run in the order
+  they were defined, so on a model that calls `moderates` above `has_one_attached` the
+  filter ran first: a synchronous adapter classified a blob whose file wasn't on the
+  service yet, and an async adapter's `ClassifyJob` could run before the upload finished.
+  The filter now watches Active Storage's upload itself, from `before_save` (so in either
+  declaration order), and classifies when it returns: inline for a synchronous adapter, by
+  an immediate job for an async one. Works for `has_one_attached` and `has_many_attached`.
+  `ClassifyJob` also checks that every blob behind the value exists on its service:
+  if one doesn't (a direct upload still in flight, a lagging replica) it re-enqueues itself
+  after 5, 10, 15 and 20 seconds (`UPLOAD_WAIT`, `UPLOAD_ATTEMPTS`), then gives up with a
+  `classification_skipped` audit event. Nothing classifies a file that isn't there: the
+  inline (synchronous adapter) path checks too, and hands a missing file to the job; a
+  direct upload attached before its file arrives (whose Active Storage `upload` is a no-op)
+  waits the same way. A failed upload is never silent: just before Active Storage uploads,
+  the filter queues a guard `ClassifyJob` for `UPLOAD_WAIT` seconds later, so an upload that
+  raises (or a process that dies) still ends in a classification or a `classification_skipped`
+  audit. Each set of files is classified once: the job takes `blob_ids:` and
+  stops if the field holds other files by then, and whoever classifies first records it,
+  so the guard finds that and stops.
+  The inline path and the job claim the files under the content record's row lock (content
+  first, as everywhere), call the adapter outside any lock, then re-take the lock to file
+  the flag, mark the files classified and clear the claim, but only if the field still
+  holds the same files and the claim is still theirs (else the result is discarded: the
+  new files have their own classification). The immediate job and the guard can't both
+  classify, and a slow provider never blocks writes to the content's row. A claim expires
+  after **`config.classification_claim_ttl`** (10 minutes): a job that finds a live claim
+  looks once more at its expiry, so a worker that died mid-call is taken over. The mark is
+  a row of the gem's own **`moderate_classifications`** table (record, field, a digest of the
+  ordered blob ids, the claim, `classified_at`, the adapter and whether it flagged; UNIQUE
+  on record + field + digest), written only under the content lock. A changed set (a file
+  added or removed) or the same blob on another record is another row, classified again;
+  nothing of ours is written to `blob.metadata`, so other records sharing a blob and Active
+  Storage's analyzer can't overwrite a claim. `Moderate.purge` deletes rows last touched
+  before its cutoff (`:classifications` in its counts), never one under a live claim
+  (`:claims_kept`). `classification_claim_ttl` must be more than 0 and at most a day, or
+  boot raises. An adapter that raises leaves its claim until it expires and schedules no
+  retry itself; the guard job, a job's recheck at expiry, a new save or the job backend's
+  own retry takes it over. Under **`mode: :block`**, an attachment whose stored blob isn't
+  on the service yet (a direct upload in flight) fails validation with
+  `errors.messages.upload_not_finished` ("hasn't finished uploading yet", en/es) instead of
+  being classified without its file.
+  **If you worked around this** (CarHey's avatar):
+  1. delete the `moderation_field_changed_for_commit?` override that returns `false` for
+     the attachment field;
+  2. delete your own `Moderate::ClassifyJob.perform_later(self, "avatar")` after_commit
+     and the `before_save` that remembered the attachment change, or the field is
+     classified twice;
+  3. the order of `moderates` and `has_one_attached` no longer matters, so the "keep this
+     below the attachment" comments can go. An adapter that retries on
+     `ActiveStorage::FileNotFoundError` may keep doing so; the job's own wait makes it rare.
+- **The appeal window runs from when the person is informed** (DSA Art. 20(2)), not from
+  the decision, and only a confirmed delivery counts. A decision stamps
+  `appeal_deadline_at` six months out, a minimum (its notice's `appeal_deadline_at` is that
+  date: "at least until"). **`Moderate.delivered!(report, :decision | :affected_user, at:)`**,
+  which your notifier calls when the message actually went out (Action Mailer's
+  `after_deliver`; docs/notifications.md), stamps `decision_notified_at` /
+  `affected_user_notified_at` once and moves the deadline to six months after it, never
+  earlier; later calls change nothing. **Behavior change:** those two timestamps are no
+  longer stamped because the notify hook returned something truthy (a queued delivery job
+  is not a delivery), so a host that reads them must call `Moderate.delivered!`.
+- **An appeal filed in time can be decided after the appeal window closes.** The six-month
+  check (`report_must_still_be_appealable`) ran on every save, so `appeal.uphold!` /
+  `reject!` on a complaint filed in month five and decided in month seven failed with "the
+  appeal window for this decision has closed". Art. 20 bounds when a complaint may be
+  filed, not when it is decided; the check now runs when the appeal is created.
+
+### Removed
+
+- **`config.signed_gid_purposes`.** Nothing ever read it: each signed token's purpose is
+  fixed by the flow that mints it. A host initializer that sets it now raises
+  `NoMethodError` at boot; delete the line (the generated initializer only had it
+  commented out).
+- **Rails 7.2 and older, and Ruby 3.2, are no longer supported** (all end of life upstream:
+  Rails 7.2's security support ended in August 2026). The gemspec now requires Ruby 3.3+ and
+  `activerecord` / `activesupport` / `railties` `>= 8.0.5.1, < 9.0` (8.0.5.1 is the first 8.0
+  release with every current Rails security advisory fixed). CI runs Ruby 3.3, 3.4 and 4.0
+  against Rails 8.0 and 8.1 on SQLite, plus PostgreSQL and MySQL, and a `bundler-audit` job
+  checks every lock it tests with. The Rails 7.1 and 7.2 appraisals are gone; the `json < 3`
+  pin moved to the 8.0 appraisal, because Rails 8.0 still passes `quirks_mode:` to
+  `JSON.generate`, which json 3 rejects. A host on 8.0 needs the same pin, with or without
+  `moderate`.
+
+### The 1.0 feature set (since 0.1.0)
+
+A complete, ground-up rewrite. `moderate` graduates from a single-purpose profanity validator
+(0.1.0) into a full **Trust & Safety** engine for Rails apps with user-generated content:
+report, block, filter, a moderation queue, appeals, and EU DSA / App Store / Google Play
+**aligned** primitives (first cut shipped as `1.0.0.beta1`).
+
+- **Reporting.** `Moderate::Report` plus the `has_reportable_content :fields` macro and
+  `Actor#report!(reportable, category:, details:)`. Reports and DSA notices share one model
+  and one queue (`intake_kind: "community" | "dsa"`).
+- **Blocking.** `Moderate::Block`, the `has_reporting_and_blocking` actor macro, and
+  `block!` / `unblock!` / `blocks?` / `blocked_by?` / `blocked_with?`. `Moderate.blocked_ids_for(user)`
+  is the bidirectional single source of truth you compose into feed/search/inbox queries.
+  Optional `config.on_block` teardown hook runs inside the block transaction.
+- **Content filtering.** The `moderates :field, mode: :off|:block|:flag, with: :adapter` macro
+  (and the equivalent `config.filter`), the offline multilingual `:wordlist` adapter (the only
+  built-in), the `classify(value) => Moderate::Result` adapter contract with
+  `config.register_adapter`, asynchronous classification via `Moderate::ClassifyJob`, and
+  ready-to-copy reference adapters for OpenAI omni-moderation and AWS Rekognition under
+  `examples/` (bring-your-own, never a dependency).
+- **Moderation queue & decisions.** `Moderate::Flag` and the service objects
+  `Moderate::Services::{IntakeReport, ResolveReport, ResolveFlag, IntakeAppeal, ResolveAppeal,
+  IntakeNotice}`. Decisions are taken under a row lock, re-check open state, apply enforcement
+  (remove content / ban) inside the transaction, and fire notifications outside it; the appeal
+  window and statement-of-reasons fields are stamped automatically.
+- **DSA-aligned primitives.** A mountable public **notice-and-action** form (Art. 16) you mount
+  at any path, **statement of reasons** (Art. 17), internal **appeals** (Art. 20), and
+  **transparency** counters (Art. 24). The notice form prefills from query params + the signed-in
+  user, locks auto-filled identity fields, and auto-detects `rails_cloudflare_turnstile`.
+- **Hooks (all no-op by default).** `config.audit`, `config.notify` (its truthy return marks
+  a DSA notice's receipt as sent; decision notices count as delivered only through
+  `Moderate.delivered!`), `config.on_block`, `config.ban_handler`, the
+  host-overridable `config.report_categories`, and `config.notice_human_verification_skip_if` /
+  `config.appeal_human_verification_skip_if` for native-app bot-gate carve-outs.
+- **Optional integrations**, never hard dependencies: madmin, goodmail, telegrama and noticed are
+  wired through the hooks above (recipes in docs/), and rails_cloudflare_turnstile is
+  detected at runtime by the public forms.
+- **Install tooling.** `rails generate moderate:install` writes a documented initializer and an
+  adaptive migration (uuid/bigint primary keys, jsonb/json/MySQL JSON columns), then copies the
+  gem's own migrations after it; `moderate:views` ejects the notice form for customization.
+
+Design choices that differ from 0.x:
+
+- Taxonomies (report categories, DSA legal reasons, country codes) are now frozen model
+  constants with inclusion validations instead of DB `CHECK` constraints — adding or
+  customizing a category needs no migration.
+- External classifiers (OpenAI, image moderation) are reference adapters in `examples/`, not
+  shipped or loaded code — the gem core forces no service dependency on apps that never use it.
+- All "DSA-compliant" / "App Store compliant" language reframed to **DSA-aligned primitives**:
+  the gem ships the mechanisms the law and the stores require; your policies, response times,
+  and operations are still yours.
+
+### Upgrading from 0.x
+
+> **Breaking:** 1.0 keeps the gem name but is an entirely new API. Pin `~> 0.1` if you relied
+> on the old behavior and are not ready to adopt the new surface.
+
+- `validates :field, moderate: true` still works: it is now the built-in `:wordlist` adapter
+  in `:block` mode (the same check as `moderates :field, with: :wordlist, mode: :block`), so
+  existing apps keep validating. To adopt the rest, add `has_reporting_and_blocking` to your
+  user model and `has_reportable_content` / `moderates` to your content models, run
+  `rails generate moderate:install`, and migrate.
+
 ## [1.0.0.beta4] - 2026-10-18
 
 Concurrency fixes, and **one migration**: run `bin/rails db:migrate` after upgrading (see
@@ -376,70 +707,6 @@ and hosts that worked around the ClassifyJob bug can now delete the workaround.
   trail). Canonical automated use: dismiss a pending flag whose flagged content was
   **superseded** (text edited, photo replaced/reverted) — left pending it keeps `flagged?`
   true and mislabels the NEW content in any host UI keyed on it. (#4)
-
-## [1.0.0] - unreleased
-
-A complete, ground-up rewrite. `moderate` graduates from a single-purpose profanity
-validator (0.1.0) into a full **Trust & Safety** engine for Rails apps with user-generated
-content: report, block, filter, a moderation queue, appeals, and EU DSA / App Store / Google
-Play **aligned** primitives. (First cut shipped as `1.0.0.beta1`; second as `1.0.0.beta2`.)
-
-> **Breaking:** 1.0 keeps the gem name but is an entirely new API. The 0.x profanity
-> validator (`validates :field, moderate: true`) still loads for backward compatibility
-> (see _Upgrading from 0.x_), but everything else is new. Pin `~> 0.1` if you relied on the
-> old behavior and are not ready to adopt the new surface.
-
-### Added
-
-- **Reporting.** `Moderate::Report` plus the `has_reportable_content :fields` macro and
-  `Actor#report!(reportable, category:, details:)`. Reports and DSA notices share one model
-  and one queue (`intake_kind: "community" | "dsa"`).
-- **Blocking.** `Moderate::Block`, the `has_reporting_and_blocking` actor macro, and
-  `block!` / `unblock!` / `blocks?` / `blocked_by?` / `blocked_with?`. `Moderate.blocked_ids_for(user)`
-  is the bidirectional single source of truth you compose into feed/search/inbox queries.
-  Optional `config.on_block` teardown hook runs inside the block transaction.
-- **Content filtering.** The `moderates :field, mode: :off|:block|:flag, with: :adapter` macro
-  (and the equivalent `config.filter`), the offline multilingual `:wordlist` adapter (the only
-  built-in), the `classify(value) => Moderate::Result` adapter contract with
-  `config.register_adapter`, asynchronous classification via `Moderate::ClassifyJob`, and
-  ready-to-copy reference adapters for OpenAI omni-moderation and AWS Rekognition under
-  `examples/` (bring-your-own, never a dependency).
-- **Moderation queue & decisions.** `Moderate::Flag` and the service objects
-  `Moderate::Services::{IntakeReport, ResolveReport, ResolveFlag, IntakeAppeal, ResolveAppeal,
-  IntakeNotice}`. Decisions are taken under a row lock, re-check open state, apply enforcement
-  (remove content / ban) inside the transaction, and fire notifications outside it; the appeal
-  window and statement-of-reasons fields are stamped automatically.
-- **DSA-aligned primitives.** A mountable public **notice-and-action** form (Art. 16) you mount
-  at any path, **statement of reasons** (Art. 17), internal **appeals** (Art. 20), and
-  **transparency** counters (Art. 24). The notice form prefills from query params + the signed-in
-  user, locks auto-filled identity fields, and auto-detects `rails_cloudflare_turnstile`.
-- **Hooks (all no-op by default).** `config.audit`, `config.notify` (returns a delivery boolean
-  used to gate `decision_notified_at`), `config.on_block`, `config.ban_handler`, the
-  host-overridable `config.report_categories`, and `config.notice_human_verification_skip_if` /
-  `config.appeal_human_verification_skip_if` for native-app bot-gate carve-outs.
-- **Optional integrations**, all auto-detected at runtime via `defined?`/`respond_to?` and never
-  hard dependencies: madmin, goodmail, telegrama, noticed, rails_cloudflare_turnstile.
-- **Install tooling.** `rails generate moderate:install` writes a documented initializer and an
-  adaptive migration (uuid/bigint primary keys, jsonb/json/MySQL JSON columns); `moderate:views`
-  ejects the notice form for customization.
-
-### Changed
-
-- Taxonomies (report categories, DSA legal reasons, country codes) are now frozen model
-  constants with inclusion validations instead of DB `CHECK` constraints — adding or
-  customizing a category needs no migration.
-- External classifiers (OpenAI, image moderation) are reference adapters in `examples/`, not
-  shipped or loaded code — the gem core forces no service dependency on apps that never use it.
-- All "DSA-compliant" / "App Store compliant" language reframed to **DSA-aligned primitives**:
-  the gem ships the mechanisms the law and the stores require; your policies, response times,
-  and operations are still yours.
-
-### Upgrading from 0.x
-
-- The 0.x profanity validator still loads: `validates :field, moderate: true` continues to work
-  via compatibility shims, so existing apps keep validating. To adopt 1.0, add
-  `has_reporting_and_blocking` to your user model and `has_reportable_content` / `moderates` to your
-  content models, run `rails generate moderate:install`, and migrate.
 
 ## [0.1.0] - 2024-11-03
 

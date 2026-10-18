@@ -109,15 +109,8 @@ module Moderate
     # Reconcile the two accepted shapes (`labels:` and `categories:`+`scores:`)
     # into one frozen array of `Moderate::Label`.
     def build_labels(labels, categories, scores_hash)
-      out = []
-
-      Array(labels).each do |label|
-        out << coerce_label(label, scores_hash)
-      end
-
-      Array(categories).each do |category|
-        out << label_from_slug(category.to_s, scores_hash)
-      end
+      out = Array(labels).map { |label| coerce_label(label, scores_hash) }
+      out += Array(categories).map { |category| label_from_slug(category.to_s, scores_hash) }
 
       out
     end
@@ -145,7 +138,7 @@ module Moderate
     end
 
     def label_from_hash(hash, scores_hash)
-      hash = hash.transform_keys { |k| k.to_s }
+      hash = hash.transform_keys(&:to_s)
       category = hash["category"]
       subcategory = hash["subcategory"]
       slug = subcategory ? "#{category}/#{subcategory}" : category.to_s

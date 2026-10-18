@@ -18,16 +18,8 @@ SimpleCov.start do
   #     migration template IS exercised indirectly — the dummy migrates a copy of it —
   #     but the .erb itself is never loaded as Ruby here.)
   #   - version.rb: a single constant; nothing to cover.
-  #   - The 0.x compatibility shims (text / text_validator / word_list): legacy
-  #     profanity-validator code kept only so `validates :field, moderate: true` from
-  #     0.x still loads (see README "Upgrading from 0.x"). They are NOT part of the
-  #     1.0 Trust & Safety surface this suite tests, so they shouldn't pull the 1.0
-  #     coverage number down.
   add_filter "/lib/generators/"
   add_filter "/lib/moderate/version.rb"
-  add_filter "/lib/moderate/text.rb"
-  add_filter "/lib/moderate/text_validator.rb"
-  add_filter "/lib/moderate/word_list.rb"
 
   # Track Ruby files in the lib directory (gem source code)
   track_files "lib/**/*.rb"
@@ -46,13 +38,13 @@ SimpleCov.start do
   minimum_coverage line: 80, branch: 60
 
   # Disambiguate parallel test runs
-  command_name "Job #{ENV['TEST_ENV_NUMBER']}" if ENV["TEST_ENV_NUMBER"]
+  command_name "Job #{ENV["TEST_ENV_NUMBER"]}" if ENV["TEST_ENV_NUMBER"]
 end
 
 # Print coverage summary to terminal after tests complete
 SimpleCov.at_exit do
   SimpleCov.result.format!
-  puts "\n" + "=" * 60
+  puts "\n#{"=" * 60}"
   puts "COVERAGE SUMMARY"
   puts "=" * 60
   puts "Line Coverage:   #{SimpleCov.result.covered_percent.round(2)}%"

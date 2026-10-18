@@ -24,7 +24,7 @@ class ModerationActionsTest < ActionDispatch::IntegrationTest
     report = @reporter.report!(@comment, category: :harassment, details: "Rude", field: :body)
 
     post "/admin/reports/#{report.id}/resolve",
-         params: { moderator_id: @moderator.id, note: "Warned.", ban_user: "1", resolution_basis: "terms" }
+      params: { moderator_id: @moderator.id, note: "Warned.", ban_user: "1", resolution_basis: "terms" }
 
     assert_response :see_other
     assert_equal "Report resolved.", flash[:notice]

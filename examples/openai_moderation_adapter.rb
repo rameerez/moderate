@@ -67,7 +67,7 @@ class OpenAIModerationAdapter
       source: "external_classifier",
       raw: result.results
     )
-  rescue => error
+  rescue StandardError => error
     # FAIL OPEN on EVERYTHING (network error, timeout, auth failure, malformed
     # response, …). A moderation API is best-effort defense-in-depth, not a
     # gatekeeper that should take down user posting when OpenAI has a hiccup — and a

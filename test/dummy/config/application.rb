@@ -30,7 +30,7 @@ require "moderate"
 
 module Dummy
   # The minimal host application the engine mounts into. Everything here is the
-  # smallest config that lets the suite boot across the Rails 7.1 / 7.2 / 8.1
+  # smallest config that lets the suite boot across the Rails 8.0 / 8.1
   # matrix (see .github/workflows/test.yml) and across the sqlite/postgres/mysql
   # database matrix (see config/database.yml).
   class Application < Rails::Application
@@ -45,11 +45,11 @@ module Dummy
     # root here makes the suite pass regardless of the working directory it's run from.
     config.root = File.expand_path("..", __dir__)
 
-    # Pin the framework defaults to the gemspec floor (Rails 7.1). The dummy must
+    # Pin the framework defaults to the gemspec floor (Rails 8.0). The dummy must
     # boot identically on every Rails in the matrix, so we anchor to the LOWEST
     # supported version's defaults — newer Rails happily loads older defaults, and
-    # this avoids a higher default silently enabling behavior 7.1 hosts won't have.
-    config.load_defaults 7.1
+    # this avoids a higher default silently enabling behavior 8.0 hosts won't have.
+    config.load_defaults 8.0
 
     # The engine lives OUTSIDE the dummy's own app/ tree, so its app/ files are
     # autoloaded via the engine's own load paths (config.eager_load_paths in

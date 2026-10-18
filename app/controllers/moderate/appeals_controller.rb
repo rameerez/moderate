@@ -11,7 +11,10 @@ module Moderate
 
     def new
       @report = Moderate::Report.locate_signed_appeal_report(params[:token])
-      return redirect_to appeal_return_path, alert: t("moderate.appeals.not_found", default: "We couldn't find that moderation decision.") if @report.blank?
+      if @report.blank?
+        return redirect_to appeal_return_path,
+          alert: t("moderate.appeals.not_found", default: "We couldn't find that moderation decision.")
+      end
 
       @appeal = Moderate::Appeal.new(
         report: @report,
@@ -24,7 +27,10 @@ module Moderate
 
     def create
       @report = Moderate::Report.locate_signed_appeal_report(params[:token])
-      return redirect_to appeal_return_path, alert: t("moderate.appeals.not_found", default: "We couldn't find that moderation decision.") if @report.blank?
+      if @report.blank?
+        return redirect_to appeal_return_path,
+          alert: t("moderate.appeals.not_found", default: "We couldn't find that moderation decision.")
+      end
 
       attributes = appeal_params
       attributes[:source] = appeal_source_for(@report, attributes[:source])
@@ -64,9 +70,7 @@ module Moderate
       return @current_appellant if defined?(@current_appellant)
 
       @current_appellant =
-        if respond_to?(:current_user, true)
-          current_user
-        end
+        (current_user if respond_to?(:current_user, true))
     rescue StandardError
       @current_appellant = nil
     end

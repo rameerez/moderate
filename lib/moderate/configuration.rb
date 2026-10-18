@@ -64,6 +64,45 @@ module Moderate
     # --- Misc -----------------------------------------------------------------
     attr_accessor :locale
 
+    # --- Attachment classification ----------------------------------------------
+    # How long a worker's claim on a set of attached files lasts (seconds, or an
+    # ActiveSupport::Duration) before another worker may take it over: longer than
+    # your slowest adapter call, short enough that a worker that died mid-call doesn't
+    # leave the files unclassified for long. See Moderate::Attachments.
+    # Capped at a day (MAX_CLASSIFICATION_CLAIM_TTL) so a claim always ends, and a
+    # purge — which keeps rows with a live claim — can't be held off forever.
+    attr_reader :classification_claim_ttl
+
+    # What the boot check does when the app holds copies of the gem's migrations
+    # (*.moderate.rb) but not every one this version ships: :raise (the default; under
+    # a rake task it logs instead, so `bin/rails moderate:install:migrations` can run),
+    # :log, or :off. See Moderate::Engine.check_migration_copies!.
+    MIGRATION_COPIES_CHECKS = %i[raise log off].freeze
+    attr_reader :migration_copies_check
+
+    def migration_copies_check=(mode)
+      mode = mode.to_s.strip.downcase.to_sym
+      unless MIGRATION_COPIES_CHECKS.include?(mode)
+        raise ArgumentError, "migration_copies_check must be one of: #{MIGRATION_COPIES_CHECKS.join(", ")}"
+      end
+
+      @migration_copies_check = mode
+    end
+
+    MAX_CLASSIFICATION_CLAIM_TTL = 24 * 60 * 60 # 1 day, in seconds
+
+    def classification_claim_ttl=(value)
+      seconds = value.respond_to?(:to_f) ? value.to_f : 0.0
+      unless seconds.positive? && seconds <= MAX_CLASSIFICATION_CLAIM_TTL
+        raise ArgumentError,
+          "classification_claim_ttl must be more than 0 and at most a day (#{MAX_CLASSIFICATION_CLAIM_TTL} seconds), " \
+          "got #{value.inspect}: longer than your slowest adapter call, short enough that files a dead worker " \
+          "claimed are taken over"
+      end
+
+      @classification_claim_ttl = value
+    end
+
     # --- DSA notice form ------------------------------------------------------
     # Documented in docs/dsa-notice-form.md. Held here so the engine/controller
     # (written by other components) read them off the same Configuration object.
@@ -74,12 +113,11 @@ module Moderate
     # the controller auto-uses Turnstile instead and this proc is bypassed.
     attr_reader :parent_controller
     attr_accessor :notice_form_enabled, :notice_rate_limit,
-                  :notice_turnstile_site_key, :notice_turnstile_secret_key,
-                  :notice_captcha_verifier, :notice_guard, :notice_human_verification_skip_if,
-                  :appeal_form_enabled, :appeal_rate_limit, :appeal_guard,
-                  :appeal_human_verification_skip_if, :appeal_return_path,
-                  :transparency_report_enabled,
-                  :signed_gid_purposes
+      :notice_turnstile_site_key, :notice_turnstile_secret_key,
+      :notice_captcha_verifier, :notice_guard, :notice_human_verification_skip_if,
+      :appeal_form_enabled, :appeal_rate_limit, :appeal_guard,
+      :appeal_human_verification_skip_if, :appeal_return_path,
+      :transparency_report_enabled
 
     def initialize
       # Identity. "User" is the overwhelmingly common case; the host overrides it
@@ -125,6 +163,9 @@ module Moderate
       # Misc. nil locale ⇒ follow I18n.default_locale at use time.
       @locale = nil
 
+      @classification_claim_ttl = 600 # 10 minutes, in seconds
+      @migration_copies_check = :raise
+
       # Engine controller defaults. The parent controller defaults to a stock base so
       # the engine works even on API-only apps — the same `parent_controller`
       # indirection Devise and api_keys use.
@@ -161,8 +202,6 @@ module Moderate
       # off, the mounted `/transparency` route 404s; the aggregation stays queryable in
       # code so a host can still build/publish its own report.
       @transparency_report_enabled = false
-
-      @signed_gid_purposes = %i[appeal confirm_notice unsubscribe]
     end
 
     # How a "ban" is applied in the host. Unlike the other hooks, leaving it unset is
@@ -184,6 +223,21 @@ module Moderate
 
     def ban_handler_configured?
       @ban_handler_configured == true
+    end
+
+    # Is this person banned right now, in your app? Optional: `->(user) { user.banned? }`.
+    # A ban decision on someone a decision of this same episode already banned is
+    # normally recorded as covered by that one (one ban per person per episode). That
+    # is only true while the account is still banned: set this, and a person your app
+    # has unbanned since is banned again by your ban_handler, so a "suspended"
+    # statement of reasons is never sent for an account nothing suspended. Unset
+    # (nil), the earlier ban counts, as before.
+    attr_reader :banned
+
+    def banned=(check)
+      raise ArgumentError, "banned must respond to #call (e.g. ->(user) { user.banned? })" unless check.nil? || check.respond_to?(:call)
+
+      @banned = check
     end
 
     def parent_controller=(value)
@@ -313,9 +367,7 @@ module Moderate
     # the ecosystem-wide convention.
     def normalize_mode(value)
       mode = value.to_s.strip.downcase.to_sym
-      unless FILTER_MODES.include?(mode)
-        raise ArgumentError, "default_filter_mode must be one of: #{FILTER_MODES.join(', ')}"
-      end
+      raise ArgumentError, "default_filter_mode must be one of: #{FILTER_MODES.join(", ")}" unless FILTER_MODES.include?(mode)
 
       mode
     end

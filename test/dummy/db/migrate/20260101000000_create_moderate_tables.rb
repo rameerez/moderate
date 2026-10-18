@@ -19,11 +19,11 @@
 # (which the engine adds to the app's migration paths here) creates it, as it does in
 # every host, so every CI run exercises that migration on all three databases.
 #
-# The migration version is pinned to [7.1] — the gemspec floor and the lowest Rails
+# The migration version is pinned to [8.0] — the gemspec floor and the lowest Rails
 # in the test matrix. (The template renders this from ActiveRecord::VERSION at
 # generate time; here we anchor to the floor, which every Rails in the matrix
 # accepts.)
-class CreateModerateTables < ActiveRecord::Migration[7.1]
+class CreateModerateTables < ActiveRecord::Migration[8.0]
   def change
     primary_key_type, foreign_key_type = primary_and_foreign_key_types
 
@@ -92,12 +92,12 @@ class CreateModerateTables < ActiveRecord::Migration[7.1]
       t.timestamps
     end
 
-    add_index :moderate_reports, [:reportable_type, :reportable_id], name: "index_moderate_reports_on_reportable"
-    add_index :moderate_reports, [:reported_user_id, :status], name: "index_moderate_reports_on_reported_user_id_and_status"
-    add_index :moderate_reports, [:reporter_id, :created_at], name: "index_moderate_reports_on_reporter_id_and_created_at"
-    add_index :moderate_reports, [:status, :created_at], name: "index_moderate_reports_on_status_and_created_at"
-    add_index :moderate_reports, [:intake_kind, :created_at], name: "index_moderate_reports_on_intake_kind_and_created_at"
-    add_index :moderate_reports, [:legal_reason, :created_at], name: "index_moderate_reports_on_legal_reason_and_created_at"
+    add_index :moderate_reports, %i[reportable_type reportable_id], name: "index_moderate_reports_on_reportable"
+    add_index :moderate_reports, %i[reported_user_id status], name: "index_moderate_reports_on_reported_user_id_and_status"
+    add_index :moderate_reports, %i[reporter_id created_at], name: "index_moderate_reports_on_reporter_id_and_created_at"
+    add_index :moderate_reports, %i[status created_at], name: "index_moderate_reports_on_status_and_created_at"
+    add_index :moderate_reports, %i[intake_kind created_at], name: "index_moderate_reports_on_intake_kind_and_created_at"
+    add_index :moderate_reports, %i[legal_reason created_at], name: "index_moderate_reports_on_legal_reason_and_created_at"
     add_index :moderate_reports, :notifier_email, name: "index_moderate_reports_on_notifier_email"
     add_index :moderate_reports, :resolved_at, name: "index_moderate_reports_on_resolved_at"
     add_index :moderate_reports, :appeal_deadline_at, name: "index_moderate_reports_on_appeal_deadline_at"
@@ -128,7 +128,7 @@ class CreateModerateTables < ActiveRecord::Migration[7.1]
       t.timestamps
     end
 
-    add_index :moderate_blocks, [:blocker_id, :blocked_id], unique: true, name: "index_moderate_blocks_on_blocker_id_and_blocked_id"
+    add_index :moderate_blocks, %i[blocker_id blocked_id], unique: true, name: "index_moderate_blocks_on_blocker_id_and_blocked_id"
     add_index :moderate_blocks, :created_at, name: "index_moderate_blocks_on_created_at"
 
     add_check_constraint :moderate_blocks,
@@ -169,9 +169,9 @@ class CreateModerateTables < ActiveRecord::Migration[7.1]
       t.timestamps
     end
 
-    add_index :moderate_flags, [:flaggable_type, :flaggable_id, :field], name: "index_moderate_flags_on_target_and_field"
-    add_index :moderate_flags, [:owner_id, :status], name: "index_moderate_flags_on_owner_id_and_status"
-    add_index :moderate_flags, [:status, :created_at], name: "index_moderate_flags_on_status_and_created_at"
+    add_index :moderate_flags, %i[flaggable_type flaggable_id field], name: "index_moderate_flags_on_target_and_field"
+    add_index :moderate_flags, %i[owner_id status], name: "index_moderate_flags_on_owner_id_and_status"
+    add_index :moderate_flags, %i[status created_at], name: "index_moderate_flags_on_status_and_created_at"
 
     # Flag's mode/source/status vocabularies are validated in Moderate::Flag
     # (constants + inclusion validations), not by DB CHECK constraints — same
@@ -205,8 +205,8 @@ class CreateModerateTables < ActiveRecord::Migration[7.1]
       t.timestamps
     end
 
-    add_index :moderate_appeals, [:report_id, :created_at], name: "index_moderate_appeals_on_report_id_and_created_at"
-    add_index :moderate_appeals, [:status, :created_at], name: "index_moderate_appeals_on_status_and_created_at"
+    add_index :moderate_appeals, %i[report_id created_at], name: "index_moderate_appeals_on_report_id_and_created_at"
+    add_index :moderate_appeals, %i[status created_at], name: "index_moderate_appeals_on_status_and_created_at"
     add_index :moderate_appeals, :appellant_email, name: "index_moderate_appeals_on_appellant_email"
 
     # Appeal's source/status vocabularies are validated in Moderate::Appeal
