@@ -585,9 +585,6 @@ module Moderate
         content_type: content_type,
         reported_account_identifier: reported_account_identifier,
         content_text: live_content_text,
-        # Which revision of the content was reported: two reports name the same one
-        # only if their text and this agree (ResolveReport's covering removal).
-        content_updated_at: reportable.try(:updated_at)&.utc&.iso8601(6),
         captured_at: Time.current.iso8601
       }.compact
     end

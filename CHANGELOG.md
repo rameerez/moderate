@@ -125,12 +125,12 @@ this entry.
   removed nothing and was refused. `resolve!(remove_content: true)` now finds an actioned
   report on the same content and field whose decision removed it, while the content is
   gone now (read fresh under the content's lock; deleted content counts, matched through
-  the snapshot), and records `resolution_actions["content_already_removed_by"]`. Only for
-  the same revision: both reports' intake snapshots must carry the same content text and
-  the same content `updated_at` (newly recorded in the snapshot as `content_updated_at`),
-  so a repost into the same field is never credited to an old removal; when a snapshot
-  can't name the revision (filed before 1.0, purged, content without text), nothing is
-  covered and the normal removal or refusal applies. Nothing is removed, audited or
+  the snapshot), and records `resolution_actions["content_already_removed_by"]`. Only when
+  this report was filed before that removal (its `created_at` against the earlier
+  decision's `resolved_at`) and both intake snapshots carry the same text: a report filed
+  after a removal is never credited to it (it is about a repost, or a removal that didn't
+  take), whatever the content's own timestamps say, and without both texts nothing is
+  covered; the normal removal or refusal ("Nothing was removed") applies. Nothing is removed, audited or
   announced a second time, the author gets no second statement of
   reasons (unless this decision also bans), and the reporter's `report_decision` carries
   `content_already_removed_by` and says "already removed by the decision on Report #X".

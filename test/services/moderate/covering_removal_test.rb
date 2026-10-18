@@ -85,9 +85,33 @@ class Moderate::CoveringRemovalTest < ActiveSupport::TestCase
     assert_nil repost_report.reload.resolution_actions["content_already_removed_by"]
   end
 
-  test "a report whose snapshot can't name the revision is not covered" do
+  test "a report filed after the removal, on a repost written with update_column, is not covered" do
     remove_through(@first)
-    @second.update_column(:snapshot, @second.snapshot.except("content_updated_at")) # an older intake
+    @comment.update_column(:body, "vile words") # the same words again, no updated_at change
+    after = User.create!(name: "Third", email: "third@example.com").report!(@comment, category: :harassment, field: :body)
+    @comment.update_column(:body, "") # and gone again
+
+    error = assert_raises(ActiveRecord::RecordInvalid) do
+      after.resolve!(by: @moderator, note: "Repost", remove_content: true)
+    end
+    assert_match "Nothing was removed", error.message
+    assert_nil after.reload.resolution_actions["content_already_removed_by"]
+  end
+
+  test "a report filed after the removal, on content still gone, is refused: nothing is left to remove" do
+    remove_through(@first)
+    after = User.create!(name: "Third", email: "third@example.com").report!(@comment, category: :harassment, field: :body)
+
+    error = assert_raises(ActiveRecord::RecordInvalid) do
+      after.resolve!(by: @moderator, note: "Late report", remove_content: true)
+    end
+    assert_match "Nothing was removed", error.message
+    assert_predicate after.reload, :open?
+  end
+
+  test "a report whose snapshot carries no text is not covered" do
+    remove_through(@first)
+    @second.update_column(:snapshot, @second.snapshot.except("content_text"))
 
     assert_raises(ActiveRecord::RecordInvalid) do
       @second.resolve!(by: @moderator, note: "Same content", remove_content: true)

@@ -202,20 +202,24 @@ module Moderate
         Moderate::Report.actioned.where(pointer).where(reported_field: report.reported_field)
           .where.not(id: report.id).recent_first.lock
           .find do |prior|
-            content_ids(prior) == [type, id] && same_revision?(prior) &&
+            content_ids(prior) == [type, id] && same_content_reported?(prior) &&
               truthy?(prior.resolution_actions.to_h["remove_content"])
           end
       end
 
-      # Did `prior` decide on the very revision this report was filed on? Their intake
-      # snapshots must carry the same content text and the same content `updated_at`.
-      # When either is missing (an older snapshot, a purged one, content with no text),
-      # identity can't be established and nothing is covered: a repost into the same
-      # field is new content, and an old removal must never be credited for it.
-      def same_revision?(prior)
-        mine = report.snapshot.to_h.with_indifferent_access
-        theirs = prior.snapshot.to_h.with_indifferent_access
-        %i[content_text content_updated_at].all? { |key| mine[key].present? && mine[key] == theirs[key] }
+      # Was this report about the very content `prior` removed? Only if it was filed
+      # BEFORE that removal (the gem's own timeline: this report's created_at against
+      # the prior decision's resolved_at) and both intake snapshots carry the same,
+      # non-blank text. A report filed after a removal is about something that existed
+      # after it (a repost, or a removal that didn't take), so it is never credited to
+      # it; nothing is inferred from the content's own timestamps, which a host can
+      # write past. Without both texts nothing is covered.
+      def same_content_reported?(prior)
+        return false unless prior.resolved_at && report.created_at && report.created_at < prior.resolved_at
+
+        mine = report.snapshot.to_h.with_indifferent_access[:content_text]
+        theirs = prior.snapshot.to_h.with_indifferent_access[:content_text]
+        mine.present? && mine == theirs
       end
 
       # A report's content type and id, from its snapshot when its own pointer was
