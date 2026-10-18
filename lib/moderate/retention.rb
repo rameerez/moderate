@@ -134,7 +134,7 @@ module Moderate
     def self.classifications_due(cutoff, now)
       rows = Moderate::Classification.arel_table
       Moderate::Classification.where(updated_at: ..cutoff)
-        .where(rows[:claimed_at].eq(nil).or(rows[:claimed_at].lteq(now - Moderate::Attachments.claim_ttl)))
+        .where(rows[:claimed_at].eq(nil).or(rows[:claimed_at].lt(now - Moderate::Attachments.claim_ttl)))
     end
 
     # Rows the age cutoff would take but a live claim keeps (`:claims_kept`).

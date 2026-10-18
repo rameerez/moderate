@@ -76,7 +76,7 @@ module Moderate
     MAX_CLASSIFICATION_CLAIM_TTL = 24 * 60 * 60 # 1 day, in seconds
 
     def classification_claim_ttl=(value)
-      seconds = value.respond_to?(:to_i) ? value.to_i : 0
+      seconds = value.respond_to?(:to_f) ? value.to_f : 0.0
       unless seconds.positive? && seconds <= MAX_CLASSIFICATION_CLAIM_TTL
         raise ArgumentError,
           "classification_claim_ttl must be more than 0 and at most a day (#{MAX_CLASSIFICATION_CLAIM_TTL} seconds), " \
