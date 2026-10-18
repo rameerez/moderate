@@ -115,7 +115,7 @@ module Moderate
 
       note = note.to_s.strip.presence
       flag = Moderate.with_row_lock(record) do
-        where(flaggable: record, field: field_s).pending.recent_first.first ||
+        where(flaggable: record, field: field_s).pending.recent_first.lock.first ||
           file_for_review!(record, field_s, by: by, note: note)
       end
       audit_filed_for_review(flag, by: by, note: note) if flag.previously_new_record?

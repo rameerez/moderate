@@ -375,6 +375,13 @@ module Moderate
     #
     # The lock is taken by query, not with `record.with_lock`, so the caller's object
     # is neither reloaded nor refused for carrying unsaved changes.
+    #
+    # Under the lock, every check that decides "already done" (a covering decision, a
+    # prior ban, a waiting flag, whether content is gone) is itself a LOCKING read
+    # (`.lock`, `reload(lock: true)`). Under MySQL's REPEATABLE READ a plain read
+    # returns the transaction's snapshot, taken before the lock was granted, and would
+    # miss what the decision we waited for committed; a locking read returns the
+    # latest committed row on every database.
     def with_row_lock(record)
       model = record.class
       return yield unless record.respond_to?(:persisted?) && record.persisted? && model.respond_to?(:lock)

@@ -49,7 +49,9 @@ module Moderate
         connection = Moderate::DeferredNotices.connection_for(appeal.class)
 
         appeal.with_lock do
-          appeal.reload
+          # `with_lock` already re-read the row under the lock (SELECT … FOR UPDATE):
+          # no plain reload here — under MySQL's REPEATABLE READ a plain read pins the
+          # transaction's snapshot, and every later check must see what committed.
 
           # A decided appeal is immutable — re-check inside the lock so a concurrent
           # second decision bails cleanly instead of overwriting the first.
