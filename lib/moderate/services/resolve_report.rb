@@ -90,7 +90,20 @@ module Moderate
       # The atomic core. Everything that mutates state happens under the row lock;
       # the (slow, fallible) notifications happen AFTER the lock is released, so a
       # broken mailer can't hold a database lock or roll back the decision.
-      def transition!(status, note:, actions:)
+      def transition!(status, note:, actions:, &enforcement)
+        # The content's lock first, then the report's (Moderate.with_row_lock): the
+        # same order a flag escalation takes, so the two never deadlock.
+        Moderate.with_row_lock(report.reportable) do
+          lock_and_transition!(status, note: note, actions: actions, &enforcement)
+        end
+
+        # After the decision is durably committed (Moderate.after_commit): never an
+        # email for a decision a host's surrounding transaction then rolled back.
+        Moderate.after_commit { deliver_decision_notices } if @deliver
+        report
+      end
+
+      def lock_and_transition!(status, note:, actions:)
         report.with_lock do
           report.reload
 
@@ -122,9 +135,6 @@ module Moderate
 
           audit_decision(status, actions, note)
         end
-
-        deliver_decision_notices if @deliver
-        report
       end
 
       # --- Enforcement (host contracts only) ----------------------------------
@@ -137,11 +147,26 @@ module Moderate
         return unless report.reportable.respond_to?(:remove_reported_field!)
 
         removed = report.reportable.remove_reported_field!(report.reported_field)
-        return removed unless removed
+        refuse_unremoved! unless removed
 
         @content_removed = content_removed_payload(note)
         Moderate.audit(:content_removed, **content_removed_event)
         removed
+      end
+
+      # "Remove the content" was asked and the reportable removed nothing (the field
+      # isn't removable, or it's already gone). Recording the decision anyway would
+      # tell the affected person "content removed" for content that's still there, so
+      # the whole decision is refused (and rolled back, a ban with it).
+      def refuse_unremoved!
+        message = I18n.t(
+          "moderate.errors.nothing_removed",
+          default: "Nothing was removed: %{content} has nothing removable there (already removed, or not " \
+                   "removable). Resolve without removing content, or dismiss.",
+          content: report.reportable_label
+        )
+        report.errors.add(:base, message)
+        raise ActiveRecord::RecordInvalid, report
       end
 
       def content_removed_payload(note)

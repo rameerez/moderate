@@ -136,6 +136,18 @@ module Moderate
       assert_equal 0, Moderate::Block.count
     end
 
+    test "report and block is one act: a block that fails files no report and sends no receipt" do
+      Moderate.configure { |config| config.on_block = ->(**) { raise "teardown failed" } }
+
+      assert_raises(RuntimeError) do
+        @participant.report!(@line, category: :harassment, details: "Rude", field: :body, block: true)
+      end
+
+      assert_equal 0, Moderate::Report.count
+      assert_equal 0, Moderate::Block.count
+      assert_empty ModerateTestRecorder.notifications_named(:report_received)
+    end
+
     test "a refused report blocks nobody" do
       assert_raises(ActiveRecord::RecordInvalid) do
         @outsider.report!(@line, category: :harassment, details: "Rude", field: :body, block: true)

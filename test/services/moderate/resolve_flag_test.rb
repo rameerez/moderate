@@ -12,13 +12,17 @@ module Moderate
     belongs_to :user
     has_reportable_content :body
 
+    # Every field a moderator removed, across instances, for "removed once" assertions.
+    cattr_accessor :removed_fields, default: []
+
     def reported_owner = user
     def moderation_snapshot(field) = (body if field.to_s == "body")
 
     def remove_reported_field!(field)
-      return false unless field.to_s == "body"
+      return false unless %w[body image].include?(field.to_s)
 
-      update!(body: nil)
+      update!(body: nil) if field.to_s == "body"
+      removed_fields << field.to_s
       true
     end
   end
@@ -43,6 +47,7 @@ module Moderate
           config.notify = ->(event) { ModerateTestRecorder.notify(event) }
         end
         ModerateTestRecorder.clear
+        EscalationComment.removed_fields = []
       end
 
       test "actioning a flag closes it, stamps the reviewer, and audits the review" do
@@ -214,8 +219,86 @@ module Moderate
           flag.action!(by: User.create!(name: "Mod"), note: "Remove it.", remove_content: true)
         end
 
-        assert_predicate flag.reload, :pending?, "image isn't a reportable field, so the report can't open"
-        assert_equal 0, Moderate::Report.count
+        assert_predicate flag.reload, :pending?, "Comment removes nothing, so the decision is refused"
+        assert_equal 0, Moderate::Report.count, "and the system report rolled back with it"
+      end
+
+      test "a flag on a field people can't report still enforces through a system report" do
+        flag = create_flag(comment_class: EscalationComment, field: "image")
+
+        flag.action!(by: User.create!(name: "Mod"), note: "Explicit photo.", remove_content: true)
+
+        report = flag.reload.report
+        assert_equal "image", report.reported_field
+        assert_equal "actioned", report.status
+        assert_equal ["image"], EscalationComment.removed_fields
+      end
+
+      test "a second flag on the same content closes against the decision already taken, enforcing nothing again" do
+        moderator = User.create!(name: "Mod")
+        first = create_flag(comment_class: EscalationComment)
+        second = Moderate::Flag.flag!(
+          flaggable: first.flaggable, field: "body", owner: first.owner, source: "manual", mode: "flag",
+          excerpt: "ok body", categories: [], scores: {}, context: {}
+        )
+
+        first.action!(by: moderator, note: "Removed.", remove_content: true)
+        assert_no_difference -> { Moderate::Report.count } do
+          second.action!(by: moderator, note: "Same thing.", remove_content: true)
+        end
+
+        assert_equal first.reload.report, second.reload.report
+        assert_equal "actioned", second.status
+        assert_equal ["body"], EscalationComment.removed_fields, "removed once"
+        assert_equal 1, ModerateTestRecorder.notifications_named(:affected_user_decision).size
+      end
+
+      test "a new kind of enforcement on the same content is a new decision" do
+        Moderate.configure { |config| config.ban_handler = ModerateTestRecorder.method(:ban_handler) }
+        moderator = User.create!(name: "Mod")
+        first = create_flag(comment_class: EscalationComment)
+        second = Moderate::Flag.flag!(
+          flaggable: first.flaggable, field: "body", owner: first.owner, source: "manual", mode: "flag",
+          excerpt: "ok body", categories: [], scores: {}, context: {}
+        )
+
+        first.action!(by: moderator, note: "Removed.", remove_content: true)
+        second.action!(by: moderator, note: "And banned.", ban_user: true)
+
+        assert_not_equal first.reload.report, second.reload.report
+        assert_equal 1, ModerateTestRecorder.bans.size
+      end
+
+      # --- Automated-means disclosure on escalation ----------------------------
+
+      test "enforcing a classifier's flag through a person's earlier report discloses the automation" do
+        author = User.create!(name: "Author", email: "a-early@example.com")
+        comment = EscalationComment.create!(user: author, body: "slur")
+        reporter = User.create!(name: "Reporter", email: "early@example.com")
+        report = reporter.report!(comment, category: :hate, details: "Slur", field: :body)
+        assert_not_predicate report, :automated_processing_used?, "no classifier had looked yet"
+        flag = Moderate::Flag.flag!(
+          flaggable: comment, field: "body", owner: author, source: "text_filter", mode: "flag",
+          excerpt: "slur", categories: ["hate"], scores: {}, context: {}
+        )
+        ModerateTestRecorder.clear
+
+        flag.action!(by: User.create!(name: "Mod"), note: "Slur.", remove_content: true)
+
+        assert_equal report, flag.reload.report
+        assert_predicate report.reload, :automated_processing_used?
+        assert_includes report.automated_processing["flag_ids"], flag.id
+        assert_equal true, ModerateTestRecorder.notifications_named(:affected_user_decision).sole.payload[:automated]
+      end
+
+      test "a manual flag is not automated means" do
+        comment = EscalationComment.create!(user: User.create!(name: "Author", email: "a-manual@example.com"), body: "rude")
+        flag = Moderate::Flag.flag_for_review!(comment, field: :body, by: User.create!(name: "Admin"))
+
+        flag.action!(by: User.create!(name: "Mod"), note: "Rude.", remove_content: true)
+
+        assert_not_predicate flag.reload.report, :automated_processing_used?
+        assert_equal false, ModerateTestRecorder.notifications_named(:affected_user_decision).sole.payload[:automated]
       end
 
       test "a ban with no ban_handler is refused and the flag stays pending" do

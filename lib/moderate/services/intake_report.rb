@@ -51,18 +51,25 @@ module Moderate
       # failed (the report carries its errors, Rails-conventionally) so a controller
       # can `if intake.save ... else render :new` exactly like a bare model save.
       def save
-        return false unless report.save
+        # The report and, for "report and block", the block are ONE act: both commit
+        # or neither does (a host on_block hook that raises rolls the report back
+        # too, and the error reaches the caller), and the receipt goes out only after.
+        saved = Moderate::Report.transaction do
+          next false unless report.save
 
-        # DSA Art. 16(4): the provider must confirm receipt "without undue delay."
-        # `acknowledge!` stamps `acknowledged_at` — the durable, on-record proof of
-        # receipt — BEFORE we attempt the (best-effort, possibly-undelivered) email,
-        # so the legal obligation is met by the database fact, not by a mailer that
-        # might not be wired. See: https://eur-lex.europa.eu/eli/reg/2022/2065/oj
-        report.acknowledge!
+          # DSA Art. 16(4): the provider must confirm receipt "without undue delay."
+          # `acknowledge!` stamps `acknowledged_at` — the durable, on-record proof of
+          # receipt — BEFORE we attempt the (best-effort, possibly-undelivered) email,
+          # so the legal obligation is met by the database fact, not by a mailer that
+          # might not be wired. See: https://eur-lex.europa.eu/eli/reg/2022/2065/oj
+          report.acknowledge!
+          block_reported_user
+          true
+        end
+        return false unless saved
 
         deliver_receipt
         audit_intake
-        block_reported_user
         true
       end
 

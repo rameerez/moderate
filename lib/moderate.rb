@@ -354,6 +354,31 @@ module Moderate
             "`config.ban_handler = ->(user:, by:, reason:) { user.suspend!(reason: reason) }`."
     end
 
+    # --- Transactions -----------------------------------------------------------
+
+    # Run `block` once the caller's transactions have all committed — at once when
+    # none is open; never if one rolls back. The decision services send their notices
+    # through this, so a host that decides inside a transaction of its own (and later
+    # rolls it back) never emails a decision that didn't happen. On Rails 7.1, which
+    # has no `ActiveRecord.after_all_transactions_commit`, it runs at once.
+    def after_commit(&block)
+      if defined?(::ActiveRecord) && ::ActiveRecord.respond_to?(:after_all_transactions_commit)
+        ::ActiveRecord.after_all_transactions_commit(&block)
+      else
+        yield
+      end
+    end
+
+    # Hold `record`'s row lock (SELECT … FOR UPDATE) for the block, or just run the
+    # block when there's no saved row to lock. Enforcement takes the CONTENT's lock
+    # before the report's, everywhere (flag → content → report), so two decisions
+    # about the same content serialize instead of enforcing twice or deadlocking.
+    def with_row_lock(record, &block)
+      return yield unless record.respond_to?(:with_lock) && record.persisted?
+
+      record.with_lock(&block)
+    end
+
     # --- Blocking SSOT --------------------------------------------------------
 
     # The single source-of-truth list of user ids "related to" `user` via a block

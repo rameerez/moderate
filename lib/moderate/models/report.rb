@@ -99,6 +99,9 @@ module Moderate
     # persist; the services read them. Kept here so both the model and its services
     # share one definition.
     attr_accessor :skip_received_notice, :block_reported_user
+    # The Moderate::Flag a system report was opened from (Flag#action! enforcing).
+    # Such a report may name the flag's field even if people can't report that field.
+    attr_accessor :escalated_from_flag
 
     # All actor associations resolve to the HOST's configured user class, read
     # lazily from the configuration as a String so this file loads before the host
@@ -564,6 +567,7 @@ module Moderate
     # isn't a managed reportable), we don't constrain the field.
     def reportable_field_must_be_allowed
       return if reportable.blank?
+      return if escalated_from_flag && escalated_from_flag.field.to_s == reported_field.to_s
       return unless reportable.respond_to?(:reportable_field_allowed?)
       return if reportable.reportable_field_allowed?(reported_field)
 
@@ -660,7 +664,8 @@ module Moderate
     def automated_processing_evidence
       evidence = {}
 
-      matching_flags = flags.to_a
+      # A manual flag is an administrator's own judgment, not automated means.
+      matching_flags = flags.reject { |flag| flag.source == "manual" }
       if matching_flags.any?
         evidence["used"] = true
         evidence["flag_ids"] = matching_flags.map(&:id)

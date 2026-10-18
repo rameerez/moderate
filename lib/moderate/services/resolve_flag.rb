@@ -66,22 +66,39 @@ module Moderate
           # an error) — and nothing is enforced a second time.
           next unless flag.pending?
 
-          decision = enforce!(note, enforcement, resolution_basis) if enforcement
-          close!(status, note, decision&.report)
+          decision, report = enforce!(note, enforcement, resolution_basis) if enforcement
+          close!(status, note, report)
         end
 
-        # Notify outside the lock, as every decision does: a slow or broken mailer
-        # must not hold the row or roll the decision back.
-        decision&.deliver_decision_notices
+        # Notify outside the lock and after the commit, as every decision does: a
+        # slow or broken mailer must not hold the row or roll the decision back.
+        Moderate.after_commit { decision.deliver_decision_notices } if decision
         flag
       end
 
-      # Resolve the escalation report with the requested enforcement, holding its
-      # notices back until the flag's lock is released.
+      # Enforce under the CONTENT's row lock too (after the flag's, before the
+      # report's — the gem's one lock order), so two flags on the same content can't
+      # both enforce: the second waits, then finds the decision the first took.
+      # Returns [the ResolveReport that decided, or nil, the report the flag answers to].
       def enforce!(note, enforcement, resolution_basis)
-        decision = ResolveReport.new(escalation_report!(note), by: moderator, deliver: false)
-        decision.resolve!(note: note, resolution_basis: resolution_basis, **enforcement)
-        decision
+        Moderate.with_row_lock(flag.flaggable) do
+          prior = covering_decision(enforcement)
+          next [nil, prior] if prior
+
+          report = escalation_report!(note)
+          decision = ResolveReport.new(report, by: moderator, deliver: false)
+          decision.resolve!(note: note, resolution_basis: resolution_basis, **enforcement)
+          [decision, report]
+        end
+      end
+
+      # A report on the same content and field, decided since this flag was filed,
+      # that already did everything asked now (removed it, banned the person). The
+      # flag closes against it instead of restricting a second time.
+      def covering_decision(enforcement)
+        asked = enforcement.select { |_action, wanted| wanted }.keys.map(&:to_s)
+        decided = Moderate::Report.actioned.where(same_content).where(resolved_at: flag.created_at..).recent_first
+        decided.find { |report| asked.all? { |action| truthy?(report.resolution_actions.to_h[action]) } }
       end
 
       def close!(status, note, report)
@@ -97,23 +114,44 @@ module Moderate
       # no reporter, so it sends no receipt and no reporter-facing decision; the
       # affected user still gets the statement of reasons and the appeal window.
       def escalation_report!(note)
-        same_content = {
-          reportable_type: flag.flaggable_type, reportable_id: flag.flaggable_id, reported_field: flag.field
-        }
         existing = Moderate::Report.open.where(same_content).recent_first.first
-        return existing if existing
+        return disclose_automation!(existing) if existing
 
         system_report!(note)
       end
 
+      def same_content
+        { reportable_type: flag.flaggable_type, reportable_id: flag.flaggable_id, reported_field: flag.field }
+      end
+
+      # A system report opened for this decision. It may name any field the flag is
+      # on (`escalated_from_flag`): a filtered field (an image, say) needn't be one a
+      # PERSON may report for the gem to enforce on it.
       def system_report!(note)
         message = "Escalated from flag ##{flag.id} (#{flag.source}): #{note}"
         Moderate::Report.create!(
           reportable: flag.flaggable, reported_field: flag.field, reported_user: flag.owner,
           intake_kind: "community", category: escalation_category,
           message: message.truncate(Moderate::Report::MESSAGE_MAX_LENGTH),
-          good_faith_confirmed: true, skip_received_notice: true
+          good_faith_confirmed: true, skip_received_notice: true, escalated_from_flag: flag
         )
+      end
+
+      # A person's report filed BEFORE a classifier flagged the same content never
+      # saw that flag, so its automated-means disclosure (DSA Art. 17(3)(c)) says
+      # "no". When the flag is what's being enforced, the decision must say "yes":
+      # merge the flag's evidence in first. A manual flag is a person, not automation.
+      def disclose_automation!(report)
+        return report if flag.source == "manual"
+
+        evidence = report.automated_processing.to_h
+        report.update_column(:automated_processing, evidence.merge(
+          "used" => true,
+          "flag_ids" => Array(evidence["flag_ids"]) | [flag.id],
+          "sources" => Array(evidence["sources"]) | [flag.source],
+          "categories" => Array(evidence["categories"]) | Array(flag.categories)
+        ))
+        report
       end
 
       # The flag's own categories speak the classifier taxonomy ("hate",

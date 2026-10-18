@@ -50,7 +50,7 @@ module Moderate
       test "Report#resolve! and #dismiss! delegate to the service (the README's plain-English API)" do
         moderator = User.create!(name: "Mod", email: "mod-delegate@example.com")
         author = User.create!(name: "Author", email: "author-delegate@example.com")
-        comment = Comment.create!(user: author, body: "ok body")
+        comment = RemovableBodyComment.create!(user: author, body: "ok body")
 
         report = create_report(reportable: comment, field: "body")
         report.resolve!(by: moderator, remove_content: true, ban_user: true, note: "Hate speech")
@@ -66,7 +66,7 @@ module Moderate
       test "resolving with actions removes content, bans the owner, audits, and fires both decision events" do
         moderator = User.create!(name: "Mod", email: "mod@example.com")
         author = User.create!(name: "Author", email: "author@example.com")
-        comment = Comment.create!(user: author, body: "ok body")
+        comment = RemovableBodyComment.create!(user: author, body: "ok body")
         report = create_report(reportable: comment, field: "body")
 
         Moderate::Services::ResolveReport.new(report, by: moderator)
@@ -213,7 +213,7 @@ module Moderate
       test "the decision payload discloses whether automated means were used (Art. 17(3)(c))" do
         moderator = User.create!(name: "Mod", email: "mod@example.com")
         author = User.create!(name: "Author", email: "author@example.com")
-        comment = Comment.create!(user: author, body: "ok body")
+        comment = RemovableBodyComment.create!(user: author, body: "ok body")
         report = create_report(reportable: comment, field: "body")
 
         # No classifier touched this content, so the disclosure must read "automated: false"
@@ -316,17 +316,61 @@ module Moderate
         assert_equal audit.payload, event.payload
       end
 
-      test "no content_removed when the reportable removed nothing" do
+      # --- Notices wait for the host's transaction ------------------------------
+
+      test "decided inside a host's transaction, the notices wait for it to commit" do
+        skip_before_rails_7_2
+        author = User.create!(name: "Author", email: "author-tx@example.com")
+        report = create_report(reportable: Comment.create!(user: author, body: "meh"), field: "body")
+        ModerateTestRecorder.clear
+
+        ActiveRecord::Base.transaction do
+          report.resolve!(by: User.create!(name: "Mod"), note: "Warned.")
+          assert_empty ModerateTestRecorder.notifications_named(:affected_user_decision), "not before the commit"
+        end
+
+        assert_equal 1, ModerateTestRecorder.notifications_named(:affected_user_decision).size
+      end
+
+      test "decided inside a host's transaction that rolls back, nobody is told" do
+        skip_before_rails_7_2
+        author = User.create!(name: "Author", email: "author-rb@example.com")
+        report = create_report(reportable: Comment.create!(user: author, body: "meh"), field: "body")
+        ModerateTestRecorder.clear
+
+        ActiveRecord::Base.transaction do
+          report.resolve!(by: User.create!(name: "Mod"), note: "Warned.")
+          raise ActiveRecord::Rollback
+        end
+
+        assert_predicate report.reload, :open?
+        assert_empty ModerateTestRecorder.notifications_named(:affected_user_decision)
+        assert_empty ModerateTestRecorder.notifications_named(:report_decision)
+      end
+
+      test "removing content that isn't removable refuses the decision instead of claiming it" do
+        moderator = User.create!(name: "Mod", email: "mod-kept@example.com")
         author = User.create!(name: "Author", email: "author-kept@example.com")
         report = create_report(reportable: Comment.create!(user: author, body: "meh"), field: "body")
+        ModerateTestRecorder.clear
 
-        report.resolve!(by: User.create!(name: "Mod"), note: "Kept.", remove_content: true)
+        error = assert_raises(ActiveRecord::RecordInvalid) do
+          report.resolve!(by: moderator, note: "Kept.", remove_content: true, ban_user: true)
+        end
 
-        assert_empty ModerateTestRecorder.notifications_named(:content_removed)
-        assert_empty ModerateTestRecorder.audits_named(:content_removed)
+        assert_match(/Nothing was removed/, error.record.errors[:base].sole)
+        assert_predicate report.reload, :open?, "no decision recorded"
+        assert_empty ModerateTestRecorder.bans, "and the ban rolled back with it"
+        assert_empty ModerateTestRecorder.notifications
       end
 
       private
+
+      def skip_before_rails_7_2
+        return if ActiveRecord.respond_to?(:after_all_transactions_commit)
+
+        skip "ActiveRecord.after_all_transactions_commit needs Rails 7.2+"
+      end
 
       # A minimal community report the resolver acts on. The reporter is created here,
       # DISTINCT from the reportable's owner, on purpose: `Moderate::Report` infers the

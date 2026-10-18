@@ -44,8 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   category label themselves, or whose forms said "optional" while the gem refused it, can
   stop.
 - **"Report and block": `report!(…, block: true)`** blocks the person responsible for the
-  content once the report is filed, through the one block path (idempotent, audited,
-  `on_block`, `user_blocked`). `Report#block_reported_user`, which has existed since beta1
+  content in the same transaction as the report (both or neither; the receipt goes out
+  after), through the one block path (idempotent, audited, `on_block`, `user_blocked`). `Report#block_reported_user`, which has existed since beta1
   and which nothing read, is what it sets. Nothing is blocked when the content has no person
   behind it.
 - **Reports know what kind of content they're about.** A community report with no
@@ -78,11 +78,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if a person already filed one, else a system report (no reporter, so no receipt and no
   reporter-facing decision). Content is removed through the reportable's
   `remove_reported_field!`, the ban goes through your `ban_handler`, and the affected user
-  gets the statement of reasons and the appeal window a restriction requires. It all runs
-  under the flag's row lock, so two moderators pressing it at once enforce once, and the
-  decision notices go out after the lock is released. `flag.report` is the report it went
-  through. Hosts that hand-wrote this bridge (find-or-create a report, resolve it, then close
-  the flag) can delete it. Without those options `action!` is the triage close it was.
+  gets the statement of reasons and the appeal window a restriction requires. It runs under
+  the flag's row lock and then the content's, so two moderators enforcing the same flag, or
+  two flags on the same content, enforce once: the second closes against the decision the
+  first took (unless it asks for more, say a ban after a removal). A system report may name
+  the flag's field even when people can't report that field (a filtered image), and
+  enforcing a classifier's flag through a person's earlier report adds the classifier to
+  that report's automated-means disclosure. `flag.report` is the report it went through.
+  Hosts that hand-wrote this bridge (find-or-create a report, resolve it, then close the
+  flag) can delete it. Without those options `action!` is the triage close it was.
 - **`Moderate::Flag.flag_for_review!(record, field:, by:, note: nil)`**: an administrator
   filing content for review by hand (the "Flag for review" button on a transcript line). It
   returns the pending flag on that field if one already waits, else files a
@@ -103,7 +107,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   always did) instead of overwriting the first decision.
 - **`ResolveReport.new(report, by:, deliver: false)`** holds the decision notices back for a
   caller that decides inside a lock of its own; `#deliver_decision_notices` sends them.
+- **Decision notices wait for the caller's transaction.** Report and flag decisions send
+  their notices through `Moderate.after_commit`, which is
+  `ActiveRecord.after_all_transactions_commit` on Rails 7.2+: a host that decides inside a
+  transaction of its own and rolls it back no longer emails a decision that didn't happen.
+  On Rails 7.1 the notices go out when the gem's own lock is released, as before.
+- **One lock order for enforcement: flag, then content, then report.** A report decision
+  now takes the reported content's row lock before the report's (`Moderate.with_row_lock`),
+  the same order a flag escalation takes, so concurrent decisions on the same content
+  serialize instead of deadlocking.
+- **A manual flag is not automated means.** A report's automated-processing disclosure
+  (DSA Art. 17(3)(c)) no longer counts `source: "manual"` flags on the same content.
 
+- **Removing content that isn't removable refuses the decision.** `remove_content: true`
+  when the reportable's `remove_reported_field!` removes nothing (the default for a
+  reportable that defines no removal, a field that isn't removable, content already gone)
+  now raises `RecordInvalid` ("Nothing was removed…", `moderate.errors.nothing_removed`)
+  and rolls the decision back, a ban with it. Before, the report was closed with
+  `decision_visibility: "content_removed"` and the affected person was told their content
+  was removed while it was still up. **Behavior change:** offer "remove content" only where
+  `removable_reported_field?` says it can happen.
 - **A ban needs a `ban_handler`.** With none configured, `ban_user: true` (on a report or a
   flag) and `Moderate.apply_ban` raise `Moderate::ConfigurationError` before anything
   changes. Before, the default no-op handler let the decision record
@@ -193,9 +216,12 @@ No migrations. Check these against your app:
    - en/es translations of the gem's taxonomies and field names (keep only the ones you
      changed);
    - a duplicated `config.filter` next to a `moderates` declaration for the same field.
-4. **`Flag#action!` re-closing** an already decided flag no longer overwrites the first
+4. **"Remove content" must remove something.** If your admin offers it on content whose
+   `remove_reported_field!` returns false, those decisions now fail instead of claiming a
+   removal. Gate the checkbox on `removable_reported_field?`.
+5. **`Flag#action!` re-closing** an already decided flag no longer overwrites the first
    decision: it returns the flag as it was.
-5. **`Moderate.blocked_ids_for(nil)`** is an empty relation, not `[]`. Call `.ids` if you
+6. **`Moderate.blocked_ids_for(nil)`** is an empty relation, not `[]`. Call `.ids` if you
    need an Array.
 
 ## [1.0.0.beta2] - 2026-07-10
