@@ -215,8 +215,9 @@ module Moderate
 
       def prior_ban_decision(user)
         since = @conduct_since || report.created_at
-        Moderate::Report.actioned.where(reported_user_id: user.id).where(resolved_at: since..).where.not(id: report.id)
-          .recent_first.find { |decided| truthy?(decided.resolution_actions.to_h["ban_user"]) }
+        decided = Moderate::Report.actioned.where(reported_user_id: user.id, resolved_at: since..)
+                                  .where.not(id: report.id)
+        decided.recent_first.find { |prior| truthy?(prior.resolution_actions.to_h["ban_user"]) }
       end
 
       # --- Notifications (after the lock) -------------------------------------

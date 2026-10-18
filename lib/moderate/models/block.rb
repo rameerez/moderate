@@ -187,7 +187,9 @@ module Moderate
         name,
         subject: self,
         actor: blocker,
-        payload: { blocker_id: blocker.id, blocked_id: blocked.id, summary: "user #{blocker.id} #{verb} user #{blocked.id}" }
+        payload: {
+          blocker_id: blocker.id, blocked_id: blocked.id, summary: "user #{blocker.id} #{verb} user #{blocked.id}"
+        }
       )
     end
 

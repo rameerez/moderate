@@ -54,7 +54,7 @@ module Moderate
         # The report and, for "report and block", the block are ONE act: both commit
         # or neither does (a host on_block hook that raises rolls the report back
         # too, and the error reaches the caller), and the receipt goes out only after.
-        saved = Moderate::Report.transaction do
+        Moderate::Report.transaction do
           next false unless report.save
 
           # DSA Art. 16(4): the provider must confirm receipt "without undue delay."
@@ -70,8 +70,6 @@ module Moderate
           audit_intake
           true
         end
-
-        saved
       end
 
       private

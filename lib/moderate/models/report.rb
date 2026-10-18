@@ -101,7 +101,6 @@ module Moderate
     # share one definition.
     attr_accessor :skip_received_notice, :block_reported_user
 
-
     # All actor associations resolve to the HOST's configured user class, read
     # lazily from the configuration as a String so this file loads before the host
     # has declared its User model (the initializer sets `config.user_class` first,
