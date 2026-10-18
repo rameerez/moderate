@@ -319,7 +319,7 @@ module Moderate
       # --- Notices wait for the host's transaction ------------------------------
 
       test "decided inside a host's transaction, the notices wait for it to commit" do
-        skip_before_rails_7_2
+        skip_without_after_all_transactions_commit
         author = User.create!(name: "Author", email: "author-tx@example.com")
         report = create_report(reportable: Comment.create!(user: author, body: "meh"), field: "body")
         ModerateTestRecorder.clear
@@ -333,7 +333,7 @@ module Moderate
       end
 
       test "decided inside a host's transaction that rolls back, nobody is told" do
-        skip_before_rails_7_2
+        skip_without_after_all_transactions_commit
         author = User.create!(name: "Author", email: "author-rb@example.com")
         report = create_report(reportable: Comment.create!(user: author, body: "meh"), field: "body")
         ModerateTestRecorder.clear
@@ -366,7 +366,7 @@ module Moderate
 
       private
 
-      def skip_before_rails_7_2
+      def skip_without_after_all_transactions_commit
         return if ActiveRecord.respond_to?(:after_all_transactions_commit)
 
         skip "ActiveRecord.after_all_transactions_commit needs Rails 7.2+"

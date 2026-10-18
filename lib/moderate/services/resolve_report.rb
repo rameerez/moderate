@@ -161,9 +161,9 @@ module Moderate
       def refuse_unremoved!
         message = I18n.t(
           "moderate.errors.nothing_removed",
-          default: "Nothing was removed: %{content} has nothing removable there (already removed, or not " \
-                   "removable). Resolve without removing content, or dismiss.",
-          content: report.reportable_label
+          content: report.reportable_label,
+          default: "Nothing was removed: #{report.reportable_label} has nothing removable there (already " \
+                   "removed, or not removable). Resolve without removing content, or dismiss."
         )
         report.errors.add(:base, message)
         raise ActiveRecord::RecordInvalid, report

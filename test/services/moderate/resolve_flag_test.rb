@@ -303,7 +303,8 @@ module Moderate
       end
 
       test "a manual flag is not automated means" do
-        comment = EscalationComment.create!(user: User.create!(name: "Author", email: "a-manual@example.com"), body: "rude")
+        author = User.create!(name: "Author", email: "a-manual@example.com")
+        comment = EscalationComment.create!(user: author, body: "rude")
         flag = Moderate::Flag.flag_for_review!(comment, field: :body, by: User.create!(name: "Admin"))
 
         flag.action!(by: User.create!(name: "Mod"), note: "Rude.", remove_content: true)

@@ -78,7 +78,8 @@ module Moderate
       reports = Moderate::Report.where(reportable_type: RaceComment.name, reportable_id: @comment.id)
       assert_equal 1, reports.count, "one decision"
       assert_equal %w[actioned actioned], Moderate::Flag.where(id: @flags.map(&:id)).pluck(:status)
-      assert_equal [reports.sole.id], Moderate::Flag.where(id: @flags.map(&:id)).map { |flag| flag.context["report_id"] }.uniq
+      report_ids = Moderate::Flag.where(id: @flags.map(&:id)).map { |flag| flag.context["report_id"] }
+      assert_equal [reports.sole.id], report_ids.uniq
     end
   end
 end

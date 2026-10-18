@@ -145,12 +145,13 @@ module Moderate
         return report if flag.source == "manual"
 
         evidence = report.automated_processing.to_h
-        report.update_column(:automated_processing, evidence.merge(
+        disclosed = evidence.merge(
           "used" => true,
           "flag_ids" => Array(evidence["flag_ids"]) | [flag.id],
           "sources" => Array(evidence["sources"]) | [flag.source],
           "categories" => Array(evidence["categories"]) | Array(flag.categories)
-        ))
+        )
+        report.update_column(:automated_processing, disclosed)
         report
       end
 
