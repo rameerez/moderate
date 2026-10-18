@@ -15,9 +15,11 @@ class AddPendingKeyToModerateFlagsTest < ActiveSupport::TestCase
     @migration.verbose = false
     @author = User.create!(name: "Author #{SecureRandom.hex(3)}")
     @comment = Comment.create!(user: @author, body: "x")
+    @inserted = []
   end
 
   teardown do
+    Moderate::Flag.where(id: @inserted).delete_all # first: rows a test left could stop the migration
     migrate(:up) # whatever happened, the schema the suite expects
     Moderate::Flag.where(flaggable: @comment).delete_all
     @comment.destroy
@@ -43,7 +45,40 @@ class AddPendingKeyToModerateFlagsTest < ActiveSupport::TestCase
     assert_nothing_raised { migrate(:up) }
   end
 
+  test "types that differ only by case each keep their key: the column compares bytes" do
+    migrate(:down)
+    lower = insert_flag(status: "pending", created_at: 1.day.ago)
+    upper = insert_flag(status: "pending", created_at: 1.day.ago, type: "COMMENT")
+
+    migrate(:up)
+    keys = Moderate::Flag.where(id: [lower, upper]).pluck(:id, :pending_key).to_h
+    assert_equal "Comment/#{@comment.id}/body", keys[lower]
+    assert_equal "COMMENT/#{@comment.id}/body", keys[upper]
+    assert_equal "utf8mb4_bin", pending_key_column.collation if mysql?
+  end
+
+  test "keys the database would treat as one stop the migration, naming them, before the index" do
+    migrate(:down)
+    connection.add_column :moderate_flags, :pending_key, :string # no byte comparison asked for
+    Moderate::Flag.reset_column_information
+    key = "Comment/#{@comment.id}/body"
+    first = insert_flag(status: "pending", created_at: 2.days.ago, pending_key: key)
+    second = insert_flag(status: "pending", created_at: 1.day.ago, pending_key: key)
+
+    error = assert_raises(ActiveRecord::MigrationError) { migrate(:up) }
+    assert_includes error.message, key.inspect
+    assert_includes error.message, "flags #{first}, #{second}"
+    assert_not connection.index_exists?(:moderate_flags, :pending_key, name: AddPendingKeyToModerateFlags::INDEX)
+    assert_equal "utf8mb4_bin", pending_key_column.collation, "converted before refusing" if mysql?
+  end
+
   private
+
+  def mysql? = connection.adapter_name.downcase.match?(/mysql|trilogy/)
+
+  def pending_key_column
+    connection.columns(:moderate_flags).find { |column| column.name == "pending_key" }
+  end
 
   def connection = ActiveRecord::Base.connection
 
@@ -52,13 +87,14 @@ class AddPendingKeyToModerateFlagsTest < ActiveSupport::TestCase
     Moderate::Flag.reset_column_information
   end
 
-  def insert_flag(status:, created_at:)
+  def insert_flag(status:, created_at:, type: "Comment", pending_key: nil)
     row = {
-      flaggable_type: "Comment", flaggable_id: @comment.id, field: "body", source: "manual", mode: "flag",
+      flaggable_type: type, flaggable_id: @comment.id, field: "body", source: "manual", mode: "flag",
       status: status, resolution_note: (status == "pending" ? nil : "closed"),
       categories: [], scores: {}, context: {}, created_at: created_at, updated_at: created_at
     }
+    row[:pending_key] = pending_key if pending_key
     Moderate::Flag.insert_all!([row])
-    Moderate::Flag.where(flaggable: @comment).order(:id).last.id
+    Moderate::Flag.where(flaggable_id: @comment.id, flaggable_type: type).order(:id).last.id.tap { |id| @inserted << id }
   end
 end

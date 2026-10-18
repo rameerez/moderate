@@ -153,8 +153,10 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
 
     # At most one PENDING flag per content + field: `pending_key` is set while a flag
     # is pending ("<flaggable_type>/<flaggable_id>/<field>") and NULL once it is closed
-    # (Moderate::Flag keeps it in sync); NULLs never collide in a unique index.
-    add_column :moderate_flags, :pending_key, :string
+    # (Moderate::Flag keeps it in sync); NULLs never collide in a unique index. The key
+    # compares as bytes: on MySQL, whose default collation ignores case, the column is
+    # utf8mb4_bin, so "Post/1/body" and "POST/1/body" stay two keys.
+    add_column :moderate_flags, :pending_key, :string, **pending_key_options
     add_index :moderate_flags, :pending_key, unique: true, name: "index_moderate_flags_on_pending_key"
 
     # Flag's mode/source/status vocabularies are validated in Moderate::Flag
@@ -234,6 +236,11 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
   # MySQL under either of Rails' adapters: mysql2, or Trilogy (Rails 7.1+).
   def mysql?
     connection.adapter_name.downcase.match?(/mysql|trilogy/)
+  end
+
+  # See `pending_key` above: byte comparison on MySQL; PostgreSQL and SQLite already.
+  def pending_key_options
+    mysql? ? { collation: "utf8mb4_bin" } : {}
   end
 
   # The SQL function for COUNTING CHARACTERS in a check constraint, chosen per

@@ -108,6 +108,39 @@ module Moderate
       assert_equal 3, [first, other_field, other_content].map(&:id).uniq.size
     end
 
+    # Two record classes on one table whose names differ only by case, so their keys
+    # do too: MySQL's default collation would make them one key.
+    class CaseKeyRecord < ActiveRecord::Base
+      self.table_name = "users"
+    end
+
+    class CASEKEYRECORD < ActiveRecord::Base
+      self.table_name = "users"
+    end
+
+    test "keys compare as bytes: content types that differ only by case get a pending flag each" do
+      lower = pending_flag_on(CaseKeyRecord.find(@user.id), "name")
+      upper = pending_flag_on(CASEKEYRECORD.find(@user.id), "name")
+
+      assert_predicate upper, :previously_new_record?, "not joined to the other type's flag"
+      assert_not_equal lower, upper
+      assert_equal lower, pending_flag_on(CaseKeyRecord.find(@user.id), "name")
+    end
+
+    test "the unique index compares bytes: 'Post' and 'POST' keys coexist, a true duplicate is refused" do
+      row = lambda do |type|
+        { flaggable_type: type, flaggable_id: @user.id, field: "name", source: "manual", mode: "flag",
+          status: "pending", categories: [], scores: {}, context: {}, pending_key: "#{type}/#{@user.id}/name",
+          created_at: Time.current, updated_at: Time.current }
+      end
+
+      Moderate::Flag.insert_all!([row.call("Post")])
+      assert_nothing_raised { Moderate::Flag.insert_all!([row.call("POST")]) }
+      assert_raises(ActiveRecord::RecordNotUnique) do
+        Moderate::Flag.transaction(requires_new: true) { Moderate::Flag.insert_all!([row.call("Post")]) }
+      end
+    end
+
     test "reopening a closed flag takes the key back, and refuses if another flag is pending there" do
       first = pending_flag_on(@user, "name")
       first.dismiss!(note: "Fine.")
