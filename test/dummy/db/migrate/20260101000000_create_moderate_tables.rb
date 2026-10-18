@@ -235,7 +235,7 @@ class CreateModerateTables < ActiveRecord::Migration[7.1]
   # Returns an empty-hash default for SQLite/PostgreSQL, nil for MySQL.
   # Models handle nil metadata gracefully by defaulting to {} in their accessors.
   def json_column_default
-    return nil if connection.adapter_name.downcase.include?("mysql")
+    return nil if mysql?
 
     {}
   end
@@ -243,9 +243,14 @@ class CreateModerateTables < ActiveRecord::Migration[7.1]
   # Same MySQL caveat as `json_column_default`, but for list-shaped columns,
   # which default to an empty array on SQLite/PostgreSQL.
   def json_array_default
-    return nil if connection.adapter_name.downcase.include?("mysql")
+    return nil if mysql?
 
     []
+  end
+
+  # MySQL under either of Rails' adapters: mysql2, or Trilogy (Rails 7.1+).
+  def mysql?
+    connection.adapter_name.downcase.match?(/mysql|trilogy/)
   end
 
   # SQLite has no `char_length`; its `length(text)` already counts characters.
