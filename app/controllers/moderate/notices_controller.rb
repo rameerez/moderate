@@ -222,9 +222,8 @@ module Moderate
 
     # A public, unauthenticated POST is a spam/abuse magnet, so we throttle per IP.
     #
-    # Rails 7.2 shipped a first-class controller `rate_limit` macro; on 7.1 it
-    # doesn't exist, so we fall back to a tiny `Rails.cache`-backed counter. We
-    # implement the throttle as a single `before_action` (rather than the class-level
+    # A tiny `Rails.cache`-backed counter rather than Rails' own `rate_limit` macro:
+    # we implement the throttle as a single `before_action` (not the class-level
     # `rate_limit` macro) precisely so we can honor the host's RUNTIME
     # `config.notice_rate_limit` (the macro is evaluated at class load, before the
     # host's initializer has necessarily run).

@@ -4,7 +4,7 @@
 # gem's macros are applied to. These are NOT part of the gem; they stand in for
 # whatever a real host app already has. Kept deliberately tiny: just the columns
 # the suite reads (name, email, display_name on User; body + user_id on Comment).
-class CreateDummyHostTables < ActiveRecord::Migration[7.1]
+class CreateDummyHostTables < ActiveRecord::Migration[7.2]
   def change
     create_table :users do |t|
       # `name` is User's single reportable field (User#reportable :name) and the

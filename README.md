@@ -66,6 +66,8 @@ That's the whole idea: **the messy, legally-loaded plumbing every social/UGC app
 
 ## Quickstart
 
+`moderate` needs Ruby 3.3+ and Rails 7.2.3.1+ (7.2, 8.0 and 8.1 are tested), on SQLite, PostgreSQL or MySQL.
+
 Add the gem:
 
 ```ruby
@@ -429,7 +431,7 @@ The full event vocabulary: `report_received`, `notice_received`, `report_decisio
 
 > The value-list taxonomies (community `category`, `status`, `content_type`, the DSA `legal_reason`/`legal_country_code`, `resolution_basis`, plus `Flag` source/mode/status and `Appeal` source/status) are validated **in the models** — frozen constants + ActiveModel `inclusion` validations — **not** by database `CHECK` constraints. That means **adding or customizing a label never requires a migration**: the community category list is host-overridable via `config.report_categories` (defaults to `Moderate::Report::DEFAULT_CATEGORIES`), and the gem can grow its own taxonomies in a point release without touching your schema. The only value guard kept at the DB level is a cheap message-length backstop; everything else the migration adds is structural (NOT NULLs, FKs, the unique block edge, and the self-block CHECK).
 
-The migration is **adaptive**: it matches your app's primary-key type (UUID or bigint) and JSON column type (`jsonb` / `json`) automatically, so it drops cleanly into any Rails 7.1+ schema.
+The migration is **adaptive**: it matches your app's primary-key type (UUID or bigint) and JSON column type (`jsonb` / `json`) automatically, so it drops cleanly into any Rails 7.2+ schema.
 
 ## Configuration reference
 

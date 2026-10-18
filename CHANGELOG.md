@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- **Rails 7.1 and Ruby 3.2 are no longer supported** (both are end of life upstream). The
+  gemspec now requires Ruby 3.3+ and `activerecord` / `activesupport` / `railties`
+  `>= 7.2.3.1, < 9.0` (7.2.3.1 is the first 7.2 release with the current Rails security
+  advisories fixed). CI runs Ruby 3.3, 3.4 and 4.0 against Rails 7.2, 8.0 and 8.1 on
+  SQLite, plus PostgreSQL and MySQL. The Rails 7.1 appraisal and its `json < 3` pin are
+  gone; the pin now sits on the 8.0 appraisal, because Rails 8.0 (and 7.2 before 7.2.4)
+  still passes `quirks_mode:` to `JSON.generate`, which json 3 rejects. A host on those
+  versions needs the same pin, with or without `moderate`.
+
 ## [1.0.0.beta4] - 2026-10-18
 
 Concurrency fixes, and **one migration**: run `bin/rails db:migrate` after upgrading (see

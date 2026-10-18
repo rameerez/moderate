@@ -19,11 +19,11 @@
 # (which the engine adds to the app's migration paths here) creates it, as it does in
 # every host, so every CI run exercises that migration on all three databases.
 #
-# The migration version is pinned to [7.1] — the gemspec floor and the lowest Rails
+# The migration version is pinned to [7.2] — the gemspec floor and the lowest Rails
 # in the test matrix. (The template renders this from ActiveRecord::VERSION at
 # generate time; here we anchor to the floor, which every Rails in the matrix
 # accepts.)
-class CreateModerateTables < ActiveRecord::Migration[7.1]
+class CreateModerateTables < ActiveRecord::Migration[7.2]
   def change
     primary_key_type, foreign_key_type = primary_and_foreign_key_types
 

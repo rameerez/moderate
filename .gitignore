@@ -9,3 +9,5 @@
 /dist/
 
 TODO
+# Appraisal lockfiles are resolved fresh by CI (and by `bundle exec appraisal install`).
+/gemfiles/*.gemfile.lock

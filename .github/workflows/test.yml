@@ -13,7 +13,10 @@ on:
       - "LICENSE.txt"
 
 jobs:
-  # Main test suite - tests Ruby versions and Rails compatibility with SQLite
+  # Main test suite - tests Ruby versions and Rails compatibility with SQLite.
+  # Every Ruby still maintained upstream (3.3+) × every supported Rails (7.2, 8.0,
+  # 8.1). `Gemfile` is the committed lock (Rails 8.1, frozen install); the
+  # appraisal gemfiles resolve fresh, so a new patch release is tested on arrival.
   sqlite:
     runs-on: ubuntu-latest
 
@@ -23,8 +26,8 @@ jobs:
         ruby_version: ["3.3", "3.4", "4.0"]
         gemfile:
           - Gemfile
-          - gemfiles/rails_7.1.gemfile
           - gemfiles/rails_7.2.gemfile
+          - gemfiles/rails_8.0.gemfile
           - gemfiles/rails_8.1.gemfile
 
     env:

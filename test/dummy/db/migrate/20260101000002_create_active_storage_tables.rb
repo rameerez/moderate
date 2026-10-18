@@ -4,9 +4,9 @@
 # tests can attach a blob to Comment#image. This mirrors the migration Active
 # Storage ships (rails active_storage:install) — copied here rather than relying on
 # the installer so `db:migrate:reset` has a deterministic, self-contained schema
-# across the Rails 7.1 / 7.2 / 8.1 matrix. Pinned to [7.1] (the gemspec floor),
+# across the Rails 7.2 / 8.0 / 8.1 matrix. Pinned to [7.2] (the gemspec floor),
 # which every Rails in the matrix accepts.
-class CreateActiveStorageTables < ActiveRecord::Migration[7.1]
+class CreateActiveStorageTables < ActiveRecord::Migration[7.2]
   def change
     primary_key_type, foreign_key_type = primary_and_foreign_key_types
 
