@@ -4,9 +4,18 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2026-10-19
 
-### Upgrading
+The first stable release. The public API is frozen until 2.0: everything listed in the
+README's "What is public" section keeps its name, arguments and meaning, and
+`test/public_api_test.rb` keeps that list honest. Since 1.0.0.beta4: Ruby 3.3+ and Rails
+8.0.5.1+, attachments classified once and only once their files exist, opt-in retention with
+legal holds, an appeal window that runs from confirmed delivery, and **one migration** (see
+_Upgrading from 1.0.0.beta4_). Coming from an earlier beta, apply each beta's _Upgrading_
+notes below in order, then these; coming from 0.x, see _Upgrading from 0.x_ at the end of
+this entry.
+
+### Upgrading from 1.0.0.beta4
 
 - **One migration: run `bin/rails db:migrate`** (after `bin/rails moderate:install:migrations`
   if your app holds copies of the gem's migrations, `*.moderate.rb`, as every app installed
@@ -45,7 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   everything that keeps its name, arguments and meaning until 2.0: the macros, `report!` /
   `block!`, the reportable contract, the decision methods (`resolve!` / `dismiss!` /
   `action!` / `uphold!` / `reject!`) and their services, `flag_for_review!`, `taxonomy_label`,
-  `reportable_field_label`, `blocked_ids_for`, `purge`, every configuration key, the view
+  `reportable_field_label`, `blocked_ids_for`, `purge`, `hold` / `release_hold`,
+  `delivered!`, every configuration key, the view
   helpers, the controller concern and its seams, the adapter contract, and the event
   vocabulary with the notifier contract. The vocabulary is now code:
   `Moderate::Event::NOTIFY_NAMES` and `Moderate::Event::AUDIT_NAMES`.
@@ -69,7 +79,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `moderate_report_target_path(record, field:)`.
 - **docs/notifications.md lists the audit events** instead of claiming `audit` fires for every
   event (`content_flagged`, for one, is notify-only: the flag row is its record).
-
 - **Retention: `Moderate.purge(older_than: 1.year, dry_run: false)`** and the
   `moderate:purge` rake task (`OLDER_THAN_DAYS`, `DRY_RUN`), opt-in. They redact the personal
   data in reports, notices, flags and appeals whose decision is final (closed, decided more
@@ -82,7 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that nothing is purged by default, and what the DSA and the GDPR expect. A purged row is
   stamped `redacted_at`, and the purge selects on that column, never on the content (a
   message that literally read `"[redacted]"` would otherwise have kept its snapshot, URLs,
-  contacts and reporter, and `dry_run` under-counted it). The returned counts carry `:held`.
+  contacts and reporter, and `dry_run` under-counted it). The returned counts are
+  `:reports`, `:flags`, `:appeals`, `:classifications`, `:claims_kept` and `:held`.
   `1.year` is documented as a default the host sets per its own purposes.
 - **Legal holds: `Moderate.hold(report, until:, by: nil, reason: nil)` /
   `Moderate.release_hold(report)`** and `Report#held?`. A held report, its appeals and the
@@ -90,7 +100,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under DSA Art. 21, a court case, an authority's request); `dry_run` and the rake task
   report held rows separately; both are audited (`:legal_hold_placed`,
   `:legal_hold_released`).
-
 - **RuboCop runs in CI** (a `rubocop` job next to the test matrix) and the codebase has zero
   offenses. `.rubocop.yml` now describes the code as it is: size metrics off (the gem
   explains itself in long, commented methods), complexity metrics capped where the code is,
@@ -121,8 +130,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same content `updated_at` (newly recorded in the snapshot as `content_updated_at`),
   so a repost into the same field is never credited to an old removal; when a snapshot
   can't name the revision (filed before 1.0, purged, content without text), nothing is
-  covered and the normal removal or refusal applies. Nothing
-  is removed, audited or announced a second time, the author gets no second statement of
+  covered and the normal removal or refusal applies. Nothing is removed, audited or
+  announced a second time, the author gets no second statement of
   reasons (unless this decision also bans), and the reporter's `report_decision` carries
   `content_already_removed_by` and says "already removed by the decision on Report #X".
 - **A report whose content was deleted can be decided.** The intake check that a report
@@ -169,10 +178,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they were defined, so on a model that calls `moderates` above `has_one_attached` the
   filter ran first: a synchronous adapter classified a blob whose file wasn't on the
   service yet, and an async adapter's `ClassifyJob` could run before the upload finished.
-  The filter now hands a field whose upload is still pending to that upload and runs
-  (inline, or the job enqueue) the moment it completes; in the other order it runs at once,
-  as before. Works for `has_one_attached` and `has_many_attached`, in either declaration
-  order. `ClassifyJob` also checks that every blob behind the value exists on its service:
+  The filter now watches Active Storage's upload itself, from `before_save` (so in either
+  declaration order), and classifies when it returns: inline for a synchronous adapter, by
+  an immediate job for an async one. Works for `has_one_attached` and `has_many_attached`.
+  `ClassifyJob` also checks that every blob behind the value exists on its service:
   if one doesn't (a direct upload still in flight, a lagging replica) it re-enqueues itself
   after 5, 10, 15 and 20 seconds (`UPLOAD_WAIT`, `UPLOAD_ATTEMPTS`), then gives up with a
   `classification_skipped` audit event. Nothing classifies a file that isn't there: the
@@ -181,8 +190,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   waits the same way. A failed upload is never silent: just before Active Storage uploads,
   the filter queues a guard `ClassifyJob` for `UPLOAD_WAIT` seconds later, so an upload that
   raises (or a process that dies) still ends in a classification or a `classification_skipped`
-  audit. The filter watches the upload from `before_save`, so this holds in either
-  declaration order. Each set of files is classified once: the job takes `blob_ids:` and
+  audit. Each set of files is classified once: the job takes `blob_ids:` and
   stops if the field holds other files by then, and whoever classifies first records it,
   so the guard finds that and stops.
   The inline path and the job claim the files under the content record's row lock (content
@@ -203,8 +211,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`:claims_kept`). `classification_claim_ttl` must be more than 0 and at most a day, or
   boot raises. An adapter that raises leaves its claim until it expires and schedules no
   retry itself; the guard job, a job's recheck at expiry, a new save or the job backend's
-  own retry takes it over. Under **`mode: :block`**, an
-  attachment whose stored blob isn't on the service yet (a direct upload in flight) fails validation with
+  own retry takes it over. Under **`mode: :block`**, an attachment whose stored blob isn't
+  on the service yet (a direct upload in flight) fails validation with
   `errors.messages.upload_not_finished` ("hasn't finished uploading yet", en/es) instead of
   being classified without its file.
   **If you worked around this** (CarHey's avatar):
@@ -216,7 +224,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   3. the order of `moderates` and `has_one_attached` no longer matters, so the "keep this
      below the attachment" comments can go. An adapter that retries on
      `ActiveStorage::FileNotFoundError` may keep doing so; the job's own wait makes it rare.
-
 - **The appeal window runs from when the person is informed** (DSA Art. 20(2)), not from
   the decision, and only a confirmed delivery counts. A decision stamps
   `appeal_deadline_at` six months out, a minimum (its notice's `appeal_deadline_at` is that
@@ -248,6 +255,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pin moved to the 8.0 appraisal, because Rails 8.0 still passes `quirks_mode:` to
   `JSON.generate`, which json 3 rejects. A host on 8.0 needs the same pin, with or without
   `moderate`.
+
+### The 1.0 feature set (since 0.1.0)
+
+A complete, ground-up rewrite. `moderate` graduates from a single-purpose profanity validator
+(0.1.0) into a full **Trust & Safety** engine for Rails apps with user-generated content:
+report, block, filter, a moderation queue, appeals, and EU DSA / App Store / Google Play
+**aligned** primitives (first cut shipped as `1.0.0.beta1`).
+
+- **Reporting.** `Moderate::Report` plus the `has_reportable_content :fields` macro and
+  `Actor#report!(reportable, category:, details:)`. Reports and DSA notices share one model
+  and one queue (`intake_kind: "community" | "dsa"`).
+- **Blocking.** `Moderate::Block`, the `has_reporting_and_blocking` actor macro, and
+  `block!` / `unblock!` / `blocks?` / `blocked_by?` / `blocked_with?`. `Moderate.blocked_ids_for(user)`
+  is the bidirectional single source of truth you compose into feed/search/inbox queries.
+  Optional `config.on_block` teardown hook runs inside the block transaction.
+- **Content filtering.** The `moderates :field, mode: :off|:block|:flag, with: :adapter` macro
+  (and the equivalent `config.filter`), the offline multilingual `:wordlist` adapter (the only
+  built-in), the `classify(value) => Moderate::Result` adapter contract with
+  `config.register_adapter`, asynchronous classification via `Moderate::ClassifyJob`, and
+  ready-to-copy reference adapters for OpenAI omni-moderation and AWS Rekognition under
+  `examples/` (bring-your-own, never a dependency).
+- **Moderation queue & decisions.** `Moderate::Flag` and the service objects
+  `Moderate::Services::{IntakeReport, ResolveReport, ResolveFlag, IntakeAppeal, ResolveAppeal,
+  IntakeNotice}`. Decisions are taken under a row lock, re-check open state, apply enforcement
+  (remove content / ban) inside the transaction, and fire notifications outside it; the appeal
+  window and statement-of-reasons fields are stamped automatically.
+- **DSA-aligned primitives.** A mountable public **notice-and-action** form (Art. 16) you mount
+  at any path, **statement of reasons** (Art. 17), internal **appeals** (Art. 20), and
+  **transparency** counters (Art. 24). The notice form prefills from query params + the signed-in
+  user, locks auto-filled identity fields, and auto-detects `rails_cloudflare_turnstile`.
+- **Hooks (all no-op by default).** `config.audit`, `config.notify` (its truthy return marks
+  a DSA notice's receipt as sent; decision notices count as delivered only through
+  `Moderate.delivered!`), `config.on_block`, `config.ban_handler`, the
+  host-overridable `config.report_categories`, and `config.notice_human_verification_skip_if` /
+  `config.appeal_human_verification_skip_if` for native-app bot-gate carve-outs.
+- **Optional integrations**, never hard dependencies: madmin, goodmail, telegrama and noticed are
+  wired through the hooks above (recipes in docs/), and rails_cloudflare_turnstile is
+  detected at runtime by the public forms.
+- **Install tooling.** `rails generate moderate:install` writes a documented initializer and an
+  adaptive migration (uuid/bigint primary keys, jsonb/json/MySQL JSON columns), then copies the
+  gem's own migrations after it; `moderate:views` ejects the notice form for customization.
+
+Design choices that differ from 0.x:
+
+- Taxonomies (report categories, DSA legal reasons, country codes) are now frozen model
+  constants with inclusion validations instead of DB `CHECK` constraints — adding or
+  customizing a category needs no migration.
+- External classifiers (OpenAI, image moderation) are reference adapters in `examples/`, not
+  shipped or loaded code — the gem core forces no service dependency on apps that never use it.
+- All "DSA-compliant" / "App Store compliant" language reframed to **DSA-aligned primitives**:
+  the gem ships the mechanisms the law and the stores require; your policies, response times,
+  and operations are still yours.
+
+### Upgrading from 0.x
+
+> **Breaking:** 1.0 keeps the gem name but is an entirely new API. Pin `~> 0.1` if you relied
+> on the old behavior and are not ready to adopt the new surface.
+
+- `validates :field, moderate: true` still works: it is now the built-in `:wordlist` adapter
+  in `:block` mode (the same check as `moderates :field, with: :wordlist, mode: :block`), so
+  existing apps keep validating. To adopt the rest, add `has_reporting_and_blocking` to your
+  user model and `has_reportable_content` / `moderates` to your content models, run
+  `rails generate moderate:install`, and migrate.
 
 ## [1.0.0.beta4] - 2026-10-18
 
@@ -621,70 +691,6 @@ and hosts that worked around the ClassifyJob bug can now delete the workaround.
   trail). Canonical automated use: dismiss a pending flag whose flagged content was
   **superseded** (text edited, photo replaced/reverted) — left pending it keeps `flagged?`
   true and mislabels the NEW content in any host UI keyed on it. (#4)
-
-## [1.0.0] - unreleased
-
-A complete, ground-up rewrite. `moderate` graduates from a single-purpose profanity
-validator (0.1.0) into a full **Trust & Safety** engine for Rails apps with user-generated
-content: report, block, filter, a moderation queue, appeals, and EU DSA / App Store / Google
-Play **aligned** primitives. (First cut shipped as `1.0.0.beta1`; second as `1.0.0.beta2`.)
-
-> **Breaking:** 1.0 keeps the gem name but is an entirely new API. The 0.x profanity
-> validator (`validates :field, moderate: true`) still loads for backward compatibility
-> (see _Upgrading from 0.x_), but everything else is new. Pin `~> 0.1` if you relied on the
-> old behavior and are not ready to adopt the new surface.
-
-### Added
-
-- **Reporting.** `Moderate::Report` plus the `has_reportable_content :fields` macro and
-  `Actor#report!(reportable, category:, details:)`. Reports and DSA notices share one model
-  and one queue (`intake_kind: "community" | "dsa"`).
-- **Blocking.** `Moderate::Block`, the `has_reporting_and_blocking` actor macro, and
-  `block!` / `unblock!` / `blocks?` / `blocked_by?` / `blocked_with?`. `Moderate.blocked_ids_for(user)`
-  is the bidirectional single source of truth you compose into feed/search/inbox queries.
-  Optional `config.on_block` teardown hook runs inside the block transaction.
-- **Content filtering.** The `moderates :field, mode: :off|:block|:flag, with: :adapter` macro
-  (and the equivalent `config.filter`), the offline multilingual `:wordlist` adapter (the only
-  built-in), the `classify(value) => Moderate::Result` adapter contract with
-  `config.register_adapter`, asynchronous classification via `Moderate::ClassifyJob`, and
-  ready-to-copy reference adapters for OpenAI omni-moderation and AWS Rekognition under
-  `examples/` (bring-your-own, never a dependency).
-- **Moderation queue & decisions.** `Moderate::Flag` and the service objects
-  `Moderate::Services::{IntakeReport, ResolveReport, ResolveFlag, IntakeAppeal, ResolveAppeal,
-  IntakeNotice}`. Decisions are taken under a row lock, re-check open state, apply enforcement
-  (remove content / ban) inside the transaction, and fire notifications outside it; the appeal
-  window and statement-of-reasons fields are stamped automatically.
-- **DSA-aligned primitives.** A mountable public **notice-and-action** form (Art. 16) you mount
-  at any path, **statement of reasons** (Art. 17), internal **appeals** (Art. 20), and
-  **transparency** counters (Art. 24). The notice form prefills from query params + the signed-in
-  user, locks auto-filled identity fields, and auto-detects `rails_cloudflare_turnstile`.
-- **Hooks (all no-op by default).** `config.audit`, `config.notify` (returns a delivery boolean
-  used to gate `decision_notified_at`), `config.on_block`, `config.ban_handler`, the
-  host-overridable `config.report_categories`, and `config.notice_human_verification_skip_if` /
-  `config.appeal_human_verification_skip_if` for native-app bot-gate carve-outs.
-- **Optional integrations**, all auto-detected at runtime via `defined?`/`respond_to?` and never
-  hard dependencies: madmin, goodmail, telegrama, noticed, rails_cloudflare_turnstile.
-- **Install tooling.** `rails generate moderate:install` writes a documented initializer and an
-  adaptive migration (uuid/bigint primary keys, jsonb/json/MySQL JSON columns); `moderate:views`
-  ejects the notice form for customization.
-
-### Changed
-
-- Taxonomies (report categories, DSA legal reasons, country codes) are now frozen model
-  constants with inclusion validations instead of DB `CHECK` constraints — adding or
-  customizing a category needs no migration.
-- External classifiers (OpenAI, image moderation) are reference adapters in `examples/`, not
-  shipped or loaded code — the gem core forces no service dependency on apps that never use it.
-- All "DSA-compliant" / "App Store compliant" language reframed to **DSA-aligned primitives**:
-  the gem ships the mechanisms the law and the stores require; your policies, response times,
-  and operations are still yours.
-
-### Upgrading from 0.x
-
-- The 0.x profanity validator still loads: `validates :field, moderate: true` continues to work
-  via compatibility shims, so existing apps keep validating. To adopt 1.0, add
-  `has_reporting_and_blocking` to your user model and `has_reportable_content` / `moderates` to your
-  content models, run `rails generate moderate:install`, and migrate.
 
 ## [0.1.0] - 2024-11-03
 
