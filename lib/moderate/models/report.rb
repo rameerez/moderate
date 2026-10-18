@@ -126,6 +126,7 @@ module Moderate
       foreign_key: :flaggable_id
 
     before_validation :normalize_strings
+    before_validation :default_community_message, on: :create
     before_validation :hydrate_reporter_contact, if: :reporter
     before_validation :infer_reported_user, on: :create
     before_validation :infer_content_type, on: :create
@@ -457,6 +458,18 @@ module Moderate
       self.decision_visibility = decision_visibility.to_s.squish.presence
       self.message = message.to_s.gsub(/\r\n?/, "\n").strip.presence
       self.resolution_note = resolution_note.to_s.strip.presence
+    end
+
+    # An in-app reporter's free text is optional: the category they picked IS the
+    # reason (a person who was just insulted shouldn't have to write an essay). The
+    # column is NOT NULL and the queue needs something to read, so a blank message
+    # becomes the category's label, in the reporter's language. A DSA notice must
+    # still be substantiated in the notifier's own words (Art. 16(2)(a)), so this
+    # never applies to one.
+    def default_community_message
+      return unless community? && message.blank? && category.present?
+
+      self.message = Moderate.taxonomy_label(:category, category)
     end
 
     # When an authenticated user files the report, copy their contact onto the

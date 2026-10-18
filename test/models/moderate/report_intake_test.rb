@@ -88,6 +88,28 @@ module Moderate
       assert_predicate system, :persisted?
     end
 
+    # --- Optional details -------------------------------------------------------
+
+    test "an in-app report's details are optional: the category's label stands in" do
+      report = @participant.report!(@line, category: :harassment, field: :body)
+
+      assert_equal "Harassment", report.message
+      I18n.with_locale(:es) do
+        assert_equal "Odio", @participant.report!(@line, category: :hate, field: :body, details: " ").message
+      end
+    end
+
+    test "a DSA notice still needs its own explanation" do
+      notice = Moderate::Report.new(
+        reportable: @line, intake_kind: "dsa", category: "illegal_content", legal_reason: "violence",
+        legal_country_code: "ES", content_type: "message", notifier_name: "N", notifier_email: "n@example.com",
+        good_faith_confirmed: true
+      )
+
+      assert_not notice.valid?
+      assert_predicate notice.errors[:message], :present?
+    end
+
     # --- Report and block -------------------------------------------------------
 
     test "block: true blocks the person responsible once the report is filed" do

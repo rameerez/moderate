@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now shows real copy in both languages. **`Moderate::Report.category_options`** gives a
   report form's select its `[label, value]` pairs, honoring `config.report_categories`. Hosts
   that translated the regulator's vocabulary themselves can drop their copies for en/es.
+- **An in-app report's details are optional.** A community report with a blank message now
+  files with the category's label (in the reporter's language) as its message, instead of
+  failing "Message can't be blank": the category a person picked is the reason. A DSA notice
+  still needs its own explanation (Art. 16(2)(a)). Hosts that filled the message with the
+  category label themselves, or whose forms said "optional" while the gem refused it, can
+  stop.
 - **"Report and block": `report!(…, block: true)`** blocks the person responsible for the
   content once the report is filed, through the one block path (idempotent, audited,
   `on_block`, `user_blocked`). `Report#block_reported_user`, which has existed since beta1

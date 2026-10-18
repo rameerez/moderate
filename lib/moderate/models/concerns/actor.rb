@@ -72,7 +72,8 @@ module Moderate
     # model (not here) means the public DSA notice intake and this in-app path share
     # one source of truth.
     #
-    # `details:` is the README's name for the reporter's free-text reason; it maps
+    # `details:` is optional (blank, the report's message is the category's label);
+    # it's the README's name for the reporter's free-text reason, and it maps
     # onto the Report's `message`. Extra keyword args (e.g. `field:`) pass straight
     # through, so this stays forward-compatible with the Report model's attributes.
     #
