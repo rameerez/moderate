@@ -108,6 +108,15 @@ module Moderate
       assert_equal 3, [first, other_field, other_content].map(&:id).uniq.size
     end
 
+    test "a field's surrounding spaces are stripped at filing: ' name ' joins the flag on 'name'" do
+      first = pending_flag_on(@user, "name")
+      again = pending_flag_on(@user, " name ")
+
+      assert_equal first, again
+      assert_not_predicate again, :previously_new_record?
+      assert_equal "name", Moderate::Flag.new(field: :"name ").field
+    end
+
     # Two record classes on one table whose names differ only by case, so their keys
     # do too: MySQL's default collation would make them one key.
     class CaseKeyRecord < ActiveRecord::Base

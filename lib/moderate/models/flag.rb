@@ -62,6 +62,10 @@ module Moderate
     scope :dismissed, -> { where(status: "dismissed") }
     scope :recent_first, -> { order(created_at: :desc) }
 
+    # Stripped wherever it is assigned (and in `where(field: …)`), so a field never
+    # differs by surrounding spaces: neither in what a moderator reads nor in the
+    # pending_key, which MySQL's utf8mb4_bin compares ignoring trailing spaces (PAD SPACE).
+    normalizes :field, with: :strip.to_proc
     validates :field, presence: true
     validates :status, inclusion: { in: STATUSES }
     validates :source, inclusion: { in: ->(_flag) { sources } }, on: :create
@@ -115,7 +119,7 @@ module Moderate
         # A savepoint, so a collision doesn't poison a surrounding transaction.
         transaction(requires_new: true) { create!(attributes) }
       rescue ActiveRecord::RecordNotUnique
-        waiting = waiting_flag(pending_key_for(flaggable.class.polymorphic_name, flaggable.id, field))
+        waiting = waiting_flag(pending_key_for(flaggable.class.polymorphic_name, flaggable.id, field.to_s.strip))
         return waiting if waiting&.pending?
         raise if attempts >= ATTEMPTS
 
