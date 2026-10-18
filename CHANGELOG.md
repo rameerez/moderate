@@ -114,7 +114,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   appeal decisions (with their `user_banned` and `content_removed`), the in-app report
   receipt, and `user_blocked` / `user_unblocked` are queued on the record they announce
   (`Moderate::DeferredNotices`, included in Report, Flag, Block and Appeal) and sent from
-  that record's own `after_commit`, dropped on `after_rollback`. A host that decides,
+  that row's `after_commit`, dropped on `after_rollback`. The queue is keyed by the row
+  (model + id) in an execution-local registry, not kept on one Ruby instance, so a host
+  that saves another instance of the same row in the same transaction (Active Record runs
+  the row's commit callbacks on only one of them) loses nothing; nested transactions and
+  savepoints send at the outermost commit, a rolled-back savepoint drops only its own. A host that decides,
   reports or blocks inside a transaction of its own and rolls it back tells nobody; Rails
   7.1, 7.2 and 8.x behave the same. `Moderate.apply_ban(…, announce: false)` +
   `Moderate.announce_ban` split the ban's notice from the ban for the same reason. (The

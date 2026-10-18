@@ -148,9 +148,141 @@ module Moderate
       assert_equal %i[user_blocked user_unblocked], sent
     end
 
+    # --- The queue belongs to the row, not to one Ruby instance --------------------
+    #
+    # Active Record runs a row's commit callbacks on ONE instance saved in the
+    # transaction: the first saved (`run_commit_callbacks_on_first_saved_instances_in_transaction`
+    # true, the Rails default) or the freshest (false). Host code may save another
+    # instance of the same row before or after ours. Either way the notice goes once.
+
+    [true, false].each do |first_saved|
+      %i[before after].each do |when_other|
+        test "a notice survives another instance saved #{when_other} it (first_saved=#{first_saved})" do
+          with_first_saved_instances(first_saved) do
+            flag = file_flag
+            calls = []
+
+            ActiveRecord::Base.transaction do
+              touch_other_instance(flag) if when_other == :before
+              flag.update!(excerpt: "ours")
+              flag.after_commit_notice { calls << :sent }
+              touch_other_instance(flag) if when_other == :after
+              assert_empty calls
+            end
+
+            assert_equal [:sent], calls
+          end
+        end
+
+        test "a notice is dropped on rollback, another instance saved #{when_other} (first_saved=#{first_saved})" do
+          with_first_saved_instances(first_saved) do
+            flag = file_flag
+            calls = []
+
+            ActiveRecord::Base.transaction do
+              touch_other_instance(flag) if when_other == :before
+              flag.update!(excerpt: "ours")
+              flag.after_commit_notice { calls << :sent }
+              touch_other_instance(flag) if when_other == :after
+              raise ActiveRecord::Rollback
+            end
+
+            assert_empty calls
+            assert_empty Moderate::DeferredNotices.registry, "nothing left queued"
+          end
+        end
+      end
+    end
+
+    test "a decision's notices survive the host saving another instance of the report afterwards" do
+      with_first_saved_instances(false) do
+        report = file_report
+
+        ActiveRecord::Base.transaction do
+          report.resolve!(by: @moderator, note: "Slur.", remove_content: true)
+          Moderate::Report.find(report.id).update!(resolution_note: "Slur, confirmed.")
+        end
+
+        assert_equal %i[affected_user_decision content_removed report_decision], sent.sort
+      end
+    end
+
+    test "two rows queued in one transaction each send" do
+      first = file_flag
+      second = Moderate::Flag.flag!(
+        flaggable: @comment, field: "body", owner: @author, source: "manual", mode: "flag",
+        excerpt: "x", categories: [], scores: {}, context: {}
+      )
+      calls = []
+
+      ActiveRecord::Base.transaction do
+        [first, second].each do |flag|
+          flag.update!(excerpt: "queued")
+          flag.after_commit_notice { calls << flag.id }
+        end
+      end
+
+      assert_equal [first.id, second.id].sort, calls.sort
+    end
+
+    test "nested transactions send once, at the outermost commit" do
+      flag = file_flag
+      calls = []
+
+      ActiveRecord::Base.transaction do
+        ActiveRecord::Base.transaction do # joins the outer one
+          flag.update!(excerpt: "inner")
+          flag.after_commit_notice { calls << :joined }
+        end
+        ActiveRecord::Base.transaction(requires_new: true) do # a savepoint, released
+          flag.update!(excerpt: "savepoint")
+          flag.after_commit_notice { calls << :savepoint }
+        end
+        assert_empty calls, "not at the inner ends"
+      end
+
+      assert_equal %i[joined savepoint], calls
+    end
+
+    test "a rolled-back savepoint drops only its own notices" do
+      flag = file_flag
+      calls = []
+
+      ActiveRecord::Base.transaction do
+        flag.update!(excerpt: "outer")
+        flag.after_commit_notice { calls << :outer }
+        ActiveRecord::Base.transaction(requires_new: true) do
+          flag.update!(excerpt: "savepoint")
+          flag.after_commit_notice { calls << :savepoint }
+          raise ActiveRecord::Rollback
+        end
+      end
+
+      assert_equal [:outer], calls
+    end
+
+    test "with no transaction open, a notice is sent at once" do
+      calls = []
+      file_flag.after_commit_notice { calls << :now }
+
+      assert_equal [:now], calls
+    end
+
     private
 
     def sent = ModerateTestRecorder.notifications.map(&:name)
+
+    def touch_other_instance(flag)
+      Moderate::Flag.find(flag.id).update!(excerpt: "theirs #{SecureRandom.hex(2)}")
+    end
+
+    def with_first_saved_instances(value)
+      previous = ActiveRecord::Base.run_commit_callbacks_on_first_saved_instances_in_transaction
+      ActiveRecord::Base.run_commit_callbacks_on_first_saved_instances_in_transaction = value
+      yield
+    ensure
+      ActiveRecord::Base.run_commit_callbacks_on_first_saved_instances_in_transaction = previous
+    end
 
     def file_report
       @reporter.report!(@comment, category: :hate, details: "Slur", field: :body).tap { ModerateTestRecorder.clear }
