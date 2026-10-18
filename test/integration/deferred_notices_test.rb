@@ -19,7 +19,7 @@ module Moderate
 
   # Notices wait for the OUTERMOST commit (Moderate::DeferredNotices) — a host that
   # decides, reports or blocks inside a transaction of its own and rolls it back tells
-  # nobody — on every supported Rails (7.2 and 8.x alike: record-level after_commit).
+  # nobody — on every supported Rails (8.0 and 8.1 alike: record-level after_commit).
   #
   # Not transactional: the test's own wrapping transaction would sit around every
   # "outer" transaction here, and only a real commit proves the timing. Each test

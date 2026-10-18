@@ -42,10 +42,11 @@ Gem::Specification.new do |spec|
   # and the admin UI (madmin) are OPTIONAL integrations wired via hooks, never
   # hard dependencies, so `moderate` runs standalone in any Rails app.
   #
-  # Rails floor: 7.2.3.1, the first 7.2 release with every current Rails security
-  # advisory fixed. Rails 7.1 and older are end of life and no longer supported.
-  spec.add_dependency "activerecord", ">= 7.2.3.1", "< 9.0"
-  spec.add_dependency "activesupport", ">= 7.2.3.1", "< 9.0"
+  # Rails floor: 8.0.5.1, the first 8.0 release with every current Rails security
+  # advisory fixed. Rails 7.2 and older are end of life (7.2's security support
+  # ended in August 2026) and no longer supported.
+  spec.add_dependency "activerecord", ">= 8.0.5.1", "< 9.0"
+  spec.add_dependency "activesupport", ">= 8.0.5.1", "< 9.0"
   spec.add_dependency "globalid", "~> 1.0"
-  spec.add_dependency "railties", ">= 7.2.3.1", "< 9.0"
+  spec.add_dependency "railties", ">= 8.0.5.1", "< 9.0"
 end

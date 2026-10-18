@@ -2,10 +2,10 @@ PATH
   remote: .
   specs:
     moderate (1.0.0.beta4)
-      activerecord (>= 7.2.3.1, < 9.0)
-      activesupport (>= 7.2.3.1, < 9.0)
+      activerecord (>= 8.0.5.1, < 9.0)
+      activesupport (>= 8.0.5.1, < 9.0)
       globalid (~> 1.0)
-      railties (>= 7.2.3.1, < 9.0)
+      railties (>= 8.0.5.1, < 9.0)
 
 GEM
   remote: https://rubygems.org/

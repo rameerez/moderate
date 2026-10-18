@@ -7,7 +7,7 @@ module Moderate
   # `record.after_commit_notice { … }`. The TRANSACTION owns the notice, exactly as it
   # owns a record's after_commit callbacks: the notice is wrapped in an Envelope and
   # enrolled in the current transaction (`connection.add_transaction_record`, the same
-  # call Active Record makes for a saved record, on Rails 7.2 and 8.x alike), and
+  # call Active Record makes for a saved record, on every supported Rails), and
   # the transaction finalizes it — sends it on commit, drops it on rollback or when an
   # exception ends the transaction. Nothing lives on a Ruby instance or on the thread,
   # so it doesn't matter which instance of a row was saved, whether the row was saved
