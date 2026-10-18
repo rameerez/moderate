@@ -208,6 +208,21 @@ module Moderate
       @ban_handler_configured == true
     end
 
+    # Is this person banned right now, in your app? Optional: `->(user) { user.banned? }`.
+    # A ban decision on someone a decision of this same episode already banned is
+    # normally recorded as covered by that one (one ban per person per episode). That
+    # is only true while the account is still banned: set this, and a person your app
+    # has unbanned since is banned again by your ban_handler, so a "suspended"
+    # statement of reasons is never sent for an account nothing suspended. Unset
+    # (nil), the earlier ban counts, as before.
+    attr_reader :banned
+
+    def banned=(check)
+      raise ArgumentError, "banned must respond to #call (e.g. ->(user) { user.banned? })" unless check.nil? || check.respond_to?(:call)
+
+      @banned = check
+    end
+
     def parent_controller=(value)
       name = value.is_a?(Class) ? value.name : value.to_s
       raise ArgumentError, "parent_controller can't be blank" if name.strip.empty?

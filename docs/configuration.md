@@ -276,6 +276,14 @@ config.ban_handler = ->(user:, by:, reason:) { user.suspend!(reason: reason) }
 
 Leave it unset and everything works except a ban: `ban_user: true` (on a report or a flag) and `Moderate.apply_ban` raise `Moderate::ConfigurationError` before anything changes. A ban nothing applies would still audit `user_banned` and send the person a statement of reasons saying their account was suspended, which is a false statement, so the gem refuses it instead. Assigning `nil` puts the default back.
 
+### `banned` — is this person banned right now?
+
+```ruby
+config.banned = ->(user) { user.suspended? }   # optional; set it if your app can unban
+```
+
+One ban per person per episode: a second ban decision on someone a decision in the same episode already banned is recorded as covered by that one (`resolution_actions["ban_already_applied_by"]`), and the `ban_handler` isn't called twice. That only holds while the account is still banned. If your app can lift a ban (an admin unbans, a suspension expires), set `banned`: when it returns false, the earlier ban no longer covers the new decision and the `ban_handler` runs again, so the "account suspended" statement of reasons is true. Unset, the earlier ban counts, whatever happened since.
+
 ---
 
 ## Misc

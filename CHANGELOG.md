@@ -80,6 +80,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A ban after a host-side unban is applied again.** One ban per person per episode: a
+  second ban decision in the same episode was recorded as covered by the first
+  (`ban_already_applied_by`), so after the host lifted the ban the `ban_handler` wasn't
+  called and the statement of reasons said "account suspended" for an account nothing had
+  suspended. **`config.banned = ->(user) { … }`** (optional, documented beside
+  `ban_handler`) says whether the person is banned now: when it returns false the earlier
+  ban no longer counts and the handler runs again. Unset, the earlier ban counts, as before;
+  hosts that can unban should set it.
 - **`validates :field, moderate: true` works again.** The README promised the 0.x one-liner
   still worked; it raised `Unknown validator: 'ModerateValidator'`, because its file was
   never loaded (and had it been, it downloaded a word list over HTTP and read a

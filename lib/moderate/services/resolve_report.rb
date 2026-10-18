@@ -204,19 +204,28 @@ module Moderate
       # means (suspend, soft-delete, flip a flag…). ONE ban per person per episode: if
       # a decision on this same person, on any content or field, already banned them
       # since this conduct was raised, the account is suspended already — this decision
-      # records which one (`ban_already_applied_by`) instead of banning twice. (An
-      # older ban, before this conduct, doesn't count: the person may have been
-      # unbanned since, and new conduct deserves its own decision.)
+      # records which one (`ban_already_applied_by`) instead of banning twice, unless
+      # your `config.banned` says the account isn't banned any more (unbanned in your
+      # app since), in which case the ban_handler runs again. (An older ban, before
+      # this conduct, doesn't count: the person may have been unbanned since, and new
+      # conduct deserves its own decision.)
       def ban_reported_user!(note:, actions:)
         user = report.reported_user
         return if user.blank?
 
-        if (prior = prior_ban_decision(user))
+        if (prior = prior_ban_decision(user)) && still_banned?(user)
           actions[:ban_already_applied_by] = prior.id
           return
         end
 
         @user_banned = Moderate.apply_ban(user: user, by: moderator, reason: note, announce: false)
+      end
+
+      # An earlier ban of this episode covers this one only while the account is still
+      # banned. The host knows that (`config.banned`); without it, the earlier ban counts.
+      def still_banned?(user)
+        check = Moderate.config.banned
+        check.nil? || check.call(user) ? true : false
       end
 
       def prior_ban_decision(user)

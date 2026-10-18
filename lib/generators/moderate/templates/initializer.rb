@@ -144,6 +144,11 @@ Moderate.configure do |config|
   # `ban_user: true` raises instead of claiming a suspension that never happened.
   #
   # config.ban_handler = ->(user:, by:, reason:) { user.suspend!(reason: reason) }
+  #
+  # If your app can lift a ban, tell moderate whether a person is banned NOW, so a
+  # second ban after an unban is applied again instead of counted as already done:
+  #
+  # config.banned = ->(user) { user.suspended? }
 
   # ==========================================================================
   # PUBLIC FORM HUMAN VERIFICATION — optional per-request skips
