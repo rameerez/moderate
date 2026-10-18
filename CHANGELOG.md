@@ -21,7 +21,8 @@ this entry.
   if your app holds copies of the gem's migrations, `*.moderate.rb`, as every app installed
   from 1.0.0.beta4 on does; boot now fails, naming it, if you forget). `db/migrate/20261018210000_add_retention_and_classifications_to_moderate_tables.rb`
   adds `redacted_at` to `moderate_reports`, `moderate_flags` and `moderate_appeals`,
-  `held_until` (indexed) to `moderate_reports`, and creates `moderate_classifications`. It
+  `held_until` and `covered_by_report_id` (both indexed) to `moderate_reports`, and creates
+  `moderate_classifications`. It
   sorts after beta4's `pending_key` migration and needs no backfill. Like that one it is the
   only thing that creates what it adds: `rails generate moderate:install` leaves it out of
   `create_moderate_tables` and copies the migration after it, an app without copies gets it
@@ -122,15 +123,16 @@ this entry.
   `.pending`, `.actioned`, `.dismissed` and `.recent_first`.
 - **A second report on content an earlier decision already removed closes against it.**
   Flags had "already dealt with"; reports had no truthful way to close: removing again
-  removed nothing and was refused. `resolve!(remove_content: true)` now finds an actioned
-  report on the same content and field whose decision removed it, while the content is
-  gone now (read fresh under the content's lock; deleted content counts, matched through
-  the snapshot), and records `resolution_actions["content_already_removed_by"]`. Only when
-  this report was filed before that removal (its `created_at` against the earlier
-  decision's `resolved_at`) and both intake snapshots carry the same text: a report filed
-  after a removal is never credited to it (it is about a repost, or a removal that didn't
-  take), whatever the content's own timestamps say, and without both texts nothing is
-  covered; the normal removal or refusal ("Nothing was removed") applies. Nothing is removed, audited or
+  removed nothing and was refused. A decision that removes content now stamps, under the
+  content's lock, the OTHER reports pending on that content and field whose intake
+  snapshot holds the same text (`covered_by_report_id`, readable as `Report#covered_by`).
+  A stamped report resolved with `remove_content: true` closes against that decision while
+  the content is gone now (read fresh under the lock; deleted content counts) and records
+  `resolution_actions["content_already_removed_by"]`. No clocks are compared: a report that
+  wasn't pending when the content was removed (a repost, a removal that didn't take, a late
+  or backdated report) was never stamped, so a report filed after a removal is never
+  credited to it; the normal removal or refusal ("Nothing was removed") applies. A report
+  filed during the removal is stamped only if its snapshot holds the removed text. Nothing is removed, audited or
   announced a second time, the author gets no second statement of
   reasons (unless this decision also bans), and the reporter's `report_decision` carries
   `content_already_removed_by` and says "already removed by the decision on Report #X".

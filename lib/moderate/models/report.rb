@@ -123,6 +123,10 @@ module Moderate
 
     has_many :appeals, class_name: "Moderate::Appeal", dependent: :destroy
 
+    # The decision that removed this report's content while this report was pending
+    # (stamped by that decision); see ResolveReport's covering removal.
+    belongs_to :covered_by, class_name: "Moderate::Report", foreign_key: :covered_by_report_id, optional: true
+
     # The auto-filter flags that touched the SAME (record, field) this report is
     # about. Used to disclose automated means at intake (Art. 17(3)(c)) — if the
     # wordlist/image adapter already flagged this exact content, the decision email

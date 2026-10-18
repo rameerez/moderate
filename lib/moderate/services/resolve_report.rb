@@ -179,6 +179,7 @@ module Moderate
         refuse_unremoved! unless removable && report.reportable.remove_reported_field!(report.reported_field)
 
         @content_removed = content_removed_payload(note)
+        stamp_covered_reports!
         Moderate.audit(:content_removed, **content_removed_event)
         true
       end
@@ -188,45 +189,37 @@ module Moderate
         prior ? " (already removed by the decision on Report ##{prior})" : ""
       end
 
-      # An actioned report on the same content and field whose decision removed it,
-      # while the content is gone NOW (read fresh, under the content's lock: a recorded
-      # removal only counts if nothing is there any more). A locking read, like every
-      # "already done" check (Moderate.with_row_lock).
+      # The decision that removed this report's content while this report was pending:
+      # the one that stamped it (covered_by_report_id, see #stamp_covered_reports!),
+      # provided it did remove the content and the content is gone now (read fresh,
+      # under the content's lock). No clocks are compared: a report that wasn't pending
+      # when the content was removed (a repost, a removal that didn't take, a late
+      # report) was never stamped, so it is never credited to that removal.
       def covering_removal
-        type, id = content_ids(report)
-        return if type.blank? || id.blank? || !content_gone?
+        prior_id = report.covered_by_report_id
+        return if prior_id.blank? || !content_gone?
 
-        # Deleting the content nullifies every report's pointer, the earlier one's too:
-        # then the candidates are the nullified ones, matched by their snapshots.
-        pointer = report.reportable_id ? { reportable_type: type, reportable_id: id } : { reportable_id: nil }
-        Moderate::Report.actioned.where(pointer).where(reported_field: report.reported_field)
-          .where.not(id: report.id).recent_first.lock
-          .find do |prior|
-            content_ids(prior) == [type, id] && same_content_reported?(prior) &&
-              truthy?(prior.resolution_actions.to_h["remove_content"])
-          end
+        # A locking read (see Moderate.with_row_lock), like every "already done" check.
+        prior = Moderate::Report.actioned.lock.find_by(id: prior_id)
+        prior if prior && truthy?(prior.resolution_actions.to_h["remove_content"])
       end
 
-      # Was this report about the very content `prior` removed? Only if it was filed
-      # BEFORE that removal (the gem's own timeline: this report's created_at against
-      # the prior decision's resolved_at) and both intake snapshots carry the same,
-      # non-blank text. A report filed after a removal is about something that existed
-      # after it (a repost, or a removal that didn't take), so it is never credited to
-      # it; nothing is inferred from the content's own timestamps, which a host can
-      # write past. Without both texts nothing is covered.
-      def same_content_reported?(prior)
-        return false unless prior.resolved_at && report.created_at && report.created_at < prior.resolved_at
+      # Just removed this report's content, under its lock: stamp the OTHER reports
+      # pending on the same content and field whose intake snapshot holds the same text,
+      # so each can later be closed as "already removed by" this decision. A report
+      # filed concurrently either committed before this read (then its snapshot is the
+      # text it saw: this same text if it saw the content we removed) or after it (then
+      # it isn't stamped, and a removal on it is refused): never a false cover.
+      def stamp_covered_reports!
+        text = report.snapshot.to_h.with_indifferent_access[:content_text]
+        return if text.blank? || report.reportable_type.blank? || report.reportable_id.blank?
 
-        mine = report.snapshot.to_h.with_indifferent_access[:content_text]
-        theirs = prior.snapshot.to_h.with_indifferent_access[:content_text]
-        mine.present? && mine == theirs
-      end
-
-      # A report's content type and id, from its snapshot when its own pointer was
-      # nullified (the content deleted).
-      def content_ids(of)
-        snapshot = of.snapshot.to_h.with_indifferent_access
-        [of.reportable_type.presence || snapshot[:reportable_type], (of.reportable_id || snapshot[:reportable_id])&.to_s]
+        pending = Moderate::Report.open
+          .where(reportable_type: report.reportable_type, reportable_id: report.reportable_id)
+          .where(reported_field: report.reported_field, covered_by_report_id: nil)
+          .where.not(id: report.id).lock
+        ids = pending.select { |other| other.snapshot.to_h.with_indifferent_access[:content_text] == text }.map(&:id)
+        Moderate::Report.where(id: ids).update_all(covered_by_report_id: report.id) if ids.any?
       end
 
       def content_gone?

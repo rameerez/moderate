@@ -5,6 +5,8 @@ require "test_helper"
 # A second report on content an earlier decision already removed: it closes against
 # that decision ("already removed by the decision on Report #X"), the reporter told
 # the content is gone, and nothing is removed, announced or stated a second time.
+# Only a report that was pending, with the same snapshot text, when the decision
+# removed the content is stamped (covered_by_report_id) and so covered: no clocks.
 class Moderate::CoveringRemovalTest < ActiveSupport::TestCase
   setup do
     Moderate.configure do |config|
@@ -30,6 +32,7 @@ class Moderate::CoveringRemovalTest < ActiveSupport::TestCase
     remove_through(@first)
     ModerateTestRecorder.clear
 
+    assert_equal @first.id, @second.reload.covered_by_report_id, "stamped by the decision that removed it"
     @second.resolve!(by: @moderator, note: "Same content", remove_content: true)
 
     @second.reload
@@ -109,12 +112,26 @@ class Moderate::CoveringRemovalTest < ActiveSupport::TestCase
     assert_predicate after.reload, :open?
   end
 
-  test "a report whose snapshot carries no text is not covered" do
-    remove_through(@first)
+  test "a pending report whose snapshot carries no text, or other text, is not stamped" do
+    third = User.create!(name: "Third", email: "third@example.com").report!(@comment, category: :harassment, field: :body)
     @second.update_column(:snapshot, @second.snapshot.except("content_text"))
+    third.update_column(:snapshot, third.snapshot.merge("content_text" => "something else"))
+    remove_through(@first)
 
-    assert_raises(ActiveRecord::RecordInvalid) do
-      @second.resolve!(by: @moderator, note: "Same content", remove_content: true)
+    [@second, third].each do |report|
+      assert_nil report.reload.covered_by_report_id
+      error = assert_raises(ActiveRecord::RecordInvalid) { report.resolve!(by: @moderator, note: "x", remove_content: true) }
+      assert_match "Nothing was removed", error.message
     end
+  end
+
+  test "a report filed after the decision is never stamped, whatever its timestamps say" do
+    remove_through(@first)
+    late = User.create!(name: "Late", email: "late@example.com").report!(@comment, category: :harassment, field: :body)
+    late.update_columns(created_at: 1.year.ago, snapshot: late.snapshot.merge("content_text" => "vile words")) # backdated
+
+    assert_nil late.reload.covered_by_report_id
+    error = assert_raises(ActiveRecord::RecordInvalid) { late.resolve!(by: @moderator, note: "Late", remove_content: true) }
+    assert_match "Nothing was removed", error.message
   end
 end

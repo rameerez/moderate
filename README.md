@@ -484,7 +484,7 @@ What you get: `#reports` · `#open_reports` · `#reported?` · `#flagged?` · `#
 
 Queries: `.pending` · `.open` · `.actioned` · `.dismissed` · `.recent_first` · `.report_categories` · `.category_options` · `.locate_signed_reportable`.
 Decisions: `#resolve!` (`by:, note:, remove_content: false, ban_user: false, resolution_basis: "terms"`) · `#dismiss!` (`by:, note:`).
-Readers: `#pending?` · `#open?` · `#closed?` · `#actioned?` · `#dismissed?` · `#dsa?` · `#community?` · `#anonymous_notice?` · `#automated_processing_used?` · `#reported_field_label` · `#reportable_label` · `#notifier_label` · `#reported_content_text` · `#subject_url_list` · `#safe_subject_url` · `#safe_subject_urls` · `#safe_subject_url_for` · `#signed_appeal_gid` · `#held?` · `#skip_received_notice` · `#appeals` · `#flags`.
+Readers: `#pending?` · `#open?` · `#closed?` · `#actioned?` · `#dismissed?` · `#dsa?` · `#community?` · `#anonymous_notice?` · `#automated_processing_used?` · `#reported_field_label` · `#reportable_label` · `#notifier_label` · `#reported_content_text` · `#subject_url_list` · `#safe_subject_url` · `#safe_subject_urls` · `#safe_subject_url_for` · `#signed_appeal_gid` · `#held?` · `#covered_by` · `#skip_received_notice` · `#appeals` · `#flags`.
 Value lists: `::DEFAULT_CATEGORIES` · `::DSA_LEGAL_REASONS` · `::EU_COUNTRY_CODES` · `::CONTENT_TYPES` · `::RESOLUTION_BASES` · `::STATUSES` · `::INTAKE_KINDS` · `::APPEAL_WINDOW` · `::MESSAGE_MAX_LENGTH`.
 
 #### `Moderate::Flag`

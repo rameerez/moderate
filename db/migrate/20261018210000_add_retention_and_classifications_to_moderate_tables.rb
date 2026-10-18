@@ -9,6 +9,11 @@
 #   moderate_reports.held_until    a legal hold (Moderate.hold): until then the purge
 #                                  leaves the report, its appeals and the flags on its
 #                                  content alone.
+#   moderate_reports.covered_by_report_id
+#                                  the decision that removed this report's content while
+#                                  it was pending (stamped by that decision, under the
+#                                  content's lock); only such a report is closed as
+#                                  "already removed by" it.
 #   moderate_classifications       one row per record, field and set of attached
 #                                  files: who is classifying it (a claim) and when it
 #                                  was classified (Moderate::Attachments). Ids, a
@@ -28,6 +33,7 @@ class AddRetentionAndClassificationsToModerateTables < ActiveRecord::Migration[8
     moderate_appeals: %i[redacted_at]
   }.freeze
   HOLD_INDEX = "index_moderate_reports_on_held_until"
+  COVERED_INDEX = "index_moderate_reports_on_covered_by_report_id"
   CLASSIFICATION_INDEX = "index_moderate_classifications_on_record_field_digest"
 
   def up
@@ -39,12 +45,17 @@ class AddRetentionAndClassificationsToModerateTables < ActiveRecord::Migration[8
     if table_exists?(:moderate_reports) && !index_exists?(:moderate_reports, :held_until, name: HOLD_INDEX)
       add_index :moderate_reports, :held_until, name: HOLD_INDEX
     end
+    add_covered_by if table_exists?(:moderate_reports)
 
     create_classifications unless table_exists?(:moderate_classifications)
   end
 
   def down
     drop_table :moderate_classifications if table_exists?(:moderate_classifications)
+    if table_exists?(:moderate_reports) && column_exists?(:moderate_reports, :covered_by_report_id)
+      remove_index :moderate_reports, name: COVERED_INDEX if index_exists?(:moderate_reports, :covered_by_report_id, name: COVERED_INDEX)
+      remove_column :moderate_reports, :covered_by_report_id
+    end
     if table_exists?(:moderate_reports) && index_exists?(:moderate_reports, :held_until, name: HOLD_INDEX)
       remove_index :moderate_reports, name: HOLD_INDEX
     end
@@ -57,6 +68,14 @@ class AddRetentionAndClassificationsToModerateTables < ActiveRecord::Migration[8
   end
 
   private
+
+  def add_covered_by
+    _primary_key_type, foreign_key_type = key_types
+    add_column :moderate_reports, :covered_by_report_id, foreign_key_type unless column_exists?(:moderate_reports, :covered_by_report_id)
+    return if index_exists?(:moderate_reports, :covered_by_report_id, name: COVERED_INDEX)
+
+    add_index :moderate_reports, :covered_by_report_id, name: COVERED_INDEX
+  end
 
   def create_classifications
     primary_key_type, foreign_key_type = key_types

@@ -23,6 +23,7 @@ class AddRetentionAndClassificationsToModerateTablesTest < ActiveSupport::TestCa
   test "down removes the columns, the hold index and the classifications table; up adds them back, keeping rows" do
     migrate(:down)
     assert_not connection.table_exists?(:moderate_classifications)
+    assert_not connection.column_exists?(:moderate_reports, :covered_by_report_id)
     MIGRATION::COLUMNS.each do |table, columns|
       columns.each { |column| assert_not connection.column_exists?(table, column), "#{table}.#{column}" }
     end
@@ -41,6 +42,7 @@ class AddRetentionAndClassificationsToModerateTablesTest < ActiveSupport::TestCa
     end
     assert connection.index_exists?(:moderate_reports, :held_until, name: MIGRATION::HOLD_INDEX)
     assert connection.table_exists?(:moderate_classifications)
+    assert connection.index_exists?(:moderate_reports, :covered_by_report_id, name: MIGRATION::COVERED_INDEX)
     assert connection.index_exists?(:moderate_classifications, %i[record_type record_id field digest],
       unique: true, name: MIGRATION::CLASSIFICATION_INDEX)
     assert_nil Moderate::Flag.find(flag_id).redacted_at, "existing rows are neither redacted nor held"
