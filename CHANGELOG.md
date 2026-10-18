@@ -37,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decision notices go out after the lock is released. `flag.report` is the report it went
   through. Hosts that hand-wrote this bridge (find-or-create a report, resolve it, then close
   the flag) can delete it. Without those options `action!` is the triage close it was.
+- **`Moderate::Flag.flag_for_review!(record, field:, by:, note: nil)`**: an administrator
+  filing content for review by hand (the "Flag for review" button on a transcript line). It
+  returns the pending flag on that field if one already waits, else files a
+  `source: "manual"` flag owned by the content's person, with the evidence snapshot as
+  excerpt and `context` naming who filed it; `flag.previously_new_record?` says which. The
+  check and the insert run under the record's row lock, so two administrators pressing it
+  together file one flag. Audited as `:flag_filed`. Hosts that hand-assembled the nine
+  `Flag.flag!` arguments (and, without a lock, could file two) can call this instead.
 - **`Flag#resolve!`**, an alias of `action!`: reports and flags now share one verb and one
   keyword contract, which is what `Moderate::Moderation#resolve` and `docs/madmin.md`
   always assumed.
