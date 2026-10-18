@@ -26,6 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Default locale files** (`config/locales/en.yml`, `es.yml`): the appeal page's new string and
   generic labels for common field names (`body` → "Text"/"Texto", `avatar` → "Profile
   photo"/"Foto de perfil", …).
+- **Labels for every value list the gem defines, in English and Spanish.**
+  `Moderate.taxonomy_label(kind, value)` names a community category, a DSA legal reason, an
+  EU member state, a content type, a resolution basis, a decision, an intake kind, a report /
+  flag / appeal status, a flag source or mode, or an appeal source in the current locale, from
+  `moderate.<scope>.<value>` (scopes in `Moderate::TAXONOMY_LABEL_SCOPES`), falling back to
+  the value humanized so a host's own category or adapter name still renders. The gem's
+  `config/locales/{en,es}.yml` now carry every value, and a host's translation wins. The
+  public notice form, which always read `moderate.legal_reasons/content_types/member_states`,
+  now shows real copy in both languages. **`Moderate::Report.category_options`** gives a
+  report form's select its `[label, value]` pairs, honoring `config.report_categories`. Hosts
+  that translated the regulator's vocabulary themselves can drop their copies for en/es.
 - **Enforce from a flag.** `flag.action!(by:, note:, remove_content: true)` and
   `flag.action!(by:, note:, ban_user: true)` (any combination, plus `resolution_basis:`)
   escalate to a report and resolve it: the newest open report on the same content and field
@@ -60,6 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The transparency page labels its counters from the gem's own keys.** Two of its cards
+  read `moderation.legal_reasons.*` / `moderation.resolution_bases.*`, a namespace from the
+  app the gem was extracted from that no other part of the gem uses; the rest printed raw
+  values humanized. Every card now goes through `Moderate.taxonomy_label`.
 - **`Moderate::Moderation#resolve` works on flags.** It called `record.resolve!`, which
   `Moderate::Flag` didn't have, so a host following the concern's own documentation got a
   `NoMethodError` (as an alert flash) on every flag. It also passes `resolution_basis` when

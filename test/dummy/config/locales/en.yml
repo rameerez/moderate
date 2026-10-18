@@ -5,3 +5,5 @@ en:
   moderate:
     reportable_fields:
       avatar: "Profile picture"   # gem default: "Profile photo"
+    categories:
+      spam: "Junk"                # gem default: "Spam"

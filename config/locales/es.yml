@@ -18,3 +18,133 @@ es:
       images: "Imágenes"
       attachments: "Archivos adjuntos"
       files: "Archivos"
+
+    categories:
+      harassment: "Acoso"
+      hate: "Odio"
+      threats: "Amenazas"
+      sexual_content: "Contenido sexual"
+      spam: "Spam"
+      fraud: "Fraude"
+      unsafe_behavior: "Conducta insegura"
+      illegal_content: "Contenido ilegal"
+      privacy: "Privacidad"
+      child_safety: "Seguridad infantil"
+      other: "Otro"
+      hate_abuse_harassment: "Odio, abuso o acoso"
+      violent_speech: "Discurso violento"
+      graphic_violent_media: "Contenido gráfico o violento"
+      illegal_regulated_behaviors: "Conductas ilegales o reguladas"
+      impersonation: "Suplantación"
+      adult_sexual_content: "Contenido sexual adulto"
+      private_non_consensual_content: "Contenido privado o no consentido"
+      suicide_self_harm: "Suicidio o autolesiones"
+      terrorism_violent_extremism: "Terrorismo o extremismo violento"
+      scam_fraud: "Estafa o fraude"
+
+    legal_reasons:
+      animal_welfare: "Bienestar animal"
+      consumer_information: "Infracciones de información al consumidor"
+      cyber_violence: "Ciberviolencia"
+      data_protection_privacy: "Protección de datos y privacidad"
+      illegal_or_harmful_speech: "Discurso ilegal o dañino"
+      civic_elections: "Efectos negativos en el discurso cívico o las elecciones"
+      non_consensual_behavior: "Conducta no consentida"
+      pornography_sexualized_content: "Pornografía o contenido sexualizado"
+      protection_of_minors: "Protección de menores"
+      public_security: "Riesgo para la seguridad pública"
+      scams_fraud: "Estafas y fraude"
+      scope_of_platform_service: "Ámbito del servicio de plataforma"
+      self_harm: "Autolesiones"
+      unsafe_illegal_products: "Productos inseguros o ilegales"
+      violence: "Violencia"
+      intellectual_property: "Propiedad intelectual"
+      other: "Otro"
+
+    member_states:
+      AT: "Austria"
+      BE: "Bélgica"
+      BG: "Bulgaria"
+      CY: "Chipre"
+      CZ: "Chequia"
+      DE: "Alemania"
+      DK: "Dinamarca"
+      EE: "Estonia"
+      ES: "España"
+      FI: "Finlandia"
+      FR: "Francia"
+      GR: "Grecia"
+      HR: "Croacia"
+      HU: "Hungría"
+      IE: "Irlanda"
+      IT: "Italia"
+      LT: "Lituania"
+      LU: "Luxemburgo"
+      LV: "Letonia"
+      MT: "Malta"
+      NL: "Países Bajos"
+      PL: "Polonia"
+      PT: "Portugal"
+      RO: "Rumanía"
+      SE: "Suecia"
+      SI: "Eslovenia"
+      SK: "Eslovaquia"
+      EU: "Toda la UE"
+
+    content_types:
+      user_profile: "Perfil de usuario"
+      profile_avatar: "Foto de perfil"
+      listing: "Anuncio"
+      message: "Mensaje"
+      conversation: "Conversación"
+      group: "Grupo"
+      other: "Otro"
+
+    resolution_bases:
+      terms: "Condiciones del servicio"
+      law: "La ley"
+      law_and_terms: "La ley y las condiciones del servicio"
+      insufficient_information: "Información insuficiente"
+      no_violation: "Sin infracción"
+
+    decisions:
+      no_restriction: "Sin restricción"
+      no_action: "Sin medidas"
+      content_removed: "Contenido retirado"
+      account_suspended: "Cuenta suspendida"
+      other_restriction: "Otra restricción"
+
+    intake_kinds:
+      community: "Denuncia en la app"
+      dsa: "Aviso legal"
+
+    statuses:
+      report:
+        open: "Abierta"
+        actioned: "Gestionada"
+        dismissed: "Descartada"
+      flag:
+        pending: "Pendiente de revisión"
+        actioned: "Gestionada"
+        dismissed: "Descartada"
+      appeal:
+        open: "Abierto"
+        upheld: "Estimado"
+        rejected: "Desestimado"
+
+    flag_sources:
+      text_filter: "Filtro de texto"
+      image_filter: "Filtro de imagen"
+      external_classifier: "Clasificador externo"
+      manual: "Marcado a mano"
+      wordlist: "Lista de palabras"
+
+    flag_modes:
+      flag: "Publicado, en revisión"
+      block: "Bloqueado"
+
+    appeal_sources:
+      notifier: "Quien lo notificó"
+      affected_user: "La persona afectada"
+      admin: "Un administrador"
+      other: "Otro"

@@ -207,6 +207,17 @@ module Moderate
       Array(Moderate.config.report_categories).map(&:to_s).presence || DEFAULT_CATEGORIES
     end
 
+    # The community categories in effect as `[label, value]` pairs, in the current
+    # locale, ready for a report form's select:
+    #
+    #   f.select :category, Moderate::Report.category_options
+    #
+    # Honors `config.report_categories` (a host list's own values are labeled from
+    # `moderate.categories.<value>`, else humanized). See Moderate.taxonomy_label.
+    def self.category_options
+      report_categories.map { |category| [Moderate.taxonomy_label(:category, category), category] }
+    end
+
     # --- Signed-GlobalID locators --------------------------------------------
 
     # Resolve a signed token back into the reported content. Prefer the

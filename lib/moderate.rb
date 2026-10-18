@@ -46,6 +46,27 @@ require_relative "moderate/engine" if defined?(::Rails::Engine)
 # The heavy lifting (the AR models, the decision services, the controllers) lives
 # in the autoloaded `app/` tree and calls back into these facade methods.
 module Moderate
+  # Where each of the gem's value lists is labeled for humans, under `moderate.`
+  # in I18n. The gem ships English and Spanish for every value it defines
+  # (config/locales/*.yml); a host overrides any key in its own locale files (they
+  # load after the gem's) and adds the languages it needs. The public DSA notice
+  # form has always read the legal_reasons, content_types and member_states keys.
+  TAXONOMY_LABEL_SCOPES = {
+    category: "categories",              # in-app community report categories (Report#category)
+    legal_reason: "legal_reasons",       # DSA statement-of-reasons grounds (Report#legal_reason)
+    member_state: "member_states",       # EU member-state codes (Report#legal_country_code)
+    content_type: "content_types",       # Report#content_type
+    resolution_basis: "resolution_bases", # the Art. 17 ground of a decision (Report#resolution_basis)
+    decision: "decisions",               # the restriction imposed (Report#decision_visibility, the decision payload's :action)
+    intake_kind: "intake_kinds",         # community report vs. DSA notice (Report#intake_kind)
+    report_status: "statuses.report",
+    flag_status: "statuses.flag",
+    appeal_status: "statuses.appeal",
+    flag_source: "flag_sources",         # Flag#source (host adapter names fall back to humanize)
+    flag_mode: "flag_modes",             # Flag#mode
+    appeal_source: "appeal_sources"      # Appeal#source
+  }.freeze
+
   class << self
     # --- Configuration --------------------------------------------------------
 
@@ -180,6 +201,33 @@ module Moderate
         .lazy.filter_map { |key| reportable_label_i18n(key) }
 
       declared_reportable_field_label(klass, field_s) || translated.first || field_s.humanize
+    end
+
+    # --- Taxonomy labels ------------------------------------------------------
+
+    # The human label for one value of one of the gem's taxonomies, in the current
+    # locale — what a report form, a moderation queue or a statement of reasons
+    # prints instead of the stored value:
+    #
+    #   Moderate.taxonomy_label(:category, "harassment")       # => "Harassment"   ("Acoso" in :es)
+    #   Moderate.taxonomy_label(:legal_reason, :scams_fraud)   # => "Scams and fraud"
+    #   Moderate.taxonomy_label(:flag_status, flag.status)     # => "Awaiting review"
+    #
+    # Reads `moderate.<scope>.<value>` (TAXONOMY_LABEL_SCOPES), falling back to the
+    # value humanized (a member-state code falls back to itself), so a host's own
+    # category or adapter name still renders. nil/blank in, nil out. An unknown kind
+    # raises: a typo'd kind would otherwise silently print raw values forever.
+    def taxonomy_label(kind, value)
+      scope = TAXONOMY_LABEL_SCOPES.fetch(kind.to_sym) do
+        raise ArgumentError, "unknown taxonomy #{kind.inspect}; one of: #{TAXONOMY_LABEL_SCOPES.keys.join(', ')}"
+      end
+      value_s = value.to_s.strip
+      return if value_s.empty?
+
+      fallback = kind.to_sym == :member_state ? value_s : value_s.tr("/", " ").humanize
+      return fallback unless defined?(I18n)
+
+      I18n.t("moderate.#{scope}.#{value_s}", default: fallback)
     end
 
     # --- Notify / audit hooks -------------------------------------------------

@@ -32,3 +32,138 @@ en:
       images: "Images"
       attachments: "Attachments"
       files: "Files"
+
+    # Labels for the gem's own value lists, read by Moderate.taxonomy_label(kind,
+    # value) and Moderate::Report.category_options (and, for legal_reasons,
+    # content_types and member_states, by the public notice form). The stored values
+    # never change; only what people read does.
+    categories:
+      harassment: "Harassment"
+      hate: "Hate"
+      threats: "Threats"
+      sexual_content: "Sexual content"
+      spam: "Spam"
+      fraud: "Fraud"
+      unsafe_behavior: "Unsafe behavior"
+      illegal_content: "Illegal content"
+      privacy: "Privacy"
+      child_safety: "Child safety"
+      other: "Other"
+      hate_abuse_harassment: "Hate, abuse or harassment"
+      violent_speech: "Violent speech"
+      graphic_violent_media: "Graphic or violent media"
+      illegal_regulated_behaviors: "Illegal or regulated behavior"
+      impersonation: "Impersonation"
+      adult_sexual_content: "Adult sexual content"
+      private_non_consensual_content: "Private or non-consensual content"
+      suicide_self_harm: "Suicide or self-harm"
+      terrorism_violent_extremism: "Terrorism or violent extremism"
+      scam_fraud: "Scam or fraud"
+
+    # The EU statement-of-reasons categories (DSA Art. 17 / the Transparency Database).
+    legal_reasons:
+      animal_welfare: "Animal welfare"
+      consumer_information: "Consumer information infringements"
+      cyber_violence: "Cyber violence"
+      data_protection_privacy: "Data protection and privacy violations"
+      illegal_or_harmful_speech: "Illegal or harmful speech"
+      civic_elections: "Negative effects on civic discourse or elections"
+      non_consensual_behavior: "Non-consensual behavior"
+      pornography_sexualized_content: "Pornography or sexualized content"
+      protection_of_minors: "Protection of minors"
+      public_security: "Risk for public security"
+      scams_fraud: "Scams and fraud"
+      scope_of_platform_service: "Scope of platform service"
+      self_harm: "Self-harm"
+      unsafe_illegal_products: "Unsafe or illegal products"
+      violence: "Violence"
+      intellectual_property: "Intellectual property infringements"
+      other: "Other"
+
+    member_states:
+      AT: "Austria"
+      BE: "Belgium"
+      BG: "Bulgaria"
+      CY: "Cyprus"
+      CZ: "Czechia"
+      DE: "Germany"
+      DK: "Denmark"
+      EE: "Estonia"
+      ES: "Spain"
+      FI: "Finland"
+      FR: "France"
+      GR: "Greece"
+      HR: "Croatia"
+      HU: "Hungary"
+      IE: "Ireland"
+      IT: "Italy"
+      LT: "Lithuania"
+      LU: "Luxembourg"
+      LV: "Latvia"
+      MT: "Malta"
+      NL: "Netherlands"
+      PL: "Poland"
+      PT: "Portugal"
+      RO: "Romania"
+      SE: "Sweden"
+      SI: "Slovenia"
+      SK: "Slovakia"
+      EU: "The whole EU"
+
+    content_types:
+      user_profile: "User profile"
+      profile_avatar: "Profile photo"
+      listing: "Listing"
+      message: "Message"
+      conversation: "Conversation"
+      group: "Group"
+      other: "Other"
+
+    resolution_bases:
+      terms: "Terms of service"
+      law: "The law"
+      law_and_terms: "The law and the terms of service"
+      insufficient_information: "Insufficient information"
+      no_violation: "No violation"
+
+    decisions:
+      no_restriction: "No restriction"
+      no_action: "No action"
+      content_removed: "Content removed"
+      account_suspended: "Account suspended"
+      other_restriction: "Other restriction"
+
+    intake_kinds:
+      community: "In-app report"
+      dsa: "Legal notice"
+
+    statuses:
+      report:
+        open: "Open"
+        actioned: "Actioned"
+        dismissed: "Dismissed"
+      flag:
+        pending: "Awaiting review"
+        actioned: "Actioned"
+        dismissed: "Dismissed"
+      appeal:
+        open: "Open"
+        upheld: "Upheld"
+        rejected: "Rejected"
+
+    flag_sources:
+      text_filter: "Text filter"
+      image_filter: "Image filter"
+      external_classifier: "External classifier"
+      manual: "Filed by hand"
+      wordlist: "Word list"
+
+    flag_modes:
+      flag: "Published, queued for review"
+      block: "Blocked"
+
+    appeal_sources:
+      notifier: "The notifier"
+      affected_user: "The affected person"
+      admin: "An administrator"
+      other: "Other"
