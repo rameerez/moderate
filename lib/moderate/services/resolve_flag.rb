@@ -63,7 +63,9 @@ module Moderate
         connection = Moderate::DeferredNotices.connection_for(flag.class)
 
         flag.with_lock do
-          flag.reload
+          # `with_lock` already re-read the row under the lock (SELECT … FOR UPDATE):
+          # no plain reload here — under MySQL's REPEATABLE READ a plain read pins the
+          # transaction's snapshot, and every later check must see what committed.
 
           # Re-check inside the lock. A flag already reviewed is returned as-is (NOT
           # an error) — and nothing is enforced a second time.
@@ -80,19 +82,29 @@ module Moderate
         flag
       end
 
-      # Enforce under the CONTENT's row lock too (after the flag's, before the
-      # report's — the gem's one lock order), so two flags on the same content can't
-      # both enforce: the second waits, then finds the decision the first took.
+      # Enforce under the CONTENT's row lock and, when the decision can ban, the
+      # PERSON's (after the flag's, before any report's: the lock order in
+      # Moderate.with_row_lock), so two flags on the same content can't both enforce,
+      # nor two bans of the same person: the second waits, then finds the decision the
+      # first took. Removal-only enforcement never touches the person's row.
+      #
+      # Both locks come BEFORE the first read of moderate_reports, and that matters on
+      # MySQL: its locking reads of the reports table (the checks below) take gap locks
+      # under REPEATABLE READ, and two decisions holding gap locks that each then insert
+      # a report deadlock. Waiting on the content or the person first means the second
+      # decision touches the reports table only after the first one has committed.
       # Returns [the ResolveReport that decided, or nil, the report the flag answers to].
       def enforce!(note, enforcement, resolution_basis)
         Moderate.with_row_lock(flag.flaggable) do
-          prior = covering_decision(enforcement)
-          next [nil, prior] if prior
+          Moderate.with_row_lock(enforcement[:ban_user] ? flag.owner : nil) do
+            prior = covering_decision(enforcement)
+            next [nil, prior] if prior
 
-          report = escalation_report!(note)
-          decision = ResolveReport.new(report, by: moderator, deliver: false, conduct_since: flag.created_at)
-          decision.resolve!(note: note, resolution_basis: resolution_basis, **enforcement)
-          [decision, report]
+            report = escalation_report!(note)
+            decision = ResolveReport.new(report, by: moderator, deliver: false, conduct_since: flag.created_at)
+            decision.resolve!(note: note, resolution_basis: resolution_basis, **enforcement)
+            [decision, report]
+          end
         end
       end
 
@@ -105,7 +117,9 @@ module Moderate
         asked = enforcement.select { |_action, wanted| wanted }.keys.map(&:to_s)
         return if asked.include?("remove_content") && !content_gone?
 
-        decided = Moderate::Report.actioned.where(same_content).where(resolved_at: flag.created_at..).recent_first
+        # A locking read (see Moderate.with_row_lock): sees the decision a concurrent
+        # moderator committed while we waited, whatever the isolation level.
+        decided = Moderate::Report.actioned.where(same_content).where(resolved_at: flag.created_at..).recent_first.lock
         decided.find { |report| asked.all? { |action| truthy?(report.resolution_actions.to_h[action]) } }
       end
 
@@ -113,7 +127,7 @@ module Moderate
       # is (`deleted?`, a soft-delete tombstone), or the field reading as empty. Read
       # fresh, under the content's lock: a decision that just committed removed it.
       def content_gone?
-        content = flag.flaggable&.reload
+        content = flag.flaggable&.reload(lock: true) # a locking read: what committed, not our snapshot
         return true if content.nil?
         return true if content.respond_to?(:deleted?) && content.deleted?
 
@@ -142,7 +156,7 @@ module Moderate
       # no reporter, so it sends no receipt and no reporter-facing decision; the
       # affected user still gets the statement of reasons and the appeal window.
       def escalation_report!(note)
-        existing = Moderate::Report.open.where(same_content).recent_first.first
+        existing = Moderate::Report.open.where(same_content).recent_first.lock.first
         return disclose_automation!(existing) if existing
 
         system_report!(note)

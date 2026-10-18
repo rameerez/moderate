@@ -450,6 +450,10 @@ end
 
 Reportable classes are auto-discovered from the `has_reportable_content` macro (or `include Moderate::Reportable`) — no manual registry.
 
+## Upgrading between 1.0 betas
+
+**1.0.0.beta4 adds a migration.** After upgrading, run `bin/rails db:migrate`: the engine adds the gem's own `db/migrate` to your app's migration paths, so it runs with yours. (If your app holds copies of the gem's migrations, `*.moderate.rb` files from `bin/rails moderate:install:migrations`, the engine adds nothing and the copies run instead: run `bin/rails moderate:install:migrations` to copy the new one, then migrate.) A fresh install from 1.0.0.beta4 on gets the same migration from `rails generate moderate:install`, copied right after the tables, so it holds copies: after each later upgrade, run `bin/rails moderate:install:migrations`, then migrate. It gives `moderate_flags` a `pending_key` with a unique index, so at most one flag is pending per content and field. If flags filed before the upgrade would break that index, the migration stops and lists them; close all but one of each and run it again. On MySQL the key column is `utf8mb4_bin`, so keys compare by case; that collation still ignores trailing spaces (PAD SPACE), which is why `moderate` strips a flag's `field`, and why a legacy flag whose field ends in a space can be one of those the migration lists. See [`CHANGELOG.md`](CHANGELOG.md) for what each beta changes.
+
 ## Upgrading from 0.x
 
 `moderate` 1.0 is a ground-up rewrite: the old gem was a profanity validator; 1.0 is a full Trust & Safety system. The one piece of the old API that remains is the validator, now backed by the `:wordlist` adapter:

@@ -15,6 +15,10 @@
 # .github/workflows/test.yml: "Exercise the real migration path in SQLite too so
 # dummy/test schema drift is caught").
 #
+# Like the template, it has no moderate_flags.pending_key: the gem's own db/migrate
+# (which the engine adds to the app's migration paths here) creates it, as it does in
+# every host, so every CI run exercises that migration on all three databases.
+#
 # The migration version is pinned to [7.1] — the gemspec floor and the lowest Rails
 # in the test matrix. (The template renders this from ActiveRecord::VERSION at
 # generate time; here we anchor to the floor, which every Rails in the matrix
@@ -230,7 +234,7 @@ class CreateModerateTables < ActiveRecord::Migration[7.1]
   # Returns an empty-hash default for SQLite/PostgreSQL, nil for MySQL.
   # Models handle nil metadata gracefully by defaulting to {} in their accessors.
   def json_column_default
-    return nil if connection.adapter_name.downcase.include?("mysql")
+    return nil if mysql?
 
     {}
   end
@@ -238,9 +242,14 @@ class CreateModerateTables < ActiveRecord::Migration[7.1]
   # Same MySQL caveat as `json_column_default`, but for list-shaped columns,
   # which default to an empty array on SQLite/PostgreSQL.
   def json_array_default
-    return nil if connection.adapter_name.downcase.include?("mysql")
+    return nil if mysql?
 
     []
+  end
+
+  # MySQL under either of Rails' adapters: mysql2, or Trilogy (Rails 7.1+).
+  def mysql?
+    connection.adapter_name.downcase.match?(/mysql|trilogy/)
   end
 
   # SQLite has no `char_length`; its `length(text)` already counts characters.

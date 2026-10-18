@@ -234,23 +234,36 @@ module Moderate
         assert_equal ["image"], EscalationComment.removed_fields
       end
 
-      test "a second flag on the same content closes against the decision already taken, enforcing nothing again" do
+      test "a flag closes against a decision taken on its content while it waited, enforcing nothing again" do
         moderator = User.create!(name: "Mod")
-        first = create_flag(comment_class: EscalationComment)
-        second = Moderate::Flag.flag!(
-          flaggable: first.flaggable, field: "body", owner: first.owner, source: "manual", mode: "flag",
-          excerpt: "ok body", categories: [], scores: {}, context: {}
-        )
+        flag = create_flag(comment_class: EscalationComment)
+        reporter = User.create!(name: "Reporter", email: "r-cover@example.com")
+        # A person's report on the same content and field, decided directly while the flag waited.
+        decided = reporter.report!(flag.flaggable, category: :hate, details: "Slur", field: :body)
+        decided.resolve!(by: moderator, note: "Removed.", remove_content: true)
+        ModerateTestRecorder.clear
 
-        first.action!(by: moderator, note: "Removed.", remove_content: true)
         assert_no_difference -> { Moderate::Report.count } do
-          second.action!(by: moderator, note: "Same thing.", remove_content: true)
+          flag.action!(by: moderator, note: "Same thing.", remove_content: true)
         end
 
-        assert_equal first.reload.report, second.reload.report
-        assert_equal "actioned", second.status
+        assert_equal decided, flag.reload.report
+        assert_equal "actioned", flag.status
         assert_equal ["body"], EscalationComment.removed_fields, "removed once"
-        assert_equal 1, ModerateTestRecorder.notifications_named(:affected_user_decision).size
+        assert_empty ModerateTestRecorder.notifications_named(:affected_user_decision), "no second statement"
+      end
+
+      test "while a flag waits on a field, another flag on that field joins it" do
+        first = create_flag(comment_class: EscalationComment)
+
+        second = Moderate::Flag.flag!(
+          flaggable: first.flaggable, field: "body", owner: first.owner, source: "manual", mode: "flag",
+          excerpt: "again", categories: [], scores: {}, context: {}
+        )
+
+        assert_equal first, second
+        assert_not_predicate second, :previously_new_record?
+        assert_equal 1, Moderate::Flag.pending.where(flaggable: first.flaggable, field: "body").count
       end
 
       test "the escalation exception isn't a host-assignable attribute" do
@@ -362,12 +375,11 @@ module Moderate
         Moderate.configure { |config| config.ban_handler = ModerateTestRecorder.method(:ban_handler) }
         moderator = User.create!(name: "Mod")
         first = create_flag(comment_class: EscalationComment)
-        second = Moderate::Flag.flag!(
+        first.action!(by: moderator, note: "Removed.", remove_content: true)
+        second = Moderate::Flag.flag!( # filed once the first is decided: its field is free again
           flaggable: first.flaggable, field: "body", owner: first.owner, source: "manual", mode: "flag",
           excerpt: "ok body", categories: [], scores: {}, context: {}
         )
-
-        first.action!(by: moderator, note: "Removed.", remove_content: true)
         second.action!(by: moderator, note: "And banned.", ban_user: true)
 
         assert_not_equal first.reload.report, second.reload.report

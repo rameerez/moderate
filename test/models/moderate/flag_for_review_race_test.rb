@@ -1,17 +1,20 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require_relative "../../support/lock_waits"
 
 module Moderate
-  # Two administrators pressing "Flag for review" on one record at once
-  # (Moderate::Flag.flag_for_review!): the check and the insert run under the record's
-  # row lock, so one flag is filed and the other gets it back. Real threads on real
-  # connections, so this test commits and cleans up after itself. (Ported from
-  # playscbw's Admin::ReviewFlag race test, which this API replaces.)
+  # Two filings of "Flag for review" on one record at once
+  # (Moderate::Flag.flag_for_review!). At most one flag may be pending per content and
+  # field, and the database says so (the unique pending_key): one filing inserts, the
+  # other's insert collides and returns the flag already waiting. Real threads on real
+  # connections, so this test commits and cleans up after itself.
   #
-  # PostgreSQL and MySQL only: SQLite has no row locks (SELECT ... FOR UPDATE is a
-  # no-op there), so there is nothing for this test to prove on it.
+  # PostgreSQL and MySQL only: SQLite serializes writers and has no row locks, so
+  # there is no interleaving to force on it.
   class FlagForReviewRaceTest < ActiveSupport::TestCase
+    include LockWaits
+
     self.use_transactional_tests = false
 
     setup do
@@ -31,26 +34,76 @@ module Moderate
       [*@admins, @author].each(&:destroy)
     end
 
-    test "two at once file one flag" do
-      gate = Queue.new
-      threads = @admins.map do |admin|
-        Thread.new do
-          ActiveRecord::Base.connection_pool.with_connection do
-            gate.pop
-            Moderate::Flag.flag_for_review!(Comment.find(@comment.id), field: :body, by: admin).previously_new_record?
+    test "two at once file one flag: the second waits on the first's insert, then gets it" do
+      ids = Queue.new
+      inserted = Queue.new
+      commit = Queue.new
+
+      first = Thread.new do
+        ActiveRecord::Base.connection_pool.with_connection do
+          Moderate::Flag.transaction do # holds its uncommitted insert until told
+            flag = Moderate::Flag.flag_for_review!(Comment.find(@comment.id), field: :body, by: @admins[0])
+            inserted << true
+            commit.pop
+            flag
           end
         end
       end
-      # Hold the row so both arrive before either may look: without the lock both
-      # would find no flag and both would file one.
-      @comment.with_lock do
-        2.times { gate << :go }
-        sleep 0.2
+      inserted.pop
+
+      second = Thread.new do
+        ActiveRecord::Base.connection_pool.with_connection do
+          ids << backend_id
+          Moderate::Flag.flag_for_review!(Comment.find(@comment.id), field: :body, by: @admins[1])
+        end
+      end
+      begin
+        wait_until_blocked(ids.pop) # on the first's uncommitted, unique pending_key
+      ensure
+        commit << :go # whatever happened, never leave a transaction open
       end
 
-      created = threads.map(&:value)
-      assert_equal([false, true], created.sort_by { |was_new| was_new ? 1 : 0 })
+      filed = first.value
+      joined = second.value
+      assert_predicate filed, :previously_new_record?
+      assert_equal filed, joined
+      assert_not_predicate joined, :previously_new_record?
       assert_equal 1, Moderate::Flag.pending.where(flaggable: @comment).count
+    end
+
+    # The sequence that defeated a plain read under the content lock on MySQL
+    # (REPEATABLE READ): A's transaction makes a consistent read first, so its snapshot
+    # predates B's flag; B files and commits; then A files. The insert collides with
+    # what is committed, whatever A's snapshot, and the waiting flag is read with a
+    # locking read, which returns the latest committed row.
+    test "a filing whose transaction already read gets the flag committed since, not a second one" do
+      read = Queue.new
+      filed_by_b = Queue.new
+
+      a = Thread.new do
+        ActiveRecord::Base.connection_pool.with_connection do
+          Moderate::Flag.transaction do
+            Moderate::Flag.where(flaggable: @comment).to_a # the consistent read: A's snapshot starts here
+            read << true
+            filed_by_b.pop
+            Moderate::Flag.flag_for_review!(Comment.find(@comment.id), field: :body, by: @admins[0])
+          end
+        end
+      end
+      read.pop
+
+      begin
+        b = ActiveRecord::Base.connection_pool.with_connection do
+          Moderate::Flag.flag_for_review!(Comment.find(@comment.id), field: :body, by: @admins[1])
+        end
+      ensure
+        filed_by_b << b # whatever happened, let A finish its transaction
+      end
+
+      got = a.value
+      assert_equal b, got, "A gets B's flag"
+      assert_not_predicate got, :previously_new_record?
+      assert_equal 1, Moderate::Flag.where(flaggable: @comment, field: "body").count, "no second row"
     end
   end
 end

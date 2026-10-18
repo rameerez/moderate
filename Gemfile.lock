@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    moderate (1.0.0.beta3)
+    moderate (1.0.0.beta4)
       activerecord (>= 7.1.0, < 9.0)
       activesupport (>= 7.1.0, < 9.0)
       globalid (~> 1.0)

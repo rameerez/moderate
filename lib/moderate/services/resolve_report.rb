@@ -116,7 +116,9 @@ module Moderate
 
       def lock_and_transition!(status, note:, actions:)
         report.with_lock do
-          report.reload
+          # `with_lock` already re-read the row under the lock (SELECT … FOR UPDATE):
+          # no plain reload here — under MySQL's REPEATABLE READ a plain read pins the
+          # transaction's snapshot, and every later check must see what committed.
 
           # Re-check inside the lock — see class doc point (1). A closed report is a
           # no-op error, never a silent re-apply of enforcement.
@@ -221,7 +223,9 @@ module Moderate
         since = @conduct_since || report.created_at
         decided = Moderate::Report.actioned.where(reported_user_id: user.id, resolved_at: since..)
                                   .where.not(id: report.id)
-        decided.recent_first.find { |prior| truthy?(prior.resolution_actions.to_h["ban_user"]) }
+        # A locking read: a ban committed by a concurrent decision while we waited for
+        # the person's lock is seen, whatever the isolation level.
+        decided.recent_first.lock.find { |prior| truthy?(prior.resolution_actions.to_h["ban_user"]) }
       end
 
       # --- Notifications (after the lock) -------------------------------------

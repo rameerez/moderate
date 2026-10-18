@@ -369,12 +369,37 @@ module Moderate
     # --- Transactions -----------------------------------------------------------
 
     # Hold `record`'s row lock (SELECT … FOR UPDATE) for the block, or just run the
-    # block when there's no saved row to lock. Enforcement takes the CONTENT's lock
-    # before the report's, everywhere (flag → content → report), so two decisions
-    # about the same content serialize instead of enforcing twice or deadlocking.
+    # block when there's no saved row to lock. The lock is taken by query, not with
+    # `record.with_lock`, so the caller's object is neither reloaded nor refused for
+    # carrying unsaved changes.
     #
-    # The lock is taken by query, not with `record.with_lock`, so the caller's object
-    # is neither reloaded nor refused for carrying unsaved changes.
+    # THE LOCK ORDER — one, everywhere; a path may skip a step, never reverse two:
+    #
+    #   flag  →  content  →  person  →  report
+    #
+    #   - Flag#action!/#dismiss! (ResolveFlag): the flag; to enforce, the content;
+    #     to ban, the person; then the report it resolves.
+    #   - Report#resolve!/#dismiss! (ResolveReport): the content; to ban, the person;
+    #     then the report.
+    #   - Flag.flag! / Flag.flag_for_review!: no lock first. The database allows one
+    #     pending flag per content + field (the unique pending_key), so they insert,
+    #     and only on the collision lock a row: the waiting flag's. Holding no content
+    #     lock, they never hold content while waiting on a flag (the inversion against
+    #     ResolveFlag); the read of the waiting flag is an equality match on a unique
+    #     index, a lock on that one row while it exists.
+    #   - "The flag" is, for a pending flag, its pending_key index entry and then its
+    #     row (Flag#lock!), the order a colliding insert takes them in on InnoDB.
+    #   - The person's lock is taken only when a decision can ban: removal-only
+    #     enforcement never waits on, or holds, an account's row.
+    #
+    # Under the lock, every check that decides "already done" (a covering decision, a
+    # prior ban, whether content is gone, the flag waiting after a collision) is
+    # itself a LOCKING read (`.lock`, `reload(lock: true)`). Under MySQL's REPEATABLE
+    # READ a plain read returns the transaction's snapshot, which may predate the lock,
+    # and would miss what the decision we waited for committed; a locking read returns
+    # the latest committed row on every database. Those reads come after the locks that serialize them
+    # (content, and person for a ban), so two decisions never hold gap locks on the
+    # reports table at once.
     def with_row_lock(record)
       model = record.class
       return yield unless record.respond_to?(:persisted?) && record.persisted? && model.respond_to?(:lock)

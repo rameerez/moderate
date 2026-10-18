@@ -4,6 +4,94 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0.beta4] - 2026-10-18
+
+Concurrency fixes, and **one migration**: run `bin/rails db:migrate` after upgrading (see
+_Upgrading from 1.0.0.beta3_ below). No API change.
+
+### Fixed
+
+- **MySQL double enforcement under REPEATABLE READ.** Two moderators enforcing flags on the
+  same content, or banning the same person from two flags at once, could remove the content
+  twice or call the `ban_handler` twice on MySQL. A plain `SELECT` there returns the
+  transaction's consistent snapshot, which may predate the content's or the person's row
+  lock, so the second worker never saw the decision it had waited for. Every check that
+  decides "already done" under a lock (the covering decision and the open report a flag
+  escalates to, whether the content is gone, the per-person prior ban) is now a locking read
+  (`SELECT … FOR UPDATE`), identical on every database; the redundant plain reloads after
+  `with_lock` are gone. A flag escalation that can ban takes the person's row lock right
+  after the content's, before it reads the reports table, so two bans of the same person
+  serialize before either takes a gap lock (MySQL's locking reads take them, and two holders
+  that each insert a report deadlock). PostgreSQL and SQLite were not affected.
+- **One lock order everywhere: flag, then content, then person, then report.**
+  `Flag.flag_for_review!` locked the content and then the waiting flag, the reverse of a
+  flag decision (the flag, then the content), so a review and an enforcement of the same
+  content could deadlock on any database. It now takes no content lock at all (see the next
+  entry); the order is documented once, on `Moderate.with_row_lock`.
+- **At most one pending flag per content and field, enforced by the database.** Two
+  "Flag for review" filings at once could create two pending flags for the same field: a
+  plain "is one already waiting?" read can't see another transaction's flag under MySQL's
+  REPEATABLE READ once the caller's transaction has read anything. `moderate_flags` gets a
+  `pending_key` (`"<flaggable_type>/<flaggable_id>/<field>"` while pending, NULL once closed;
+  the model keeps it in sync on every save, so closing frees it and reopening takes it back)
+  with a unique index. The key compares as bytes everywhere: on MySQL the column is
+  `utf8mb4_bin`, since the default collation ignores case and would make content types that
+  differ only by case (`Post`, `POST`) share one key. `utf8mb4_bin` still ignores trailing
+  spaces (MySQL's PAD SPACE), so `Flag#field` is now stripped wherever it is assigned: a key
+  never differs by them. `Flag.flag!` and `Flag.flag_for_review!` insert and, on the
+  collision, return the flag already waiting, read with a locking read (the latest committed row on
+  every database); no plain read decides anything, and `flag_for_review!` locks only the
+  waiting flag, only on a collision. On MySQL, locking a pending flag (`with_lock`, `lock!`)
+  takes its `pending_key` index entry before its row, the order a colliding insert takes
+  them in, so a filing and a decision on the same field don't deadlock. The one deadlock
+  InnoDB can still pick (an insert's duplicate check queued on the gap a closing flag's index
+  entry moves into) is retried by `Flag.flag!` when it is the whole transaction, and raised
+  as `ActiveRecord::Deadlocked` inside a caller's transaction, which InnoDB rolled back.
+  `Flag.flag!` tries three times, then raises the last failure as it was:
+  `ActiveRecord::Deadlocked` after three deadlocks, `ActiveRecord::RecordNotUnique` only when
+  each collision's waiting flag was decided before it could be joined.
+- **The install migration on Trilogy.** `moderate:install`'s migration now treats Rails'
+  Trilogy adapter as MySQL, as it already did mysql2 (MySQL refuses defaults on JSON columns).
+- **Removal-only enforcement no longer locks the person's row.** Only a decision that can
+  ban takes the account's lock, so removing one message never waits on (or holds up) other
+  work on the author's account.
+
+### Changed
+
+- **While a flag waits on a field, another flag on that field joins it.** `Flag.flag!` (the
+  filters' and `ClassifyJob`'s builder too) returns the waiting flag instead of filing a
+  second one (`flag.previously_new_record?` is false; no second `content_flagged`). A field
+  has one item in the queue; once it's decided, the next flag files anew. Code that relied on
+  several pending flags per field, or that closes flags with `update_column` / `update_all`,
+  must set `pending_key` itself (NULL when not pending).
+
+### Upgrading from 1.0.0.beta3
+
+1. `bin/rails db:migrate`. The engine adds the gem's `db/migrate` to your app's migration
+   paths, so `AddPendingKeyToModerateFlags` runs with your own migrations (don't also copy it
+   with `moderate:install:migrations`; if you already did, the copy runs instead). It adds the
+   column and the unique index, and backfills: on each content and field, the newest pending
+   flag takes the key; older duplicate pending flags from before this release stay pending
+   without one (close them when you can). Before writing any key it has the database group
+   the keys under the column's own collation, and if it would treat two as one (on MySQL,
+   a legacy flag whose field ends in a space against one without) it stops with a message
+   naming each key and its flags, rather than failing on an UPDATE or the index; close all
+   but one of each, or fix the field, and run it again. On MySQL it refuses an existing
+   `pending_key` column that ignores case, giving the `ALTER TABLE` to run. It is the only
+   migration that creates `pending_key`, in every app, so `down` drops the index and the
+   column and leaves the tables `create_moderate_tables` made as they were.
+
+### Changed (installing)
+
+- **`moderate:install` copies the gem's migrations too.** A fresh install gets
+  `create_moderate_tables` (the 1.0.0.beta3 table shape, no `pending_key`) and then, in
+  order, a copy of each of the gem's own migrations, named like
+  `bin/rails moderate:install:migrations` names them (`…_add_pending_key_to_moderate_flags.moderate.rb`).
+  An app holding such copies runs them, and the engine leaves the gem's `db/migrate` out of
+  its paths; from then on, after upgrading, run `bin/rails moderate:install:migrations` and
+  migrate. An app installed without copies (as with beta3) keeps getting the gem's
+  migrations through the engine.
+
 ## [1.0.0.beta3] - 2026-10-18
 
 ### Added

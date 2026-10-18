@@ -49,6 +49,7 @@ module Moderate
     # NotNullViolation on MySQL. (SQLite/PostgreSQL get the defaults from the
     # migration; coalescing is harmless there.)
     before_save :default_json_columns
+    before_save :sync_pending_key
 
     # Announce a new flag through the host's notify hook so admins get pinged (e.g.
     # a Telegram alert) the moment content is flagged. after_create_COMMIT, not
@@ -61,6 +62,10 @@ module Moderate
     scope :dismissed, -> { where(status: "dismissed") }
     scope :recent_first, -> { order(created_at: :desc) }
 
+    # Stripped wherever it is assigned (and in `where(field: …)`), so a field never
+    # differs by surrounding spaces: neither in what a moderator reads nor in the
+    # pending_key, which MySQL's utf8mb4_bin compares ignoring trailing spaces (PAD SPACE).
+    normalizes :field, with: :strip.to_proc
     validates :field, presence: true
     validates :status, inclusion: { in: STATUSES }
     validates :source, inclusion: { in: ->(_flag) { sources } }, on: :create
@@ -75,8 +80,28 @@ module Moderate
     #
     # `owner` is kept only if it is a person (the configured user class): hosts
     # commonly pass `record.reported_owner`, which can be a desk or a bot.
+    #
+    # AT MOST ONE PENDING FLAG PER CONTENT + FIELD, enforced by the database (the
+    # unique `pending_key`, see #sync_pending_key). If a flag already waits on this
+    # field, the insert collides and that waiting flag is returned instead: the
+    # content is already in the queue (`flag.previously_new_record?` is false). This
+    # holds whatever the isolation level or snapshot, because uniqueness is checked
+    # against what is committed, and the waiting flag is then read with a LOCKING
+    # read (the latest committed row, also under MySQL's REPEATABLE READ).
+    #
+    # On MySQL an insert colliding with a flag that is being decided can be chosen as
+    # a deadlock victim: InnoDB queues the duplicate check as a lock on the gap the
+    # decided flag's index entry moves into. When this call is the whole transaction
+    # (the filters' after_commit, ClassifyJob, the admin button) it is simply tried
+    # again; inside a caller's transaction InnoDB has rolled that transaction back
+    # too, so ActiveRecord::Deadlocked is raised for the caller to retry.
+    #
+    # Up to ATTEMPTS tries, then the last failure is raised as it was:
+    # ActiveRecord::Deadlocked if the database kept choosing this insert as a deadlock
+    # victim, ActiveRecord::RecordNotUnique only if, after a collision, no pending
+    # flag could be found to join (each one was decided before it could be read).
     def self.flag!(flaggable:, field:, owner:, source:, mode:, excerpt:, categories:, scores:, context:)
-      create!(
+      attributes = {
         flaggable: flaggable,
         field: field,
         owner: (owner if owner.is_a?(Moderate.user_class)),
@@ -86,8 +111,40 @@ module Moderate
         categories: Array(categories),
         scores: scores.to_h,
         context: context.to_h
-      )
+      }
+
+      attempts = 0
+      begin
+        attempts += 1
+        # A savepoint, so a collision doesn't poison a surrounding transaction.
+        transaction(requires_new: true) { create!(attributes) }
+      rescue ActiveRecord::RecordNotUnique
+        waiting = waiting_flag(pending_key_for(flaggable.class.polymorphic_name, flaggable.id, field.to_s.strip))
+        return waiting if waiting&.pending?
+        raise if attempts >= ATTEMPTS
+
+        retry # the waiting flag was decided while we looked: its key is free
+      rescue ActiveRecord::Deadlocked
+        # The caller's transaction died with ours: theirs to retry, as a whole.
+        raise if connection.transaction_open? || attempts >= ATTEMPTS
+
+        retry
+      end
     end
+
+    ATTEMPTS = 3
+
+    # The pending_key a pending flag on that content and field carries.
+    def self.pending_key_for(flaggable_type, flaggable_id, field)
+      "#{flaggable_type}/#{flaggable_id}/#{field}"
+    end
+
+    # The flag waiting under `key`, by a locking read: on MySQL a plain read could
+    # return the transaction's older snapshot, without the flag the insert collided with.
+    def self.waiting_flag(key)
+      where(pending_key: key).lock.first
+    end
+    private_class_method :waiting_flag
 
     # An administrator filing `record`'s `field` for review by hand — the "Flag for
     # review" button on a transcript line or a profile page. It lands in the same
@@ -114,10 +171,12 @@ module Moderate
       end
 
       note = note.to_s.strip.presence
-      flag = Moderate.with_row_lock(record) do
-        where(flaggable: record, field: field_s).pending.recent_first.first ||
-          file_for_review!(record, field_s, by: by, note: note)
-      end
+      # No lock taken first and no plain read deciding anything: the insert either
+      # files the flag or collides with the one already waiting (the unique
+      # pending_key), which Flag.flag! then returns. Only on that collision does it
+      # lock a row, the waiting flag's, so the lock order (Moderate.with_row_lock)
+      # holds: it never holds content while waiting on a flag.
+      flag = file_for_review!(record, field_s, by: by, note: note)
       audit_filed_for_review(flag, by: by, note: note) if flag.previously_new_record?
       flag
     end
@@ -219,7 +278,29 @@ module Moderate
       Moderate.reportable_field_label(flaggable || flaggable_type, field)
     end
 
+    # Lock the row (`with_lock`, `lock!`) — and, for a pending flag, its entry in the
+    # unique pending_key index FIRST. InnoDB keeps a row in two places, and a flag's
+    # two are taken in opposite orders otherwise: an insert colliding on the key
+    # (Flag.flag!) holds the index entry and then waits for the row, while closing the
+    # flag holds the row and then, freeing the key, needs the entry — a deadlock. One
+    # order, entry then row, everywhere. On PostgreSQL and SQLite it re-locks the
+    # same row (or nothing): harmless.
+    def lock!(lock = true) # rubocop:disable Style/OptionalBooleanParameter -- Rails' signature
+      key = pending_key if persisted? && !has_changes_to_save?
+      self.class.unscoped.where(pending_key: key).lock(lock).ids if key
+      super
+    end
+
     private
+
+    # A pending flag carries its content + field's pending_key; any other status
+    # carries NULL, so closing a flag (ResolveFlag, or any save that changes its
+    # status) frees the key in the same transaction, and reopening one takes it back
+    # (raising RecordNotUnique if another flag is pending there by then). Writes that
+    # skip callbacks (update_column/update_all on status) must set it themselves.
+    def sync_pending_key
+      self.pending_key = (Flag.pending_key_for(flaggable_type, flaggable_id, field) if pending?)
+    end
 
     # See the before_save comment: keep the NOT-NULL JSON columns non-null on MySQL.
     def default_json_columns
