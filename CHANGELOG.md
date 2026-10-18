@@ -4,6 +4,23 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0.beta4] - 2026-10-18
+
+A fix-only beta: no API change, no migration.
+
+### Fixed
+
+- **MySQL double enforcement under REPEATABLE READ.** Two moderators enforcing two flags on
+  the same content, or banning the same person from two flags at once, could remove the
+  content twice or call the `ban_handler` twice on MySQL. A plain `SELECT` there returns the
+  transaction's consistent snapshot, taken before the content's or the person's row lock was
+  granted, so the second worker never saw the decision it had waited for. Every check that
+  decides "already done" under a lock — the covering decision and the open report a flag
+  escalates to, whether the content is gone, the per-person prior ban, and
+  `Flag.flag_for_review!`'s waiting flag — is now a locking read (`SELECT … FOR UPDATE`),
+  identical on every database; the redundant plain reloads after `with_lock` are gone.
+  PostgreSQL and SQLite were not affected.
+
 ## [1.0.0.beta3] - 2026-10-18
 
 ### Added
