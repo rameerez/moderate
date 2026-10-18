@@ -8,6 +8,20 @@ Rails.application.routes.draw do
   # controller/integration tests rely on. See docs/dsa-notice-form.md.
   mount Moderate::Engine => "/trust"
 
+  # The host's admin decision endpoints (Moderate::Moderation), the shape
+  # docs/madmin.md walks through.
+  namespace :admin do
+    resources :reports, only: [] do
+      member { post :resolve; post :dismiss }
+    end
+    resources :flags, only: [] do
+      member { post :resolve; post :dismiss }
+    end
+    resources :appeals, only: [] do
+      member { post :uphold; post :reject }
+    end
+  end
+
   # A trivial host root so url_for / default_url_options have a target and the
   # post-report redirect fallback ("send the user back to the app root") resolves.
   root to: ->(_env) { [200, { "Content-Type" => "text/plain" }, ["dummy"]] }

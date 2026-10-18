@@ -32,9 +32,14 @@ module Moderate
     #      means disclosure, appeal path). Different people, different rights — see
     #      docs/notifications.md ("Why two decision events").
     class ResolveReport
-      def initialize(report, by:)
+      # `deliver: false` holds the decision notices back so a caller that runs this
+      # decision inside a lock of its own (ResolveFlag escalating a flag) can send
+      # them after ITS transaction commits, with `#deliver_decision_notices`. The
+      # default sends them as soon as this decision's own lock is released.
+      def initialize(report, by:, deliver: true)
         @report = report
         @moderator = by
+        @deliver = deliver
       end
 
       # Resolve WITH action (the report was valid; we acted on the content/account).
@@ -60,6 +65,13 @@ module Moderate
       def dismiss!(note:)
         note = require_note!(note)
         transition!("dismissed", note: note, actions: { resolution_basis: "no_violation" })
+      end
+
+      # The two decision events (see the class doc, point 4). Sent by `resolve!` /
+      # `dismiss!` themselves unless this service was built with `deliver: false`.
+      def deliver_decision_notices
+        notify_reporter
+        notify_affected_user
       end
 
       private
@@ -102,7 +114,7 @@ module Moderate
           audit_decision(status, actions, note)
         end
 
-        deliver_decision_notices
+        deliver_decision_notices if @deliver
         report
       end
 
@@ -126,11 +138,6 @@ module Moderate
       end
 
       # --- Notifications (after the lock) -------------------------------------
-
-      def deliver_decision_notices
-        notify_reporter
-        notify_affected_user
-      end
 
       # report_decision → the reporter (Art. 16(5): inform the notice provider of the
       # decision + redress). We stamp `decision_notified_at` ONLY when the hook

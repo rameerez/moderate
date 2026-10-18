@@ -3,6 +3,26 @@
 require "test_helper"
 
 module Moderate
+  # A comment whose body a moderator can remove (Comment itself removes nothing). Its
+  # own base class, not a Comment subclass, so the polymorphic flaggable_type names
+  # it and the flag loads it back as itself.
+  class EscalationComment < ::ApplicationRecord
+    self.table_name = "comments"
+
+    belongs_to :user
+    has_reportable_content :body
+
+    def reported_owner = user
+    def moderation_snapshot(field) = (body if field.to_s == "body")
+
+    def remove_reported_field!(field)
+      return false unless field.to_s == "body"
+
+      update!(body: nil)
+      true
+    end
+  end
+
   module Services
     # Tests for Moderate::Services::ResolveFlag — the decision on an auto-filter Flag.
     #
@@ -87,17 +107,140 @@ module Moderate
         assert_empty ModerateTestRecorder.audits_named(:flag_decision)
       end
 
+      # --- Enforcement escalates to a report ---------------------------------
+
+      test "remove_content opens a system report, resolves it, and removes the content" do
+        moderator = User.create!(name: "Mod")
+        flag = create_flag(comment_class: EscalationComment)
+        comment = flag.flaggable
+
+        Moderate::Services::ResolveFlag.new(flag, by: moderator)
+          .action!(note: "Slur in a DM.", remove_content: true)
+
+        report = flag.reload.report
+        assert_equal "actioned", flag.status
+        assert_equal report.id, flag.context["report_id"]
+        assert_equal "actioned", report.status
+        assert_nil report.reporter, "a system report has no reporter"
+        assert_equal "body", report.reported_field
+        assert_equal comment.user, report.reported_user
+        assert_equal "hate", report.category, "the flag's category, when the community list has it"
+        assert_equal true, report.resolution_actions["remove_content"]
+        assert_predicate report.appeal_deadline_at, :present?, "a restriction opens the appeal window"
+        assert_nil comment.reload.body, "removed through the reportable's remove_reported_field!"
+
+        assert_empty ModerateTestRecorder.notifications_named(:report_received), "no receipt: nobody filed it"
+        assert_empty ModerateTestRecorder.notifications_named(:report_decision), "no reporter to tell"
+        decision = ModerateTestRecorder.notifications_named(:affected_user_decision).sole
+        assert_equal [comment.user], decision.recipients
+        assert_equal report.id, ModerateTestRecorder.audits_named(:flag_decision).sole.payload[:report_id]
+      end
+
+      test "enforcement reuses the open report a person already filed on the same content" do
+        moderator = User.create!(name: "Mod")
+        reporter = User.create!(name: "Reporter", email: "reporter@example.com")
+        flag = create_flag(comment_class: EscalationComment)
+        filed = reporter.report!(flag.flaggable, category: :harassment, details: "Saw this", field: :body)
+        ModerateTestRecorder.clear
+
+        assert_no_difference -> { Moderate::Report.count } do
+          flag.action!(by: moderator, note: "Confirmed.", remove_content: true)
+        end
+
+        assert_equal filed, flag.reload.report
+        assert_equal "actioned", filed.reload.status
+        assert_equal [reporter], ModerateTestRecorder.notifications_named(:report_decision).sole.recipients,
+          "the person who reported it hears the outcome"
+      end
+
+      test "ban_user bans the flag's owner through the ban_handler, with a statement of reasons" do
+        Moderate.configure do |config|
+          config.ban_handler = ->(user:, by:, reason:) { ModerateTestRecorder.ban_handler(user: user, by: by, reason: reason) }
+        end
+        moderator = User.create!(name: "Mod")
+        flag = create_flag
+
+        flag.action!(by: moderator, note: "Repeat offender.", ban_user: true)
+
+        assert_equal [{ user: flag.owner, by: moderator, reason: "Repeat offender." }], ModerateTestRecorder.bans
+        assert_equal "account_suspended", flag.reload.report.decision_visibility
+        assert_equal 1, ModerateTestRecorder.notifications_named(:affected_user_decision).size
+      end
+
+      test "decision notices go out after the flag is closed" do
+        statuses = []
+        Moderate.configure do |config|
+          config.notify = lambda do |event|
+            statuses << Moderate::Flag.find(@flag_id).status if event.name == :affected_user_decision
+            true
+          end
+        end
+        flag = create_flag(comment_class: EscalationComment)
+        @flag_id = flag.id
+
+        flag.action!(by: User.create!(name: "Mod"), note: "Removed.", remove_content: true)
+
+        assert_equal ["actioned"], statuses
+      end
+
+      test "a flag already decided enforces nothing a second time" do
+        Moderate.configure do |config|
+          config.ban_handler = ->(user:, by:, reason:) { ModerateTestRecorder.ban_handler(user: user, by: by, reason: reason) }
+        end
+        moderator = User.create!(name: "Mod")
+        flag = create_flag
+
+        flag.action!(by: moderator, note: "First.", ban_user: true)
+        assert_no_difference -> { Moderate::Report.count } do
+          Moderate::Flag.find(flag.id).action!(by: moderator, note: "Second.", ban_user: true)
+        end
+
+        assert_equal 1, ModerateTestRecorder.bans.size
+      end
+
+      test "a triage close opens no report" do
+        flag = create_flag
+
+        assert_no_difference -> { Moderate::Report.count } do
+          flag.action!(by: User.create!(name: "Mod"), note: "Looked at it.")
+        end
+        assert_nil flag.reload.report
+      end
+
+      test "a failed enforcement leaves the flag pending" do
+        flag = create_flag(field: "image")
+
+        assert_raises(ActiveRecord::RecordInvalid) do
+          flag.action!(by: User.create!(name: "Mod"), note: "Remove it.", remove_content: true)
+        end
+
+        assert_predicate flag.reload, :pending?, "image isn't a reportable field, so the report can't open"
+        assert_equal 0, Moderate::Report.count
+      end
+
+      test "a classifier subcategory maps onto the community category, else other" do
+        assert_equal "hate", escalation_category_for(["hate/threatening"])
+        assert_equal "other", escalation_category_for(["violence/graphic"])
+        Moderate.config.report_categories = %w[spam abuse]
+        assert_equal "spam", escalation_category_for(["violence"]), "a list without other falls back to its first entry"
+      end
+
       private
+
+      def escalation_category_for(categories)
+        flag = Moderate::Flag.new(categories: categories)
+        Moderate::Services::ResolveFlag.new(flag, by: nil).send(:escalation_category)
+      end
 
       # A pending Flag straight from the model's `flag!` entry point — the same shape the
       # Filterable concern files. Host-agnostic: the flaggable is a dummy Comment, the
       # source is a generic text_filter, no host vocabulary anywhere.
-      def create_flag
-        author = User.create!(name: "Author")
-        comment = Comment.create!(user: author, body: "ok body")
+      def create_flag(comment_class: Comment, field: "body")
+        author = User.create!(name: "Author", email: "author#{User.count}@example.com")
+        comment = comment_class.create!(user: author, body: "ok body")
         Moderate::Flag.flag!(
           flaggable: comment,
-          field: "body",
+          field: field,
           owner: author,
           source: "text_filter",
           mode: "flag",

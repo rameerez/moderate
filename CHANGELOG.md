@@ -26,9 +26,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Default locale files** (`config/locales/en.yml`, `es.yml`): the appeal page's new string and
   generic labels for common field names (`body` → "Text"/"Texto", `avatar` → "Profile
   photo"/"Foto de perfil", …).
+- **Enforce from a flag.** `flag.action!(by:, note:, remove_content: true)` and
+  `flag.action!(by:, note:, ban_user: true)` (any combination, plus `resolution_basis:`)
+  escalate to a report and resolve it: the newest open report on the same content and field
+  if a person already filed one, else a system report (no reporter, so no receipt and no
+  reporter-facing decision). Content is removed through the reportable's
+  `remove_reported_field!`, the ban goes through your `ban_handler`, and the affected user
+  gets the statement of reasons and the appeal window a restriction requires. It all runs
+  under the flag's row lock, so two moderators pressing it at once enforce once, and the
+  decision notices go out after the lock is released. `flag.report` is the report it went
+  through. Hosts that hand-wrote this bridge (find-or-create a report, resolve it, then close
+  the flag) can delete it. Without those options `action!` is the triage close it was.
+- **`Flag#resolve!`**, an alias of `action!`: reports and flags now share one verb and one
+  keyword contract, which is what `Moderate::Moderation#resolve` and `docs/madmin.md`
+  always assumed.
+
+### Changed
+
+- **`Flag#action!` / `#dismiss!` go through `Moderate::Services::ResolveFlag`.** The beta2
+  model methods were a second closing path with no row lock and no `flag_decision` audit;
+  now there is one. Re-closing an already decided flag returns it unchanged (as the service
+  always did) instead of overwriting the first decision.
+- **`ResolveReport.new(report, by:, deliver: false)`** holds the decision notices back for a
+  caller that decides inside a lock of its own; `#deliver_decision_notices` sends them.
 
 ### Fixed
 
+- **`Moderate::Moderation#resolve` works on flags.** It called `record.resolve!`, which
+  `Moderate::Flag` didn't have, so a host following the concern's own documentation got a
+  `NoMethodError` (as an alert flash) on every flag. It also passes `resolution_basis` when
+  the form sends one, and its flash says "Flag actioned." / "Flag dismissed." for flags.
 - **Content spoken by something that isn't a person no longer breaks reports and flags.**
   moderate stored `reportable.reported_owner` straight into `Report#reported_user` and
   `Flag#owner`, both associations to `config.user_class`. A support desk or a bot behind the

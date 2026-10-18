@@ -101,14 +101,30 @@ module Moderate
     end
 
     # Close this flag as ACTIONED — someone (or an automated policy) took
-    # action on the flagged content. Model-level sugar mirroring
-    # Report#resolve!/#dismiss! so hosts stop hand-writing status updates.
+    # action on the flagged content. Sugar over Moderate::Services::ResolveFlag
+    # (row lock, re-check, audit), mirroring Report#resolve!/#dismiss!.
     # `by:` is the reviewing user when a human decided; leave it nil for
     # automated closes — recording a human who never looked would poison the
     # audit trail (DSA statements of reasons read these rows).
-    def action!(note:, by: nil)
-      close!(new_status: "actioned", note: note, by: by)
+    #
+    # Enforce from the flag itself — the bridge every host used to hand-write:
+    #
+    #   flag.action!(by: admin, note: "Slur", remove_content: true)
+    #   flag.action!(by: admin, note: "Repeat offender", ban_user: true)
+    #
+    # Either option escalates to a report (the open one on the same content and
+    # field, or a system one) and resolves it, so the content is removed through
+    # the reportable's `remove_reported_field!`, the ban through your `ban_handler`,
+    # and the affected user gets the statement of reasons and the appeal window a
+    # restriction requires. `flag.report` is that report afterwards.
+    def action!(note:, by: nil, remove_content: false, ban_user: false, resolution_basis: "terms")
+      Moderate::Services::ResolveFlag.new(self, by: by)
+        .action!(note: note, remove_content: remove_content, ban_user: ban_user, resolution_basis: resolution_basis)
     end
+
+    # The queue-wide verb: Report#resolve! and Flag#resolve! take the same
+    # keywords, so one admin action (Moderate::Moderation#resolve) decides both.
+    alias_method :resolve!, :action!
 
     # Close this flag with NO action taken. The canonical automated use is
     # SUPERSEDED content: when the flagged field changes (text edited, photo
@@ -117,7 +133,14 @@ module Moderate
     # the NEW content in any host UI keyed on it. Hosts should dismiss with a
     # note saying what superseded it.
     def dismiss!(note:, by: nil)
-      close!(new_status: "dismissed", note: note, by: by)
+      Moderate::Services::ResolveFlag.new(self, by: by).dismiss!(note: note)
+    end
+
+    # The report an enforcing `action!` went through, or nil (a triage-only close,
+    # or a flag still pending).
+    def report
+      report_id = context.to_h["report_id"]
+      Moderate::Report.find_by(id: report_id) if report_id.present?
     end
 
     # A label for the flagged thing in the queue. Asks the flaggable for its own
@@ -138,19 +161,6 @@ module Moderate
     end
 
     private
-
-    # Shared close path for action!/dismiss!. update! (not update_columns) on
-    # purpose: the `resolution_note presence if closed?` validation is the
-    # guard that every closed flag explains itself — sugar that skipped it
-    # would defeat the reason the sugar exists.
-    def close!(new_status:, note:, by:)
-      update!(
-        status: new_status,
-        resolution_note: note,
-        reviewed_by: by,
-        reviewed_at: Time.current
-      )
-    end
 
     # See the before_save comment: keep the NOT-NULL JSON columns non-null on MySQL.
     def default_json_columns
