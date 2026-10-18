@@ -387,7 +387,10 @@ Hand-rolling (above) is the right call when your redirects/flashes need to match
   <section>
     <h2>Resolve</h2>
     <%= form_with url: resolve_madmin_report_path(report), method: :post do %>
-      <label><%= check_box_tag :remove_content, "1" %> Remove reported content</label>
+      <% if report.reportable.respond_to?(:removable_reported_field?) && report.reportable.removable_reported_field?(report.reported_field) %>
+        <%# Only where removal can happen: a removal that removes nothing refuses the decision. %>
+        <label><%= check_box_tag :remove_content, "1" %> Remove reported content</label>
+      <% end %>
       <label><%= check_box_tag :ban_user, "1" %> Ban reported user</label>
       <%= text_area_tag :note, nil, placeholder: "Decision note", required: true %>
       <%= submit_tag "Resolve", data: { turbo_confirm: "Resolve and notify the parties?" } %>
