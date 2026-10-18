@@ -248,13 +248,12 @@ class AttachmentUploadTest < ActiveSupport::TestCase
   end
 
   def write_claim(comment, owner:, claimed_at:)
-    blobs = Moderate::Attachments.blobs(comment.photo)
-    key = Moderate::Attachments.marker_key(comment, "photo", blobs)
-    blobs.each do |blob|
-      blob.update_column(:metadata, blob.metadata.merge(
-        Moderate::Attachments::CLAIMS => { key => { "owner" => owner, "claimed_at" => claimed_at.iso8601 } }
-      ))
-    end
+    digest = Moderate::Attachments.digest(Moderate::Attachments.blobs(comment.photo))
+    Moderate::Classification.create!(record: comment, field: "photo", digest: digest, claimed_by: owner, claimed_at: claimed_at)
+  end
+
+  def classification_rows(record, field = "photo")
+    Moderate::Classification.where(record_type: record.class.polymorphic_name, record_id: record.id, field: field)
   end
 
   test "a live claim by another worker stops the job, which looks once more when the claim expires" do
@@ -284,9 +283,11 @@ class AttachmentUploadTest < ActiveSupport::TestCase
     Moderate::ClassifyJob.perform_now(comment, "photo")
 
     assert_equal 1, Moderate::Flag.where(flaggable: comment, field: "photo").count
-    blob = comment.photo.blob.reload
-    assert_nil blob.metadata[Moderate::Attachments::CLAIMS], "the claim is cleared on completion"
+    row = classification_rows(comment).sole
+    assert_nil row.claimed_by, "the claim is cleared on completion"
+    assert_not_nil row.classified_at
     assert Moderate::Attachments.classified?(comment, "photo", comment.photo)
+    assert_not comment.photo.blob.reload.metadata.key?("moderate_classified"), "nothing of ours in blob metadata"
   end
 
   test "files changed while the adapter ran: that result is discarded, the new files are classified" do
@@ -308,7 +309,8 @@ class AttachmentUploadTest < ActiveSupport::TestCase
     Moderate::ClassifyJob.perform_now(comment, "photo")
 
     assert_equal 0, Moderate::Flag.where(flaggable: comment, field: "photo").count, "the old files' result is discarded"
-    assert_nil old_blob.reload.metadata[Moderate::Attachments::CLAIMS], "and its claim released"
+    old_digest = Moderate::Attachments.digest([old_blob])
+    assert_nil classification_rows(comment).find_by(digest: old_digest).claimed_by, "and its claim released"
 
     drain_classify_jobs
     assert_equal 1, Moderate::Flag.where(flaggable: comment, field: "photo").count, "the new files are classified"
@@ -345,6 +347,26 @@ class AttachmentUploadTest < ActiveSupport::TestCase
 
     assert_equal [true, true], @adapter.calls
     assert_equal 1, Moderate::Flag.where(flaggable: second, field: "photo").count
+    assert_equal 1, classification_rows(first).where.not(classified_at: nil).count
+    assert_equal 1, classification_rows(second).where.not(classified_at: nil).count, "one row each, independent"
+  end
+
+  test "Active Storage's analyzer rewriting blob metadata mid-call changes nothing" do
+    comment = save_with_async_photo
+    adapter = Object.new
+    adapter.define_singleton_method(:synchronous?) { false }
+    adapter.define_singleton_method(:classify) do |value|
+      blob = value.blob
+      blob.update!(metadata: { "identified" => true, "analyzed" => true, "width" => 10, "height" => 10 })
+      Moderate::Result.allowed(source: "image_filter")
+    end
+    Moderate.config.register_adapter :image, adapter
+
+    Moderate::ClassifyJob.perform_now(comment, "photo")
+
+    assert Moderate::Attachments.classified?(comment, "photo", comment.photo)
+    assert_nil classification_rows(comment).sole.claimed_by
+    assert_equal 10, comment.photo.blob.reload.metadata["width"], "the analyzer's keys are its own"
   end
 
   test "a save that doesn't touch the attachment doesn't classify it again" do

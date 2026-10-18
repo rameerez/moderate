@@ -9,9 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Upgrading
 
 - **One migration, shipped with the gem: run `bin/rails db:migrate`.**
-  `db/migrate/20261018210000_add_retention_columns_to_moderate_tables.rb` adds
-  `redacted_at` to `moderate_reports`, `moderate_flags` and `moderate_appeals`, and
-  `held_until` (indexed) to `moderate_reports`. The engine adds the gem's `db/migrate` to
+  `db/migrate/20261018210000_add_retention_and_classifications_to_moderate_tables.rb` adds
+  `redacted_at` to `moderate_reports`, `moderate_flags` and `moderate_appeals`,
+  `held_until` (indexed) to `moderate_reports`, and creates `moderate_classifications`.
+  The engine adds the gem's `db/migrate` to
   your app's migration paths, so there is nothing to copy (if you prefer copies,
   `bin/rails moderate:install:migrations`, and the gem's own path is then skipped). It is
   guarded both ways, so a fresh install (whose generated create migration already has the
@@ -115,8 +116,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   raises (or a process that dies) still ends in a classification or a `classification_skipped`
   audit. The filter watches the upload from `before_save`, so this holds in either
   declaration order. Each set of files is classified once: the job takes `blob_ids:` and
-  stops if the field holds other files by then, and whoever classifies first marks the
-  blobs (`blob.metadata["moderate_classified"]`), so the guard finds the mark and stops.
+  stops if the field holds other files by then, and whoever classifies first records it,
+  so the guard finds that and stops.
   The inline path and the job claim the files under the content record's row lock (content
   first, as everywhere), call the adapter outside any lock, then re-take the lock to file
   the flag, mark the files classified and clear the claim, but only if the field still
@@ -125,13 +126,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   classify, and a slow provider never blocks writes to the content's row. A claim expires
   after **`config.classification_claim_ttl`** (10 minutes): a job that finds a live claim
   looks once more at its expiry, so a worker that died mid-call is taken over. The mark is
-  keyed by record, field and a digest of the ordered blob ids, so a
-  changed set (a file added or removed) or the same blob on another record is classified
-  again; the write re-reads and merges the blob's metadata, keeping Active Storage's
-  analyzer keys. The analyzer writes that column without our lock, so in a rare race it can
-  drop the mark and the set is classified once more, which can't file a second pending flag
-  once beta4's unique pending flag per content and field is in. Under **`mode: :block`**, an attachment whose stored blob
-  isn't on the service yet (a direct upload in flight) fails validation with
+  a row of the gem's own **`moderate_classifications`** table (record, field, a digest of the
+  ordered blob ids, the claim, `classified_at`, the adapter and whether it flagged; UNIQUE
+  on record + field + digest), written only under the content lock. A changed set (a file
+  added or removed) or the same blob on another record is another row, classified again;
+  nothing of ours is written to `blob.metadata`, so other records sharing a blob and Active
+  Storage's analyzer can't overwrite a claim. `Moderate.purge` deletes rows last touched
+  before its cutoff (`:classifications` in its counts). Under **`mode: :block`**, an
+  attachment whose stored blob isn't on the service yet (a direct upload in flight) fails validation with
   `errors.messages.upload_not_finished` ("hasn't finished uploading yet", en/es) instead of
   being classified without its file.
   **If you worked around this** (CarHey's avatar):

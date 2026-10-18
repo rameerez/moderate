@@ -200,6 +200,24 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
     add_column :moderate_flags, :redacted_at, :datetime
     add_column :moderate_appeals, :redacted_at, :datetime
 
+    # Attachment classification (Moderate::Attachments): one row per record, field
+    # and set of attached files — who is classifying it (a claim), and when it was
+    # classified. Ids, a digest of blob ids and timestamps; no content.
+    create_table :moderate_classifications, id: primary_key_type do |t|
+      t.references :record, polymorphic: true, type: foreign_key_type, null: false, index: false
+      t.string :field, null: false
+      t.string :digest, null: false
+      t.string :claimed_by
+      t.datetime :claimed_at
+      t.datetime :classified_at
+      t.string :adapter
+      t.boolean :flagged
+      t.timestamps
+    end
+    add_index :moderate_classifications, %i[record_type record_id field digest], unique: true,
+      name: "index_moderate_classifications_on_record_field_digest"
+    add_index :moderate_classifications, :classified_at, name: "index_moderate_classifications_on_classified_at"
+
     # Appeal's source/status vocabularies are validated in Moderate::Appeal
     # (constants + inclusion validations), not by DB CHECK constraints — same
     # migration-free-taxonomy rationale as moderate_reports above.

@@ -15,7 +15,8 @@ namespace :moderate do
     verb = dry_run ? "would redact" : "redacted"
     held = counts[:held]
     puts "moderate:purge #{verb} #{counts[:reports]} reports, #{counts[:flags]} flags, " \
-         "#{counts[:appeals]} appeals decided more than #{days} days ago; kept for a legal hold: " \
+         "#{counts[:appeals]} appeals decided more than #{days} days ago, " \
+         "#{dry_run ? "would delete" : "deleted"} #{counts[:classifications]} classification rows; kept for a legal hold: " \
          "#{held[:reports]} reports, #{held[:flags]} flags, #{held[:appeals]} appeals"
   end
 end

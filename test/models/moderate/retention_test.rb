@@ -225,6 +225,17 @@ class Moderate::RetentionTest < ActiveSupport::TestCase
     assert_raises(ArgumentError) { Moderate.hold(report, until: nil) }
   end
 
+  test "classification rows older than the period are deleted, recent ones kept" do
+    old = travel_to(2.years.ago) { Moderate::Classification.create!(record: @comment, field: "photo", digest: "a" * 16, classified_at: Time.current) }
+    recent = Moderate::Classification.create!(record: @comment, field: "photo", digest: "b" * 16, classified_at: Time.current)
+
+    assert_equal 1, Moderate.purge(dry_run: true)[:classifications]
+    assert_equal 1, Moderate.purge[:classifications]
+
+    assert_not Moderate::Classification.exists?(old.id)
+    assert Moderate::Classification.exists?(recent.id)
+  end
+
   test "older_than may not be shorter than the appeal window" do
     error = assert_raises(ArgumentError) { Moderate.purge(older_than: 3.months) }
     assert_match "appeal window", error.message
@@ -254,8 +265,9 @@ class Moderate::RetentionTest < ActiveSupport::TestCase
 
   private
 
-  def counts_of(reports: 0, flags: 0, appeals: 0, held: {})
-    { reports: reports, flags: flags, appeals: appeals, held: { reports: 0, flags: 0, appeals: 0 }.merge(held) }
+  def counts_of(reports: 0, flags: 0, appeals: 0, classifications: 0, held: {})
+    { reports: reports, flags: flags, appeals: appeals, classifications: classifications,
+      held: { reports: 0, flags: 0, appeals: 0 }.merge(held) }
   end
 
   def run_purge_task

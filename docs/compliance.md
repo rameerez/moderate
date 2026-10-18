@@ -183,6 +183,7 @@ Legend: **✅ gem** — the mechanism ships and is tested. **⬜ you** — your 
 | `moderate_flags` | A filter, classifier or manual flag: source, mode, categories, scores; an **excerpt** of the content (up to 500 characters); **context** (the classifier's raw response, a reviewer's note); the review. | owner, excerpt, context |
 | `moderate_appeals` | An Art. 20 complaint: the reason, the appellant's name and email, a snapshot of the decision appealed, the outcome and its note. | appellant, name, email, reason |
 | `moderate_blocks` | One blocker → blocked edge and when it was made. | both people |
+| `moderate_classifications` | Bookkeeping for attachment classification: which record and field, a digest of the attached blob ids, who is classifying it (a claim) and when it was classified, the adapter and whether it flagged. | none beyond the record's id |
 
 **Notices** (receipts, statements of reasons, appeal decisions) are not stored by the gem: it emits events and your mailer sends them. It only stamps when your notifier confirms one went out (`Moderate.delivered!`: `decision_notified_at`, `affected_user_notified_at`). Whatever your mailer or `config.audit` keeps is yours to retain or purge.
 
@@ -202,7 +203,7 @@ So: content copies and contact details get a short life, decisions and counts a 
 
 ```ruby
 Moderate.purge(older_than: 1.year)
-# => { reports: 12, flags: 40, appeals: 1, held: { reports: 1, flags: 2, appeals: 0 } }
+# => { reports: 12, flags: 40, appeals: 1, classifications: 300, held: { reports: 1, flags: 2, appeals: 0 } }
 Moderate.purge(older_than: 18.months, dry_run: true) # the same counts, changes nothing
 ```
 
@@ -230,6 +231,7 @@ Holding again moves the date; a hold that expires lifts itself. Both are audited
 | **Reports and notices**: the message (→ `"[redacted]"`), the evidence snapshot, the reported URLs and account identifier, the notifier's name and email, the reporter. | The report is closed, was decided more than `older_than` ago, its appeal window has closed, no appeal on it is open, and it isn't held. | Every row; category, legal ground, member state, content type, status, timestamps; the whole decision (basis, actions, note, visibility, automated-means disclosure); the reported user. |
 | **Flags**: the excerpt (→ `"[redacted]"`) and the context. | The flag was decided more than `older_than` ago, and no held report is about its content and field. | Every row; source, mode, categories, scores, status, the owner, the review. |
 | **Appeals**: the reason (→ `"[redacted]"`) and the appellant's name and email. | The appeal was decided more than `older_than` ago, and its report isn't held. | Every row; status, outcome note, timestamps, the appellant's account. |
+| **Classification rows** (`moderate_classifications`): deleted, not redacted (nothing in them is evidence). | Last touched more than `older_than` ago. | — |
 
 Guarantees, each with a test in `test/models/moderate/retention_test.rb`:
 

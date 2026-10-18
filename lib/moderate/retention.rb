@@ -55,7 +55,8 @@ module Moderate
     # changed. Idempotent: a row is selected while its `redacted_at` is nil, whatever
     # its content says, and stamped when it is redacted.
     #
-    #   Moderate.purge  # => { reports: 3, flags: 9, appeals: 1, held: { reports: 1, flags: 2, appeals: 0 } }
+    #   Moderate.purge  # => { reports: 3, flags: 9, appeals: 1, classifications: 40,
+    #                   #      held: { reports: 1, flags: 2, appeals: 0 } }
     def self.purge(older_than: DEFAULT_AGE, now: Time.current, dry_run: false)
       age = older_than.to_i
       if older_than.nil? || age < minimum_age.to_i
@@ -68,12 +69,14 @@ module Moderate
       due = { reports: reports_due(cutoff, now), flags: flags_due(cutoff), appeals: appeals_due(cutoff) }
       held = due.to_h { |kind, scope| [kind, scope.where(hold_condition(kind, now, held: true)).count] }
       free = due.to_h { |kind, scope| [kind, scope.where(hold_condition(kind, now, held: false))] }
-      return free.transform_values(&:count).merge(held: held) if dry_run
+      classifications = classifications_due(cutoff)
+      return free.transform_values(&:count).merge(classifications: classifications.count, held: held) if dry_run
 
       counts = {
         reports: redact(free[:reports], report_redaction(now)),
         flags: redact(free[:flags], flag_redaction(now)),
-        appeals: redact(free[:appeals], appeal_redaction(now))
+        appeals: redact(free[:appeals], appeal_redaction(now)),
+        classifications: delete(classifications)
       }
       audit(counts, held, cutoff: cutoff, older_than: age) if counts.values.sum.positive?
       counts.merge(held: held)
@@ -120,6 +123,19 @@ module Moderate
     def self.flags_due(cutoff)
       flags = Moderate::Flag
       flags.where(status: flags::STATUSES - ["pending"], redacted_at: nil).where(reviewed_at: ..cutoff)
+    end
+
+    # Attachment classification bookkeeping (Moderate::Classification: ids, a digest,
+    # timestamps) last touched before `cutoff`: classified then, or a claim nobody
+    # completed. Deleted, not redacted: nothing in them is evidence.
+    def self.classifications_due(cutoff)
+      Moderate::Classification.where(updated_at: ..cutoff)
+    end
+
+    def self.delete(scope)
+      deleted = 0
+      scope.in_batches(of: 500) { |batch| deleted += batch.delete_all }
+      deleted
     end
 
     def self.appeals_due(cutoff)
@@ -192,7 +208,8 @@ module Moderate
           cutoff: cutoff.iso8601,
           older_than_seconds: older_than,
           summary: "retention: redacted #{counts[:reports]} reports, #{counts[:flags]} flags, " \
-                   "#{counts[:appeals]} appeals decided before #{cutoff.to_date}"
+                   "#{counts[:appeals]} appeals decided before #{cutoff.to_date}; deleted " \
+                   "#{counts[:classifications]} classification rows"
         )
       )
     end
@@ -208,7 +225,7 @@ module Moderate
       }
     end
 
-    private_class_method :reports_due, :flags_due, :appeals_due, :hold_condition, :report_redaction,
+    private_class_method :reports_due, :flags_due, :appeals_due, :classifications_due, :delete, :hold_condition, :report_redaction,
       :flag_redaction, :appeal_redaction, :redact, :audit, :hold_event
   end
 end
