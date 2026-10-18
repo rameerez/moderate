@@ -247,14 +247,14 @@ module Moderate
       end
 
       # report_decision → the reporter (Art. 16(5): inform the notice provider of the
-      # decision + redress). We stamp `decision_notified_at` ONLY when the hook
-      # reported a delivery — that timestamp is the record that the legal
-      # communication actually went out, so it must reflect reality, not intent.
-      # `Moderate.notify` returns the delivered boolean precisely for this gate.
+      # decision + redress). `decision_notified_at` is stamped only when the host's
+      # notifier confirms the message actually went out (Moderate.delivered!): a
+      # queued mail is not a delivered one, and the timestamp starts the appeal
+      # window (Art. 20(2)).
       def notify_reporter
         return if report.notifier_email.blank?
 
-        delivered = Moderate.notify(
+        Moderate.notify(
           :report_decision,
           subject: report,
           actor: moderator,
@@ -263,8 +263,6 @@ module Moderate
             summary: "Decision on Report ##{report.id}: #{report.status}"
           )
         )
-
-        report.record_notified!(:decision_notified_at) if delivered
       end
 
       # affected_user_decision → the content owner: the DSA Art. 17 statement of
@@ -278,7 +276,7 @@ module Moderate
         return if affected.blank?
         return unless affected.respond_to?(:email) && affected.email.present?
 
-        delivered = Moderate.notify(
+        Moderate.notify(
           :affected_user_decision,
           subject: report,
           actor: moderator,
@@ -287,8 +285,6 @@ module Moderate
             summary: "Statement of reasons for Report ##{report.id}"
           )
         )
-
-        report.record_notified!(:affected_user_notified_at) if delivered
       end
 
       # The shared statement-of-reasons payload (Art. 17(3)). Every field the law
@@ -321,8 +317,9 @@ module Moderate
           # already participated.
           automated: automated_processing_used?,
           reason: report.resolution_note,
-          # Art. 20(2): six months from being informed, i.e. from this notice.
-          appeal_deadline_at: report.appeal_deadline_if_notified_at(Time.current)
+          # A minimum ("at least until"): confirmed delivery (Moderate.delivered!)
+          # can move it later (Art. 20(2)), never earlier.
+          appeal_deadline_at: report.appeal_deadline_at
         }.compact
       end
 

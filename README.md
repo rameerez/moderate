@@ -478,7 +478,7 @@ What you get: `#reports` · `#open_reports` · `#reported?` · `#flagged?` · `#
 
 #### `Moderate` (the module)
 
-`.configure` · `.config` · `.configuration` · `.reset!` · `.user_class` · `.reportable_classes` · `.classify` · `.filter_policy_for` · `.register_adapter` · `.blocked_ids_for` · `.responsible_user` · `.reportable_field_label` · `.taxonomy_label` · `.transparency` · `.purge` · `.hold` (`report, until:, by:, reason:`) · `.release_hold` · `Moderate::TAXONOMY_LABEL_SCOPES` · `Moderate::VERSION`
+`.configure` · `.config` · `.configuration` · `.reset!` · `.user_class` · `.reportable_classes` · `.classify` · `.filter_policy_for` · `.register_adapter` · `.blocked_ids_for` · `.responsible_user` · `.reportable_field_label` · `.taxonomy_label` · `.transparency` · `.delivered!` (`report, :decision | :affected_user, at:`) · `.purge` · `.hold` (`report, until:, by:, reason:`) · `.release_hold` · `Moderate::TAXONOMY_LABEL_SCOPES` · `Moderate::VERSION`
 
 #### `Moderate::Report`
 
@@ -524,7 +524,7 @@ Notify events (`Moderate::Event::NOTIFY_NAMES`): `:report_received` · `:notice_
 
 Audit events (`Moderate::Event::AUDIT_NAMES`): `:report_received` · `:appeal_received` · `:report_decision` · `:flag_decision` · `:appeal_decision` · `:flag_filed` · `:user_blocked` · `:user_unblocked` · `:user_banned` · `:content_removed` · `:notify_failed` · `:classification_skipped` · `:retention_purged` · `:legal_hold_placed` · `:legal_hold_released`
 
-Every hook receives one `Moderate::Event`: `#name` · `#subject` · `#actor` · `#recipients` · `#payload` (always with `:summary`) · `#occurred_at` · `#id` · `#summary` · `#to_h`. The contract for `config.notify`: it is called once per event, after the transaction that caused it commits (never for a rolled-back change); a truthy return means "delivered" (the gem stamps `decision_notified_at` / `affected_user_notified_at` and, for a DSA notice, treats the Art. 16(4) receipt as sent); an exception is swallowed, audited as `:notify_failed`, and never rolls back the decision. `config.audit` follows the same rules and its return value is ignored. Payload keys may be added in a minor release, never removed or renamed.
+Every hook receives one `Moderate::Event`: `#name` · `#subject` · `#actor` · `#recipients` · `#payload` (always with `:summary`) · `#occurred_at` · `#id` · `#summary` · `#to_h`. The contract for `config.notify`: it is called once per event, after the transaction that caused it commits (never for a rolled-back change); a truthy return means "handed off" (for a DSA notice the gem then treats the Art. 16(4) receipt as sent); a decision notice counts as delivered only when your notifier confirms it with `Moderate.delivered!(report, :decision | :affected_user)` from the mail's actual delivery, which stamps `decision_notified_at` / `affected_user_notified_at` once and starts the appeal window from then (DSA Art. 20(2)); an exception is swallowed, audited as `:notify_failed`, and never rolls back the decision. `config.audit` follows the same rules and its return value is ignored. Payload keys may be added in a minor release, never removed or renamed.
 
 ## Upgrading between 1.0 betas
 

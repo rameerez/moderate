@@ -112,9 +112,10 @@ module Moderate
         assert_equal author, ModerateTestRecorder.notifications_named(:user_banned).first.subject
         assert_equal moderator, ModerateTestRecorder.notifications_named(:user_banned).first.actor
 
-        # Delivered ⇒ the legal-communication timestamps were stamped.
-        assert_predicate report.decision_notified_at, :present?
-        assert_predicate report.affected_user_notified_at, :present?
+        # Handed to the notifier is not delivered: the legal-communication timestamps
+        # wait for Moderate.delivered! (test/models/moderate/appeal_window_test.rb).
+        assert_nil report.decision_notified_at
+        assert_nil report.affected_user_notified_at
       end
 
       test "content removal invokes the reportable's remove_reported_field! contract" do

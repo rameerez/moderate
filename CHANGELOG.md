@@ -128,14 +128,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      `ActiveStorage::FileNotFoundError` may keep doing so; the job's own wait makes it rare.
 
 - **The appeal window runs from when the person is informed** (DSA Art. 20(2)), not from
-  the decision. A decision still stamps `appeal_deadline_at` six months out; a decision
-  notice that is actually delivered (the notify hook returns truthy, as before for
-  `decision_notified_at` / `affected_user_notified_at`) now moves it to six months after
-  delivery, never earlier, and the notice's `appeal_deadline_at` payload states that date.
-  So a statement of reasons delivered two months late (a decision held back with
-  `deliver: false`, a retried mailer) gives the full six months from delivery; with no
-  notifier wired, the decision-time deadline stands. No new column: the two delivery
-  timestamps already existed.
+  the decision, and only a confirmed delivery counts. A decision stamps
+  `appeal_deadline_at` six months out, a minimum (its notice's `appeal_deadline_at` is that
+  date: "at least until"). **`Moderate.delivered!(report, :decision | :affected_user, at:)`**,
+  which your notifier calls when the message actually went out (Action Mailer's
+  `after_deliver`; docs/notifications.md), stamps `decision_notified_at` /
+  `affected_user_notified_at` once and moves the deadline to six months after it, never
+  earlier; later calls change nothing. **Behavior change:** those two timestamps are no
+  longer stamped because the notify hook returned something truthy (a queued delivery job
+  is not a delivery), so a host that reads them must call `Moderate.delivered!`.
 - **An appeal filed in time can be decided after the appeal window closes.** The six-month
   check (`report_must_still_be_appealable`) ran on every save, so `appeal.uphold!` /
   `reject!` on a complaint filed in month five and decided in month seven failed with "the

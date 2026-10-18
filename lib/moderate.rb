@@ -544,6 +544,21 @@ module Moderate
       Retention.purge(**)
     end
 
+    # The host's notifier confirms that a decision notice ACTUALLY went out — call it
+    # from the mailer's delivery (Action Mailer's `after_deliver`), not when the mail
+    # was queued:
+    #
+    #   Moderate.delivered!(report, :affected_user)  # the statement of reasons
+    #   Moderate.delivered!(report, :decision)       # the reporter's / notifier's outcome
+    #
+    # Stamps `affected_user_notified_at` / `decision_notified_at` once and starts the
+    # six-month appeal window from that moment (DSA Art. 20(2)) if that is later than
+    # the decision-time deadline; never earlier, and a second call changes nothing.
+    # Without it the window stays decision + 6 months.
+    def delivered!(report, recipient, at: Time.current)
+      report.record_delivery!(recipient, at: at)
+    end
+
     # Keep `report` (its appeals, the flags on its content) out of the purge until
     # `until:`: an out-of-court dispute, a court case, an authority's request.
     #
