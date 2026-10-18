@@ -6,6 +6,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **An attachment is classified once its file is uploaded, never before.** Active Storage
+  uploads a new attachment in its own `after_commit`, and commit callbacks run in the order
+  they were defined, so on a model that calls `moderates` above `has_one_attached` the
+  filter ran first: a synchronous adapter classified a blob whose file wasn't on the
+  service yet, and an async adapter's `ClassifyJob` could run before the upload finished.
+  The filter now hands a field whose upload is still pending to that upload and runs
+  (inline, or the job enqueue) the moment it completes; in the other order it runs at once,
+  as before. Works for `has_one_attached` and `has_many_attached`, in either declaration
+  order. `ClassifyJob` also checks that every blob behind the value exists on its service:
+  if one doesn't (a direct upload still in flight, a lagging replica) it re-enqueues itself
+  after 5, 10, 15 and 20 seconds (`UPLOAD_WAIT`, `UPLOAD_ATTEMPTS`), then gives up with a
+  `classification_skipped` audit event. **If you worked around this** (CarHey's avatar):
+  1. delete the `moderation_field_changed_for_commit?` override that returns `false` for
+     the attachment field;
+  2. delete your own `Moderate::ClassifyJob.perform_later(self, "avatar")` after_commit
+     and the `before_save` that remembered the attachment change, or the field is
+     classified twice;
+  3. the order of `moderates` and `has_one_attached` no longer matters, so the "keep this
+     below the attachment" comments can go. An adapter that retries on
+     `ActiveStorage::FileNotFoundError` may keep doing so; the job's own wait makes it rare.
+
 ### Removed
 
 - **Rails 7.1 and Ruby 3.2 are no longer supported** (both are end of life upstream). The

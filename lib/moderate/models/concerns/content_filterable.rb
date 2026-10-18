@@ -36,12 +36,41 @@ module Moderate
   # ACTIVE STORAGE ATTACHMENTS work out of the box: `moderates :avatar, with:
   # :your_image_adapter, mode: :flag` on a `has_one_attached :avatar` model needs
   # no extra wiring. AR dirty tracking can't see attachment writes — and Active
-  # Storage clears `attachment_changes` before after_commit — so the concern
+  # Storage drops `attachment_changes` in its own after_commit — so the concern
   # snapshots "these filtered attachments changed" in a before_save and consumes
   # the snapshot at commit time. The overridable seam below still exists for
   # richer cases (derived values, non-AS blobs).
+  #
+  # An attachment is classified only once its file is on the storage service.
+  # Active Storage uploads a newly attached file in ITS after_commit, and commit
+  # callbacks run in definition order, so on a model that calls `moderates` above
+  # `has_one_attached` the filter's after_commit runs first, before the upload.
+  # When that happens the field's classification (inline, or the ClassifyJob
+  # enqueue) is handed to the pending upload and runs the moment it finishes; in
+  # the other order the upload is already done and it runs at once. Either way:
+  # once, after the upload, never before. (ClassifyJob also waits, with a bounded
+  # retry, for a blob that isn't on the service when the job runs.)
   module ContentFilterable
     extend ActiveSupport::Concern
+
+    # Extended onto one pending Active Storage attachment change (the object
+    # `has_one_attached` / `has_many_attached` upload from their after_commit) so
+    # that work queued with `moderate_after_upload` runs right after that change's
+    # file is on the service. Per object, never a global patch.
+    module AfterUpload
+      def upload(...)
+        result = super
+        callbacks = @moderate_after_upload
+        @moderate_after_upload = nil
+        Array(callbacks).each(&:call)
+        result
+      end
+
+      def moderate_after_upload(&block)
+        (@moderate_after_upload ||= []) << block
+      end
+    end
+    private_constant :AfterUpload
 
     included do
       # The set of filtered field names (Strings), inherited via class_attribute so
@@ -90,60 +119,82 @@ module Moderate
     # (inline for synchronous adapters; via Moderate::ClassifyJob for async ones).
     #
     # We only act when the field actually CHANGED on this commit (re-saving an
-    # untouched record must not re-flag it and spam the queue), and we wrap each
-    # field in `begin/ensure` so the clean-up hook (`moderation_field_committed`)
-    # always runs even if classification raises — that hook is what clears the
-    # one-shot attachment snapshot.
+    # untouched record must not re-flag it and spam the queue). An attachment
+    # whose file Active Storage hasn't uploaded yet is classified when the upload
+    # finishes (see AfterUpload above), never before.
     def moderate_flag_filtered_fields
       moderation_filtered_fields.each do |field|
         policy = Moderate.filter_policy_for(self, field)
         next unless policy.flag?
         next unless moderation_field_changed_for_commit?(field)
 
-        begin
-          # ASYNC adapters (remote moderation APIs) never classify inline —
-          # a network call in the request's after_commit would stall the
-          # response for as long as the provider takes. ClassifyJob re-reads
-          # the value at run time (so it always classifies what's actually
-          # persisted) and files the Flag through the same Flag.flag! builder.
-          if Moderate.config.adapter_async?(policy.adapter)
-            Moderate::ClassifyJob.perform_later(self, field)
-            next
-          end
-
-          value = moderation_field_value(field)
-          next if moderation_value_blank?(value)
-
-          result = Moderate.classify(value, policy: policy)
-          next unless result.flagged?
-
-          Moderate::Flag.flag!(
-            flaggable: self,
-            field: field,
-            # `reported_owner` comes from Moderate::Reportable. A filterable model
-            # is usually also reportable; if it isn't — or its owner isn't a
-            # person (Moderate.responsible_user) — the owner is simply nil (the
-            # flag still lands in the queue, just unattributed).
-            owner: Moderate.responsible_user(self),
-            source: result.source,
-            mode: policy.mode,
-            # Cap the stored excerpt so we never balloon a row with a huge body;
-            # 500 chars is plenty of context for a reviewer.
-            excerpt: value.to_s.truncate(500),
-            categories: result.categories,
-            scores: result.scores,
-            # Keep the policy that produced the flag alongside the adapter's raw
-            # payload, so the queue can show "flagged by <adapter> under
-            # <Class>#<field>" and an auditor can inspect the untouched response.
-            context: {
-              raw: result.raw,
-              policy: { class_name: policy.class_name, field: policy.field, mode: policy.mode.to_s }
-            }
-          )
-        ensure
-          moderation_field_committed(field)
+        upload = moderate_pending_upload(field)
+        if upload
+          upload.extend(AfterUpload) unless upload.is_a?(AfterUpload)
+          upload.moderate_after_upload { moderate_flag_field(field, policy) }
+        else
+          moderate_flag_field(field, policy)
         end
       end
+    end
+
+    # Classify one changed field and file its Flag. Wrapped in `ensure` so the
+    # clean-up hook (`moderation_field_committed`) always runs even if
+    # classification raises — that hook is what clears the one-shot attachment
+    # snapshot.
+    def moderate_flag_field(field, policy)
+      # ASYNC adapters (remote moderation APIs) never classify inline — a network
+      # call in the request's after_commit would stall the response for as long
+      # as the provider takes. ClassifyJob re-reads the value at run time (so it
+      # always classifies what's actually persisted) and files the Flag through the
+      # same Flag.flag! builder.
+      if Moderate.config.adapter_async?(policy.adapter)
+        Moderate::ClassifyJob.perform_later(self, field)
+        return
+      end
+
+      value = moderation_field_value(field)
+      return if moderation_value_blank?(value)
+
+      result = Moderate.classify(value, policy: policy)
+      return unless result.flagged?
+
+      Moderate::Flag.flag!(
+        flaggable: self,
+        field: field,
+        # `reported_owner` comes from Moderate::Reportable. A filterable model is
+        # usually also reportable; if it isn't — or its owner isn't a person
+        # (Moderate.responsible_user) — the owner is simply nil (the flag still
+        # lands in the queue, just unattributed).
+        owner: Moderate.responsible_user(self),
+        source: result.source,
+        mode: policy.mode,
+        # Cap the stored excerpt so we never balloon a row with a huge body; 500
+        # chars is plenty of context for a reviewer.
+        excerpt: value.to_s.truncate(500),
+        categories: result.categories,
+        scores: result.scores,
+        # Keep the policy that produced the flag alongside the adapter's raw
+        # payload, so the queue can show "flagged by <adapter> under
+        # <Class>#<field>" and an auditor can inspect the untouched response.
+        context: {
+          raw: result.raw,
+          policy: { class_name: policy.class_name, field: policy.field, mode: policy.mode.to_s }
+        }
+      )
+    ensure
+      moderation_field_committed(field)
+    end
+
+    # The Active Storage change still waiting to upload `field`'s file on this
+    # commit, or nil: Active Storage removes the change from `attachment_changes`
+    # when it uploads, so a change that is still there hasn't been uploaded yet.
+    # (A removal — `avatar = nil` — is a change with nothing to upload.)
+    def moderate_pending_upload(field)
+      return unless respond_to?(:attachment_changes)
+
+      change = attachment_changes[field.to_s]
+      change if change.respond_to?(:upload)
     end
 
     # --- Overridable field seam -----------------------------------------------
@@ -163,8 +214,8 @@ module Moderate
 
     # Did `field` change on the just-committed save? Defaults, in order:
     #   1. the attachment snapshot taken in before_save (AR dirty tracking can't
-    #      see attachment writes, and Active Storage clears `attachment_changes`
-    #      before after_commit — hence the one-shot snapshot),
+    #      see attachment writes, and Active Storage drops `attachment_changes`
+    #      in its own after_commit — hence the one-shot snapshot),
     #   2. ActiveRecord's own dirty tracking (`saved_change_to_attribute?`),
     #   3. `true` for a PORO/ActiveModel object with no dirty tracking at all —
     #      the conservative assumption.

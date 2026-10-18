@@ -29,6 +29,14 @@ module Moderate
   # source) so a retried job (ActiveJob retries on transient failures) doesn't pile
   # up duplicate queue entries for the same content.
   #
+  # ── An attachment whose file isn't on the service yet ────────────────────────
+  # The filter enqueues this job only after Active Storage has uploaded the file
+  # (see Moderate::ContentFilterable). A blob can still be missing when the job
+  # runs: a direct upload that hasn't finished, a replica that lags. The job then
+  # re-enqueues itself, waiting UPLOAD_WAIT × attempt seconds, up to
+  # UPLOAD_ATTEMPTS runs in all, and gives up with a `classification_skipped`
+  # audit event. It never hands an adapter a file that isn't there.
+  #
   # ── Base class ───────────────────────────────────────────────────────────────
   # We subclass `ActiveJob::Base` directly (not the host's ApplicationJob) so the gem
   # doesn't depend on a constant that lives in the host app — the same reason the
@@ -40,11 +48,19 @@ module Moderate
     # can override the queue globally.
     queue_as { Moderate.config.respond_to?(:job_queue) && Moderate.config.job_queue || :default }
 
+    # Seconds to wait before the next look at a blob that isn't uploaded yet,
+    # multiplied by the attempt number (5s, 10s, 15s, 20s: under a minute in all).
+    UPLOAD_WAIT = 5
+    # Runs of this job, the first included, before it gives up on such a blob.
+    UPLOAD_ATTEMPTS = 5
+
     # @param record [ActiveRecord::Base] the flaggable record (any Moderate::Reportable).
     # @param field  [String, Symbol] the field whose value to classify.
     # @param adapter [String, Symbol, nil] optional explicit adapter name; when nil,
     #   the field's resolved FilterPolicy (or the global default) decides.
-    def perform(record, field, adapter: nil)
+    # @param upload_attempt [Integer] which look at a not-yet-uploaded attachment
+    #   this is (the job sets it when it re-enqueues itself; callers leave it).
+    def perform(record, field, adapter: nil, upload_attempt: 1)
       # The record may have been destroyed between enqueue and execution — nothing
       # to classify, nothing to flag. (ActiveJob raises DeserializationError for a
       # GlobalID that no longer resolves; that's rescued at the framework level, but
@@ -60,6 +76,7 @@ module Moderate
 
       value = field_value(record, field)
       return if blank?(value)
+      return wait_for_upload(record, field, adapter, upload_attempt) unless uploaded?(value)
 
       result = Moderate.classify(value, policy: policy)
       return unless result.flagged?
@@ -136,6 +153,38 @@ module Moderate
     # to its reference, which is fine for the queue's "what was flagged" column.
     def excerpt_for(value)
       value.to_s[0, 500]
+    end
+
+    # Is every file behind an Active Storage value on its service? Anything that
+    # isn't an attachment (text, a host's own object) has nothing to wait for.
+    def uploaded?(value)
+      attachment_blobs(value).all? { |blob| blob.service.exist?(blob.key) }
+    end
+
+    def attachment_blobs(value)
+      return [] unless value.respond_to?(:attached?) && defined?(::ActiveStorage::Blob)
+
+      blobs = value.respond_to?(:blobs) ? value.blobs.to_a : [value.try(:blob)]
+      blobs.grep(::ActiveStorage::Blob)
+    end
+
+    def wait_for_upload(record, field, adapter, attempt)
+      if attempt < UPLOAD_ATTEMPTS
+        self.class.set(wait: UPLOAD_WAIT * attempt)
+          .perform_later(record, field, adapter: adapter, upload_attempt: attempt + 1)
+        return
+      end
+
+      Moderate.audit(
+        :classification_skipped,
+        subject: record,
+        payload: {
+          field: field,
+          reason: "attachment_not_uploaded",
+          attempts: attempt,
+          summary: "#{record.class.name}##{field} not classified: its file never reached the storage service"
+        }
+      )
     end
 
     def field_value(record, field)

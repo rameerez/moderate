@@ -285,6 +285,8 @@ end
 
 Why this matters: `:flag` never lives in a validator (validators must be side-effect-free, and a flag created inside a rolled-back transaction would silently vanish) — `moderate` handles that correctly for you.
 
+**Active Storage attachments** (`has_one_attached` / `has_many_attached`) take the same one line, `moderates :avatar, with: :image, mode: :flag`, and no other wiring. The file is classified once Active Storage has uploaded it, never before, whichever of `moderates` and `has_one_attached` you declare first. `Moderate::ClassifyJob` also waits for a blob that isn't on the storage service yet (a direct upload still in flight): it looks again 5, 10, 15 and 20 seconds later, then gives up with a `classification_skipped` audit event instead of handing your adapter a missing file.
+
 Check content directly anywhere:
 
 ```ruby
