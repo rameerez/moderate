@@ -2,8 +2,11 @@
 
 # Deterministic waits for the race tests: instead of sleeping and hoping a thread has
 # reached its lock, ask the database whether that thread's connection is blocked on a
-# lock right now (PostgreSQL: pg_blocking_pids; MySQL: information_schema.innodb_trx
-# in LOCK WAIT), polling for up to `timeout` seconds and failing loudly otherwise.
+# lock right now (PostgreSQL: pg_blocking_pids; MySQL: performance_schema's
+# data_lock_waits), polling for up to `timeout` seconds and failing loudly otherwise.
+#
+# Not information_schema.innodb_trx on MySQL: it is served from a cache that refreshes
+# only when it hasn't been read for 100 ms, so a tight poll never sees a new wait.
 module LockWaits
   # The database's id for the connection the calling thread holds.
   def backend_id
@@ -42,8 +45,9 @@ module LockWaits
       connection.select_value("SELECT cardinality(pg_blocking_pids(#{Integer(id)})) > 0")
     else
       connection.select_value(
-        "SELECT COUNT(*) FROM information_schema.innodb_trx " \
-        "WHERE trx_mysql_thread_id = #{Integer(id)} AND trx_state = 'LOCK WAIT'"
+        "SELECT COUNT(*) FROM performance_schema.data_lock_waits waits " \
+        "JOIN performance_schema.threads threads ON threads.THREAD_ID = waits.REQUESTING_THREAD_ID " \
+        "WHERE threads.PROCESSLIST_ID = #{Integer(id)}"
       ).to_i.positive?
     end
   end

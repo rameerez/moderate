@@ -57,8 +57,11 @@ module Moderate
           Moderate::Flag.flag_for_review!(Comment.find(@comment.id), field: :body, by: @admins[1])
         end
       end
-      wait_until_blocked(ids.pop) # on the first's uncommitted, unique pending_key
-      commit << :go
+      begin
+        wait_until_blocked(ids.pop) # on the first's uncommitted, unique pending_key
+      ensure
+        commit << :go # whatever happened, never leave a transaction open
+      end
 
       filed = first.value
       joined = second.value
@@ -89,10 +92,13 @@ module Moderate
       end
       read.pop
 
-      b = ActiveRecord::Base.connection_pool.with_connection do
-        Moderate::Flag.flag_for_review!(Comment.find(@comment.id), field: :body, by: @admins[1])
+      begin
+        b = ActiveRecord::Base.connection_pool.with_connection do
+          Moderate::Flag.flag_for_review!(Comment.find(@comment.id), field: :body, by: @admins[1])
+        end
+      ensure
+        filed_by_b << b # whatever happened, let A finish its transaction
       end
-      filed_by_b << b
 
       got = a.value
       assert_equal b, got, "A gets B's flag"
