@@ -73,7 +73,7 @@ module Moderate
 
     # The connection a service captures at the top of its transaction, before any save.
     def self.connection_for(model)
-      model.respond_to?(:lease_connection) ? model.lease_connection : model.connection
+      model.lease_connection
     end
 
     def after_commit_notice(on: DeferredNotices.connection_for(self.class), &notice)
