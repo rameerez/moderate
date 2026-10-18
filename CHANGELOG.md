@@ -34,7 +34,9 @@ _Upgrading from 1.0.0.beta3_ below). No API change.
   REPEATABLE READ once the caller's transaction has read anything. `moderate_flags` gets a
   `pending_key` (`"<flaggable_type>/<flaggable_id>/<field>"` while pending, NULL once closed;
   the model keeps it in sync on every save, so closing frees it and reopening takes it back)
-  with a unique index. `Flag.flag!` and `Flag.flag_for_review!` insert and, on the collision,
+  with a unique index. The key compares as bytes everywhere: on MySQL the column is
+  `utf8mb4_bin`, since the default collation ignores case and would make content types that
+  differ only by case (`Post`, `POST`) share one key. `Flag.flag!` and `Flag.flag_for_review!` insert and, on the collision,
   return the flag already waiting, read with a locking read (the latest committed row on
   every database); no plain read decides anything, and `flag_for_review!` locks only the
   waiting flag, only on a collision. On MySQL, locking a pending flag (`with_lock`, `lock!`)
@@ -43,6 +45,9 @@ _Upgrading from 1.0.0.beta3_ below). No API change.
   InnoDB can still pick (an insert's duplicate check queued on the gap a closing flag's index
   entry moves into) is retried by `Flag.flag!` when it is the whole transaction, and raised
   as `ActiveRecord::Deadlocked` inside a caller's transaction, which InnoDB rolled back.
+  `Flag.flag!` tries three times, then raises the last failure as it was:
+  `ActiveRecord::Deadlocked` after three deadlocks, `ActiveRecord::RecordNotUnique` only when
+  each collision's waiting flag was decided before it could be joined.
 - **The install migration on Trilogy.** `moderate:install`'s migration now treats Rails'
   Trilogy adapter as MySQL, as it already did mysql2 (MySQL refuses defaults on JSON columns).
 - **Removal-only enforcement no longer locks the person's row.** Only a decision that can
@@ -65,8 +70,11 @@ _Upgrading from 1.0.0.beta3_ below). No API change.
    with `moderate:install:migrations`; if you already did, the copy runs instead). It adds the
    column and the unique index, and backfills: on each content and field, the newest pending
    flag takes the key; older duplicate pending flags from before this release stay pending
-   without one (close them when you can). Reversible; a no-op on a fresh install, whose
-   `moderate:install` migration already has the column.
+   without one (close them when you can). Before adding the index it asks the database
+   itself for keys it would treat as one, and if there are any it stops with a message
+   naming each key and its flags, rather than failing on the index; close all but one of
+   each and run it again. Reversible; a no-op on a fresh install, whose `moderate:install`
+   migration already has the column (declared `utf8mb4_bin` on MySQL).
 
 ## [1.0.0.beta3] - 2026-10-18
 

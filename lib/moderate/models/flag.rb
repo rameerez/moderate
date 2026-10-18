@@ -91,6 +91,11 @@ module Moderate
     # (the filters' after_commit, ClassifyJob, the admin button) it is simply tried
     # again; inside a caller's transaction InnoDB has rolled that transaction back
     # too, so ActiveRecord::Deadlocked is raised for the caller to retry.
+    #
+    # Up to ATTEMPTS tries, then the last failure is raised as it was:
+    # ActiveRecord::Deadlocked if the database kept choosing this insert as a deadlock
+    # victim, ActiveRecord::RecordNotUnique only if, after a collision, no pending
+    # flag could be found to join (each one was decided before it could be read).
     def self.flag!(flaggable:, field:, owner:, source:, mode:, excerpt:, categories:, scores:, context:)
       attributes = {
         flaggable: flaggable,
@@ -104,22 +109,26 @@ module Moderate
         context: context.to_h
       }
 
-      COLLISION_ATTEMPTS.times do
+      attempts = 0
+      begin
+        attempts += 1
         # A savepoint, so a collision doesn't poison a surrounding transaction.
-        return transaction(requires_new: true) { create!(attributes) }
+        transaction(requires_new: true) { create!(attributes) }
       rescue ActiveRecord::RecordNotUnique
         waiting = waiting_flag(pending_key_for(flaggable.class.polymorphic_name, flaggable.id, field))
         return waiting if waiting&.pending?
-        # The waiting flag was decided while we looked: its key is free, insert again.
-      rescue ActiveRecord::Deadlocked
-        raise if connection.transaction_open? # the caller's transaction died with ours
-      end
+        raise if attempts >= ATTEMPTS
 
-      raise ActiveRecord::RecordNotUnique,
-            "a pending flag on #{flaggable.class.name} #{flaggable.id}##{field} kept appearing and closing"
+        retry # the waiting flag was decided while we looked: its key is free
+      rescue ActiveRecord::Deadlocked
+        # The caller's transaction died with ours: theirs to retry, as a whole.
+        raise if connection.transaction_open? || attempts >= ATTEMPTS
+
+        retry
+      end
     end
 
-    COLLISION_ATTEMPTS = 3
+    ATTEMPTS = 3
 
     # The pending_key a pending flag on that content and field carries.
     def self.pending_key_for(flaggable_type, flaggable_id, field)
