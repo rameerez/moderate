@@ -24,7 +24,8 @@ module Moderate
     }.freeze
 
     test "every value the gem defines has an English and a Spanish label" do
-      assert_equal Moderate::TAXONOMY_LABEL_SCOPES.keys.sort, GEM_VALUES.keys.sort, "a new kind needs its values listed here"
+      assert_equal Moderate::TAXONOMY_LABEL_SCOPES.keys.sort, GEM_VALUES.keys.sort,
+                   "a new kind needs its values listed here"
 
       %i[en es].each do |locale|
         GEM_VALUES.each do |kind, values|
@@ -70,11 +71,11 @@ module Moderate
 
     test "category_options pairs labels with values and honors config.report_categories" do
       assert_equal Moderate::Report::DEFAULT_CATEGORIES, Moderate::Report.category_options.map(&:last)
-      assert_includes Moderate::Report.category_options, ["Harassment", "harassment"]
+      assert_includes Moderate::Report.category_options, %w[Harassment harassment]
 
       Moderate.config.report_categories = %w[spam cheating]
-      assert_equal [["Junk", "spam"], ["Cheating", "cheating"]], Moderate::Report.category_options
-      I18n.with_locale(:es) { assert_equal ["Spam", "spam"], Moderate::Report.category_options.first }
+      assert_equal [%w[Junk spam], %w[Cheating cheating]], Moderate::Report.category_options
+      I18n.with_locale(:es) { assert_equal %w[Spam spam], Moderate::Report.category_options.first }
     end
   end
 end

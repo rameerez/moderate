@@ -11,7 +11,7 @@ class ModerationActionsTest < ActionDispatch::IntegrationTest
     Moderate.configure do |config|
       config.audit = ->(event) { ModerateTestRecorder.audit(event) }
       config.notify = ->(event) { ModerateTestRecorder.notify(event) }
-      config.ban_handler = ->(user:, by:, reason:) { ModerateTestRecorder.ban_handler(user: user, by: by, reason: reason) }
+      config.ban_handler = ModerateTestRecorder.method(:ban_handler)
     end
     ModerateTestRecorder.clear
     @moderator = User.create!(name: "Mod", email: "mod@example.com")
@@ -23,13 +23,14 @@ class ModerationActionsTest < ActionDispatch::IntegrationTest
   test "resolve decides a report, with a 303 back" do
     report = @reporter.report!(@comment, category: :harassment, details: "Rude", field: :body)
 
-    post "/admin/reports/#{report.id}/resolve", params: { moderator_id: @moderator.id, note: "Warned.", ban_user: "1", resolution_basis: "terms" }
+    post "/admin/reports/#{report.id}/resolve",
+         params: { moderator_id: @moderator.id, note: "Warned.", ban_user: "1", resolution_basis: "terms" }
 
     assert_response :see_other
     assert_equal "Report resolved.", flash[:notice]
     assert_equal "actioned", report.reload.status
     assert_equal @moderator, report.resolved_by
-    assert_equal [@author], ModerateTestRecorder.bans.map { |ban| ban[:user] }
+    assert_equal [@author], ModerateTestRecorder.bans.pluck(:user)
   end
 
   test "resolve decides a flag too, and can enforce through a report" do
@@ -42,7 +43,7 @@ class ModerationActionsTest < ActionDispatch::IntegrationTest
     assert_equal "actioned", flag.reload.status
     assert_equal @moderator, flag.reviewed_by
     assert_equal "actioned", flag.report.status
-    assert_equal [@author], ModerateTestRecorder.bans.map { |ban| ban[:user] }
+    assert_equal [@author], ModerateTestRecorder.bans.pluck(:user)
   end
 
   test "resolve on a flag with no enforcement only triages it" do

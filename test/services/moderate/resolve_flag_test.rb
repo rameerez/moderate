@@ -114,8 +114,8 @@ module Moderate
         flag = create_flag(comment_class: EscalationComment)
         comment = flag.flaggable
 
-        Moderate::Services::ResolveFlag.new(flag, by: moderator)
-          .action!(note: "Slur in a DM.", remove_content: true)
+        decision = Moderate::Services::ResolveFlag.new(flag, by: moderator)
+        decision.action!(note: "Slur in a DM.", remove_content: true)
 
         report = flag.reload.report
         assert_equal "actioned", flag.status
@@ -149,13 +149,13 @@ module Moderate
 
         assert_equal filed, flag.reload.report
         assert_equal "actioned", filed.reload.status
-        assert_equal [reporter], ModerateTestRecorder.notifications_named(:report_decision).sole.recipients,
-          "the person who reported it hears the outcome"
+        decision = ModerateTestRecorder.notifications_named(:report_decision).sole
+        assert_equal [reporter], decision.recipients, "the person who reported it hears the outcome"
       end
 
       test "ban_user bans the flag's owner through the ban_handler, with a statement of reasons" do
         Moderate.configure do |config|
-          config.ban_handler = ->(user:, by:, reason:) { ModerateTestRecorder.ban_handler(user: user, by: by, reason: reason) }
+          config.ban_handler = ModerateTestRecorder.method(:ban_handler)
         end
         moderator = User.create!(name: "Mod")
         flag = create_flag
@@ -185,7 +185,7 @@ module Moderate
 
       test "a flag already decided enforces nothing a second time" do
         Moderate.configure do |config|
-          config.ban_handler = ->(user:, by:, reason:) { ModerateTestRecorder.ban_handler(user: user, by: by, reason: reason) }
+          config.ban_handler = ModerateTestRecorder.method(:ban_handler)
         end
         moderator = User.create!(name: "Mod")
         flag = create_flag

@@ -252,7 +252,7 @@ module Moderate
 
     # Awaiting a decision — the record-level twin of the `pending` scope, so one
     # predicate reads the same across Report, Flag and Appeal queues.
-    alias_method :pending?, :open?
+    alias pending? open?
 
     def actioned?
       status == "actioned"
@@ -486,14 +486,17 @@ module Moderate
     # host's own word ("ride") can never fail an intake. A caller's explicit value
     # (the DSA notice form's select) is left alone.
     def infer_content_type
-      return if content_type.present? || reportable.blank?
+      return if content_type.present?
+
+      value = reportable_content_type
+      self.content_type = CONTENT_TYPES.include?(value) ? value : "other" if value
+    end
+
+    def reportable_content_type
       return unless reportable.respond_to?(:moderation_content_type)
 
       reader = reportable.method(:moderation_content_type)
-      value = (reader.arity.zero? ? reader.call : reader.call(reported_field)).to_s.squish.presence
-      return if value.nil?
-
-      self.content_type = CONTENT_TYPES.include?(value) ? value : "other"
+      (reader.arity.zero? ? reader.call : reader.call(reported_field)).to_s.squish.presence
     end
 
     # Capture an IMMUTABLE evidence snapshot at create time. This is the heart of a
@@ -562,12 +565,17 @@ module Moderate
     # notices (anyone may notify) and system reports (no reporter) are not affected.
     # The self-report and field rules above already explain their own refusals.
     def reporter_must_be_allowed_to_report
-      return unless community? && reporter.present? && reportable.present?
-      return unless reportable.respond_to?(:report_visible_to?)
-      return if errors.include?(:reported_user) || errors.include?(:reported_field)
+      return unless visibility_checked?
       return if reportable.report_visible_to?(reporter, field: reported_field)
 
-      errors.add(:reportable, I18n.t("moderate.errors.not_reportable_by_reporter", default: "isn't something you can report"))
+      message = I18n.t("moderate.errors.not_reportable_by_reporter", default: "isn't something you can report")
+      errors.add(:reportable, message)
+    end
+
+    def visibility_checked?
+      return false unless community? && reporter.present? && reportable.respond_to?(:report_visible_to?)
+
+      errors.exclude?(:reported_user) && errors.exclude?(:reported_field)
     end
 
     def subject_url_must_be_http_url

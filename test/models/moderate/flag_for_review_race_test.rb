@@ -48,7 +48,8 @@ module Moderate
         sleep 0.2
       end
 
-      assert_equal [false, true], threads.map(&:value).sort_by { |created| created ? 1 : 0 }
+      created = threads.map(&:value)
+      assert_equal([false, true], created.sort_by { |was_new| was_new ? 1 : 0 })
       assert_equal 1, Moderate::Flag.pending.where(flaggable: @comment).count
     end
   end

@@ -70,7 +70,7 @@ module Moderate
     end
 
     # Awaiting a decision — the twin of the `pending` scope (see Report#pending?).
-    alias_method :pending?, :open?
+    alias pending? open?
 
     def closed?
       status.in?(%w[upheld rejected])

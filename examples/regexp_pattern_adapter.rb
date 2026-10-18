@@ -34,7 +34,8 @@ class RegexpPatternAdapter
     @patterns = patterns.to_h.merge(keyword_patterns).to_h do |category, list|
       list = Array(list)
       unless list.all?(Regexp)
-        raise ArgumentError, "RegexpPatternAdapter: #{category.inspect} needs Regexp patterns, got #{list.map(&:class).uniq.join(', ')}"
+        given = list.map(&:class).uniq.join(", ")
+        raise ArgumentError, "RegexpPatternAdapter: #{category.inspect} needs Regexp patterns, got #{given}"
       end
 
       [category.to_sym, list.freeze]
@@ -45,11 +46,7 @@ class RegexpPatternAdapter
   def synchronous? = true
 
   def classify(value)
-    text = value.to_s
-    matches = @patterns.each_with_object({}) do |(category, list), found|
-      hits = list.flat_map { |pattern| text.scan(pattern).map { |hit| Array(hit).first.to_s } }.reject(&:empty?)
-      found[category] = hits.uniq if hits.any?
-    end
+    matches = matches_in(value.to_s)
 
     Moderate::Result.new(
       allowed: matches.empty?,
@@ -57,5 +54,15 @@ class RegexpPatternAdapter
       source: "patterns",
       raw: { matches: matches }
     )
+  end
+
+  private
+
+  # category => the distinct fragments of `text` its patterns matched
+  def matches_in(text)
+    @patterns.each_with_object({}) do |(category, list), found|
+      hits = list.flat_map { |pattern| text.scan(pattern).map { |hit| Array(hit).first.to_s } }.reject(&:empty?)
+      found[category] = hits.uniq if hits.any?
+    end
   end
 end

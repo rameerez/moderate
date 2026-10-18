@@ -108,40 +108,34 @@ module Moderate
     def self.flag_for_review!(record, field:, by:, note: nil)
       field_s = field.to_s.strip
       raise ArgumentError, "field is required" if field_s.empty?
-      raise ArgumentError, "#{record.class.name} must be persisted to be flagged" unless record.respond_to?(:persisted?) && record.persisted?
+      unless record.respond_to?(:persisted?) && record.persisted?
+        raise ArgumentError, "#{record.class.name} must be persisted to be flagged"
+      end
 
+      note = note.to_s.strip.presence
       flag = record.with_lock do
         where(flaggable: record, field: field_s).pending.recent_first.first ||
-          flag!(
-            flaggable: record,
-            field: field_s,
-            owner: Moderate.responsible_user(record),
-            source: "manual",
-            mode: "flag",
-            excerpt: review_excerpt(record, field_s),
-            categories: [],
-            scores: {},
-            context: { "flagged_by_id" => by&.id, "note" => note.to_s.strip.presence }.compact
-          )
+          file_for_review!(record, field_s, by: by, note: note)
       end
-
-      if flag.previously_new_record?
-        Moderate.audit(
-          :flag_filed,
-          subject: flag,
-          actor: by,
-          payload: {
-            flag_id: flag.id,
-            flaggable_type: flag.flaggable_type,
-            flaggable_id: flag.flaggable_id,
-            field: flag.field,
-            note: note.to_s.strip.presence,
-            summary: "Flag ##{flag.id} filed by hand on #{flag.flaggable_label} · #{flag.field_label}"
-          }.compact
-        )
-      end
-
+      audit_filed_for_review(flag, by: by, note: note) if flag.previously_new_record?
       flag
+    end
+
+    def self.file_for_review!(record, field, by:, note:)
+      flag!(
+        flaggable: record, field: field, owner: Moderate.responsible_user(record),
+        source: "manual", mode: "flag", excerpt: review_excerpt(record, field),
+        categories: [], scores: {}, context: { "flagged_by_id" => by&.id, "note" => note }.compact
+      )
+    end
+
+    def self.audit_filed_for_review(flag, by:, note:)
+      payload = {
+        flag_id: flag.id, flaggable_type: flag.flaggable_type, flaggable_id: flag.flaggable_id,
+        field: flag.field, note: note,
+        summary: "Flag ##{flag.id} filed by hand on #{flag.flaggable_label} · #{flag.field_label}"
+      }
+      Moderate.audit(:flag_filed, subject: flag, actor: by, payload: payload.compact)
     end
 
     # What the reviewer reads in the queue: the record's evidence snapshot for the
@@ -151,7 +145,7 @@ module Moderate
       text = record.public_send(field) if text.nil? && record.respond_to?(field)
       text.to_s.truncate(500) if text.is_a?(String) && text.present?
     end
-    private_class_method :review_excerpt
+    private_class_method :file_for_review!, :audit_filed_for_review, :review_excerpt
 
     def self.sources
       (SOURCES + Moderate.config.adapters.keys.map(&:to_s)).uniq
@@ -182,14 +176,13 @@ module Moderate
     # the reportable's `remove_reported_field!`, the ban through your `ban_handler`,
     # and the affected user gets the statement of reasons and the appeal window a
     # restriction requires. `flag.report` is that report afterwards.
-    def action!(note:, by: nil, remove_content: false, ban_user: false, resolution_basis: "terms")
-      Moderate::Services::ResolveFlag.new(self, by: by)
-        .action!(note: note, remove_content: remove_content, ban_user: ban_user, resolution_basis: resolution_basis)
+    def action!(note:, by: nil, **enforcement)
+      Moderate::Services::ResolveFlag.new(self, by: by).action!(note: note, **enforcement)
     end
 
     # The queue-wide verb: Report#resolve! and Flag#resolve! take the same
     # keywords, so one admin action (Moderate::Moderation#resolve) decides both.
-    alias_method :resolve!, :action!
+    alias resolve! action!
 
     # Close this flag with NO action taken. The canonical automated use is
     # SUPERSEDED content: when the flagged field changes (text edited, photo

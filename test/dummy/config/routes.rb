@@ -12,13 +12,22 @@ Rails.application.routes.draw do
   # docs/madmin.md walks through.
   namespace :admin do
     resources :reports, only: [] do
-      member { post :resolve; post :dismiss }
+      member do
+        post :resolve
+        post :dismiss
+      end
     end
     resources :flags, only: [] do
-      member { post :resolve; post :dismiss }
+      member do
+        post :resolve
+        post :dismiss
+      end
     end
     resources :appeals, only: [] do
-      member { post :uphold; post :reject }
+      member do
+        post :uphold
+        post :reject
+      end
     end
   end
 

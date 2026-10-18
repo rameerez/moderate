@@ -57,7 +57,7 @@ module Moderate
     member_state: "member_states",       # EU member-state codes (Report#legal_country_code)
     content_type: "content_types",       # Report#content_type
     resolution_basis: "resolution_bases", # the Art. 17 ground of a decision (Report#resolution_basis)
-    decision: "decisions",               # the restriction imposed (Report#decision_visibility, the decision payload's :action)
+    decision: "decisions",               # the restriction imposed (Report#decision_visibility, a decision's :action)
     intake_kind: "intake_kinds",         # community report vs. DSA notice (Report#intake_kind)
     report_status: "statuses.report",
     flag_status: "statuses.flag",
@@ -219,7 +219,7 @@ module Moderate
     # raises: a typo'd kind would otherwise silently print raw values forever.
     def taxonomy_label(kind, value)
       scope = TAXONOMY_LABEL_SCOPES.fetch(kind.to_sym) do
-        raise ArgumentError, "unknown taxonomy #{kind.inspect}; one of: #{TAXONOMY_LABEL_SCOPES.keys.join(', ')}"
+        raise ArgumentError, "unknown taxonomy #{kind.inspect}; one of: #{TAXONOMY_LABEL_SCOPES.keys.join(", ")}"
       end
       value_s = value.to_s.strip
       return if value_s.empty?
@@ -348,9 +348,10 @@ module Moderate
       return true if config.ban_handler_configured?
 
       raise ConfigurationError,
-        "a ban was requested but no config.ban_handler is set, so nothing would suspend the account " \
-        "while the audit trail and the statement of reasons said it was. Wire one in config/initializers/moderate.rb, " \
-        "e.g. `config.ban_handler = ->(user:, by:, reason:) { user.suspend!(reason: reason) }`."
+            "a ban was requested but no config.ban_handler is set, so nothing would suspend the account " \
+            "while the audit trail and the statement of reasons said it was. Wire one in " \
+            "config/initializers/moderate.rb, e.g. " \
+            "`config.ban_handler = ->(user:, by:, reason:) { user.suspend!(reason: reason) }`."
     end
 
     # --- Blocking SSOT --------------------------------------------------------

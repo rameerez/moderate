@@ -58,7 +58,8 @@ module Moderate
     attr_accessor :report_categories
 
     # --- Hooks (all no-op by default) ----------------------------------------
-    attr_accessor :audit, :notify, :on_block, :ban_handler
+    attr_accessor :audit, :notify, :on_block
+    attr_reader :ban_handler # its writer (below) refuses a non-callable and tracks configured?
 
     # --- Misc -----------------------------------------------------------------
     attr_accessor :locale

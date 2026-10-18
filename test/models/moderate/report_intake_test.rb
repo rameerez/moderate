@@ -17,7 +17,7 @@ module Moderate
     def moderation_snapshot(field) = (body if field.to_s == "body")
     def moderation_content_type = "message"
 
-    def report_visible_to?(viewer, field: nil)
+    def report_visible_to?(viewer, **)
       viewer.present? && viewer.id != user_id && participant_ids.include?(viewer.id)
     end
   end
@@ -40,7 +40,7 @@ module Moderate
       Moderate.configure do |config|
         config.audit = ->(event) { ModerateTestRecorder.audit(event) }
         config.notify = ->(event) { ModerateTestRecorder.notify(event) }
-        config.on_block = ->(blocker:, blocked:, at:) { ModerateTestRecorder.on_block(blocker: blocker, blocked: blocked, at: at) }
+        config.on_block = ModerateTestRecorder.method(:on_block)
       end
       ModerateTestRecorder.clear
       @author = create_user
@@ -80,7 +80,9 @@ module Moderate
         legal_country_code: "ES", content_type: "message", notifier_name: "N", notifier_email: "n@example.com",
         message: "Threat", good_faith_confirmed: true
       )
-      system = Moderate::Report.create!(reportable: @line, category: "other", message: "From a flag", good_faith_confirmed: true)
+      system = Moderate::Report.create!(
+        reportable: @line, category: "other", message: "From a flag", good_faith_confirmed: true
+      )
 
       assert_predicate notice, :persisted?
       assert_predicate system, :persisted?
@@ -143,7 +145,8 @@ module Moderate
       comment = Comment.create!(user: @author, body: "hello")
 
       assert_nil @participant.report!(comment, category: :spam, details: "x", field: :body).content_type
-      assert_equal "listing", @outsider.report!(comment, category: :spam, details: "y", field: :body, content_type: "listing").content_type
+      typed = @outsider.report!(comment, category: :spam, details: "y", field: :body, content_type: "listing")
+      assert_equal "listing", typed.content_type
     end
 
     # --- The signed target ------------------------------------------------------

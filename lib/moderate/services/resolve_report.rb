@@ -42,6 +42,9 @@ module Moderate
         @deliver = deliver
       end
 
+      # The report being decided.
+      attr_reader :report
+
       # Resolve WITH action (the report was valid; we acted on the content/account).
       # `resolution_basis` records the legal/contractual ground bucket; it's
       # validated against the migration's check-constraint list by the model.
@@ -82,7 +85,7 @@ module Moderate
 
       private
 
-      attr_reader :report, :moderator
+      attr_reader :moderator
 
       # The atomic core. Everything that mutates state happens under the row lock;
       # the (slow, fallible) notifications happen AFTER the lock is released, so a
@@ -137,7 +140,7 @@ module Moderate
         return removed unless removed
 
         @content_removed = content_removed_payload(note)
-        Moderate.audit(:content_removed, subject: report, actor: moderator, recipients: removal_recipients, payload: @content_removed)
+        Moderate.audit(:content_removed, **content_removed_event)
         removed
       end
 
@@ -153,8 +156,8 @@ module Moderate
         }.compact
       end
 
-      def removal_recipients
-        [report.reported_user].compact
+      def content_removed_event
+        { subject: report, actor: moderator, recipients: [report.reported_user].compact, payload: @content_removed }
       end
 
       def ban_reported_user!(note:)
@@ -174,7 +177,7 @@ module Moderate
       def notify_content_removed
         return unless @content_removed
 
-        Moderate.notify(:content_removed, subject: report, actor: moderator, recipients: removal_recipients, payload: @content_removed)
+        Moderate.notify(:content_removed, **content_removed_event)
       end
 
       # report_decision → the reporter (Art. 16(5): inform the notice provider of the

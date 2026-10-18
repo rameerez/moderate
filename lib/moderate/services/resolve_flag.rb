@@ -66,22 +66,8 @@ module Moderate
           # an error) — and nothing is enforced a second time.
           next unless flag.pending?
 
-          report = nil
-          if enforcement
-            report = escalation_report!(note)
-            decision = ResolveReport.new(report, by: moderator, deliver: false)
-            decision.resolve!(note: note, resolution_basis: resolution_basis, **enforcement)
-          end
-
-          flag.update!(
-            status: status,
-            resolution_note: note,
-            reviewed_by: moderator,
-            reviewed_at: Time.current,
-            context: report ? flag.context.to_h.merge("report_id" => report.id) : flag.context
-          )
-
-          audit_decision(status, note, report)
+          decision = enforce!(note, enforcement, resolution_basis) if enforcement
+          close!(status, note, decision&.report)
         end
 
         # Notify outside the lock, as every decision does: a slow or broken mailer
@@ -90,27 +76,43 @@ module Moderate
         flag
       end
 
+      # Resolve the escalation report with the requested enforcement, holding its
+      # notices back until the flag's lock is released.
+      def enforce!(note, enforcement, resolution_basis)
+        decision = ResolveReport.new(escalation_report!(note), by: moderator, deliver: false)
+        decision.resolve!(note: note, resolution_basis: resolution_basis, **enforcement)
+        decision
+      end
+
+      def close!(status, note, report)
+        context = report ? flag.context.to_h.merge("report_id" => report.id) : flag.context
+        flag.update!(status: status, resolution_note: note, reviewed_by: moderator, reviewed_at: Time.current,
+                     context: context)
+        audit_decision(status, note, report)
+      end
+
       # The report enforcement runs through: the newest OPEN report on the same
       # content and field (a person may already have reported what the filter
       # caught), else a system report opened for this decision. A system report has
       # no reporter, so it sends no receipt and no reporter-facing decision; the
       # affected user still gets the statement of reasons and the appeal window.
       def escalation_report!(note)
-        existing = Moderate::Report.open
-          .where(reportable_type: flag.flaggable_type, reportable_id: flag.flaggable_id, reported_field: flag.field)
-          .recent_first
-          .first
+        same_content = {
+          reportable_type: flag.flaggable_type, reportable_id: flag.flaggable_id, reported_field: flag.field
+        }
+        existing = Moderate::Report.open.where(same_content).recent_first.first
         return existing if existing
 
+        system_report!(note)
+      end
+
+      def system_report!(note)
+        message = "Escalated from flag ##{flag.id} (#{flag.source}): #{note}"
         Moderate::Report.create!(
-          reportable: flag.flaggable,
-          reported_field: flag.field,
-          reported_user: flag.owner,
-          intake_kind: "community",
-          category: escalation_category,
-          message: "Escalated from flag ##{flag.id} (#{flag.source}): #{note}".truncate(Moderate::Report::MESSAGE_MAX_LENGTH),
-          good_faith_confirmed: true,
-          skip_received_notice: true
+          reportable: flag.flaggable, reported_field: flag.field, reported_user: flag.owner,
+          intake_kind: "community", category: escalation_category,
+          message: message.truncate(Moderate::Report::MESSAGE_MAX_LENGTH),
+          good_faith_confirmed: true, skip_received_notice: true
         )
       end
 
@@ -120,7 +122,8 @@ module Moderate
       # has no "other").
       def escalation_category
         allowed = Moderate::Report.report_categories
-        found = Array(flag.categories).map { |category| category.to_s.split("/").first }.find { |category| allowed.include?(category) }
+        top_level = Array(flag.categories).map { |category| category.to_s.split("/").first }
+        found = top_level.find { |category| allowed.include?(category) }
         found || (allowed.include?("other") ? "other" : allowed.first)
       end
 

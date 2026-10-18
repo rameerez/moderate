@@ -40,7 +40,7 @@ module Moderate
     def resolve
       record = moderation_record
       record.resolve!(**moderation_decision_params)
-      redirect_after_moderation(record, notice: moderation_t(record.is_a?(Moderate::Flag) ? :flag_resolved : :resolved))
+      redirect_after_moderation(record, notice: moderation_t(moderation_outcome_key(record, :resolved)))
     rescue => error
       redirect_after_moderation(record, alert: moderation_error(:resolve, error))
     end
@@ -49,7 +49,7 @@ module Moderate
     def dismiss
       record = moderation_record
       record.dismiss!(by: moderation_actor, note: moderation_note)
-      redirect_after_moderation(record, notice: moderation_t(record.is_a?(Moderate::Flag) ? :flag_dismissed : :dismissed))
+      redirect_after_moderation(record, notice: moderation_t(moderation_outcome_key(record, :dismissed)))
     rescue => error
       redirect_after_moderation(record, alert: moderation_error(:dismiss, error))
     end
@@ -149,6 +149,11 @@ module Moderate
     def moderation_error(action, error)
       message = error.respond_to?(:message) ? error.message : error.to_s
       moderation_t(:"#{action}_failed", default: "Could not #{action}: #{message}", error: message)
+    end
+
+    # A flag's outcome reads as a flag's ("Flag actioned."), a report's as a report's.
+    def moderation_outcome_key(record, outcome)
+      record.is_a?(Moderate::Flag) ? :"flag_#{outcome}" : outcome
     end
 
     # Translated flash copy, with a plain-English default so the concern works even
