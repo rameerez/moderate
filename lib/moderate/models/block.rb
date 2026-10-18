@@ -76,6 +76,7 @@ module Moderate
       created = false
 
       transaction do
+        connection = Moderate::DeferredNotices.connection_for(self) # before any save
         block = find_or_initialize_by(blocker: blocker, blocked: blocked)
         created = block.new_record?
         block.save! if created
@@ -102,7 +103,7 @@ module Moderate
           # Announced once the block is durable (Moderate::DeferredNotices): after the
           # outermost commit, never if a surrounding transaction rolls back, and
           # outside any transaction, so notify can't roll back what it announces.
-          block.after_commit_notice { block.send(:announce, :user_blocked, blocker, blocked) }
+          block.after_commit_notice(on: connection) { block.send(:announce, :user_blocked, blocker, blocked) }
         end
       end
 
@@ -116,8 +117,9 @@ module Moderate
       return false if block.blank?
 
       transaction do
+        connection = Moderate::DeferredNotices.connection_for(self) # before the destroy
         block.destroy!
-        block.after_commit_notice { block.send(:announce, :user_unblocked, blocker, blocked) }
+        block.after_commit_notice(on: connection) { block.send(:announce, :user_unblocked, blocker, blocked) }
         Moderate.audit(
           name: :user_unblocked,
           subject: block,

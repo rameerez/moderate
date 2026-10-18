@@ -55,6 +55,8 @@ module Moderate
         # or neither does (a host on_block hook that raises rolls the report back
         # too, and the error reaches the caller), and the receipt goes out only after.
         Moderate::Report.transaction do
+          # Captured before the save (Moderate::DeferredNotices).
+          connection = Moderate::DeferredNotices.connection_for(Moderate::Report)
           next false unless report.save
 
           # DSA Art. 16(4): the provider must confirm receipt "without undue delay."
@@ -66,7 +68,7 @@ module Moderate
           block_reported_user
           # The receipt waits for the report to be durable (Moderate::DeferredNotices):
           # never a "we got your report" for a report a surrounding transaction undid.
-          report.after_commit_notice { deliver_receipt }
+          report.after_commit_notice(on: connection) { deliver_receipt }
           audit_intake
           true
         end

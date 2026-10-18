@@ -58,6 +58,9 @@ module Moderate
       def transition!(status, note, enforcement: nil, resolution_basis: nil)
         note = require_note!(note)
         decision = nil
+        # Captured before any save: the decision's notices join this connection's
+        # transaction, whatever a host callback switches to (Moderate::DeferredNotices).
+        connection = Moderate::DeferredNotices.connection_for(flag.class)
 
         flag.with_lock do
           flag.reload
@@ -71,7 +74,7 @@ module Moderate
 
           # The escalated decision's notices, queued on the flag: sent when the
           # outermost transaction commits, never on a rollback (DeferredNotices).
-          flag.after_commit_notice { decision.deliver_decision_notices } if decision
+          flag.after_commit_notice(on: connection) { decision.deliver_decision_notices } if decision
         end
 
         flag

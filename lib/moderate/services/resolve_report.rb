@@ -98,6 +98,10 @@ module Moderate
       # the (slow, fallible) notifications happen AFTER the lock is released, so a
       # broken mailer can't hold a database lock or roll back the decision.
       def transition!(status, note:, actions:, &enforcement)
+        # The report's connection, captured before anything is saved: every notice of
+        # this decision joins ITS transaction, whatever a host callback switches to.
+        @connection = Moderate::DeferredNotices.connection_for(report.class)
+
         # One lock order everywhere: content, then (for a ban) the person, then the
         # report — the order a flag escalation takes too, so they never deadlock. The
         # person's lock serializes two bans of one account from different content.
@@ -143,7 +147,7 @@ module Moderate
           audit_decision(status, actions, note)
 
           # Sent when the outermost transaction commits, never on a rollback.
-          report.after_commit_notice { deliver_decision_notices } if @deliver
+          report.after_commit_notice(on: @connection) { deliver_decision_notices } if @deliver
         end
       end
 

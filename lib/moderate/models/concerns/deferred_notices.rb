@@ -15,10 +15,14 @@ module Moderate
   #
   # Notices follow Active Record's after_commit rules, exactly:
   #   - with no transaction open, the notice is sent at once;
-  #   - a notice follows the CONNECTION ITS RECORD WAS SAVED ON (the pool, under
-  #     multiple databases or shards): queue it in the same `connected_to` block as the
-  #     save, or it follows the record's last save. Queued for a record never saved in
-  #     this process, it follows the record class's current connection;
+  #   - the notice joins the transaction of the connection it is queued ON. Queue it
+  #     inside the transaction that saved the record, on that transaction's connection:
+  #     `after_commit_notice(on: connection)`, where `on:` defaults to the record
+  #     class's connection at call time. The gem's services capture their model's
+  #     connection at the top of the transaction, before any save, and pass it to every
+  #     notice they queue, so a host callback that switches databases or shards
+  #     mid-save can't move them. A host that calls after_commit_notice itself passes
+  #     `on:` when it uses `connected_to`;
   #   - in nested transactions that join their parent, and in savepoints
   #     (`requires_new: true`) under a joinable parent, it moves up and is sent at the
   #     OUTERMOST commit; a rolled-back savepoint drops only its own notices;
@@ -26,13 +30,6 @@ module Moderate
   #     wrapper Rails' transactional tests run each test in), it is sent when the
   #     savepoint is released — when after_commit runs too.
   module DeferredNotices
-    extend ActiveSupport::Concern
-
-    included do
-      after_save :remember_moderate_connection_pool
-      after_destroy :remember_moderate_connection_pool
-    end
-
     # A queued notice, in the shape a transaction finalizes: Active Record calls
     # `before_committed!`, then `committed!` or `rolledback!` on every record enrolled
     # in it (and reads `trigger_transactional_callbacks?`, `destroyed?`,
@@ -74,25 +71,14 @@ module Moderate
       nil
     end
 
-    def after_commit_notice(&notice)
-      DeferredNotices.defer(moderate_saved_connection, &notice)
+    # The connection a service captures at the top of its transaction, before any save.
+    def self.connection_for(model)
+      model.respond_to?(:lease_connection) ? model.lease_connection : model.connection
+    end
+
+    def after_commit_notice(on: DeferredNotices.connection_for(self.class), &notice)
+      DeferredNotices.defer(on, &notice)
       self
-    end
-
-    private
-
-    # The connection the record was last saved (or destroyed) on, as THIS thread holds
-    # it now: the pool remembered at save time, asked for the current thread's leased
-    # connection (nil when the thread holds none: then no transaction can be open on
-    # it). The pool, not the connection object: a connection returns to its pool and
-    # can be leased by another thread, whose transaction a notice must never join.
-    def moderate_saved_connection
-      pool = @moderate_connection_pool || self.class.connection_pool
-      pool.active_connection?
-    end
-
-    def remember_moderate_connection_pool
-      @moderate_connection_pool = self.class.connection_pool
     end
   end
 end
