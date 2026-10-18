@@ -110,17 +110,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   always did) instead of overwriting the first decision.
 - **`ResolveReport.new(report, by:, deliver: false)`** holds the decision notices back for a
   caller that decides inside a lock of its own; `#deliver_decision_notices` sends them.
-- **Notices wait for the outermost commit, on every supported Rails.** Report, flag and
-  appeal decisions (with their `user_banned` and `content_removed`), the in-app report
-  receipt, and `user_blocked` / `user_unblocked` are queued on the record they announce
-  (`Moderate::DeferredNotices`, included in Report, Flag, Block and Appeal) and sent from
-  that row's `after_commit`, dropped on `after_rollback`. The queue is keyed by the row
-  (model + id) in an execution-local registry, not kept on one Ruby instance, so a host
-  that saves another instance of the same row in the same transaction (Active Record runs
-  the row's commit callbacks on only one of them) loses nothing; nested transactions and
-  savepoints send at the outermost commit, a rolled-back savepoint drops only its own. A host that decides,
-  reports or blocks inside a transaction of its own and rolls it back tells nobody; Rails
-  7.1, 7.2 and 8.x behave the same. `Moderate.apply_ban(…, announce: false)` +
+- **Notices follow Active Record's after_commit rules, on every supported Rails.** Report,
+  flag and appeal decisions (with their `user_banned` and `content_removed`), the in-app
+  report receipt, and `user_blocked` / `user_unblocked` are owned by the transaction they
+  were queued in (`Moderate::DeferredNotices`, `record.after_commit_notice { … }`): each is
+  enrolled in the current transaction as a transaction record, exactly as a saved record
+  is, so the transaction sends it on commit and drops it on rollback or when an exception
+  ends it. Nested transactions and savepoints under a joinable parent send at the
+  outermost commit; a rolled-back savepoint drops only its own; under a parent that isn't
+  joinable (including the wrapper of Rails' transactional tests) it's sent at the
+  savepoint's release, when after_commit runs too; with no transaction open, at once.
+  Nothing lives on a record instance or on the thread. A host that decides, reports or
+  blocks inside a transaction of its own and rolls it back tells nobody; Rails 7.1, 7.2 and
+  8.x behave the same. `Moderate.apply_ban(…, announce: false)` +
   `Moderate.announce_ban` split the ban's notice from the ban for the same reason. (The
   public notice and appeal forms' own receipts are unchanged.)
 - **One lock order for enforcement: flag, then content, then the person (for a ban), then

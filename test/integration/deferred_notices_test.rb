@@ -188,7 +188,7 @@ module Moderate
             end
 
             assert_empty calls
-            assert_empty Moderate::DeferredNotices.registry, "nothing left queued"
+            assert_nothing_left_queued(flag)
           end
         end
       end
@@ -261,6 +261,65 @@ module Moderate
       assert_equal [:outer], calls
     end
 
+    # --- The transaction owns the notice -------------------------------------------
+
+    test "a notice queued without saving its row is sent once at commit" do
+      flag = file_flag
+      calls = []
+
+      ActiveRecord::Base.transaction do
+        flag.after_commit_notice { calls << :sent } # the flag row is never saved here
+        assert_empty calls
+      end
+
+      assert_equal [:sent], calls
+      assert_nothing_left_queued(flag)
+      assert_equal [:sent], calls, "and not again later"
+    end
+
+    test "a notice queued without saving its row is dropped on rollback" do
+      flag = file_flag
+      calls = []
+
+      ActiveRecord::Base.transaction do
+        flag.after_commit_notice { calls << :sent }
+        raise ActiveRecord::Rollback
+      end
+
+      assert_empty calls
+      assert_nothing_left_queued(flag)
+      assert_empty calls
+    end
+
+    test "an exception ending the transaction drops the notice and leaves nothing behind" do
+      flag = file_flag
+      calls = []
+
+      assert_raises(RuntimeError) do
+        ActiveRecord::Base.transaction do
+          flag.update!(excerpt: "doomed")
+          flag.after_commit_notice { calls << :sent }
+          raise "boom"
+        end
+      end
+
+      assert_empty calls
+      assert_nothing_left_queued(flag)
+      assert_empty calls
+    end
+
+    test "under a parent that isn't joinable, a notice is sent when its savepoint is released, like after_commit" do
+      calls = []
+      flag = file_flag
+
+      ActiveRecord::Base.transaction(joinable: false) do
+        ActiveRecord::Base.transaction do
+          flag.after_commit_notice { calls << :sent }
+        end
+        assert_equal [:sent], calls, "Active Record's after_commit runs here too"
+      end
+    end
+
     test "with no transaction open, a notice is sent at once" do
       calls = []
       file_flag.after_commit_notice { calls << :now }
@@ -271,6 +330,17 @@ module Moderate
     private
 
     def sent = ModerateTestRecorder.notifications.map(&:name)
+
+    # Nothing from an earlier transaction may surface later: saving the same row
+    # again in a fresh transaction that commits sends only that transaction's notice.
+    def assert_nothing_left_queued(row)
+      own = []
+      ActiveRecord::Base.transaction do
+        Moderate::Flag.find(row.id).update!(excerpt: "later #{SecureRandom.hex(2)}")
+        row.after_commit_notice { own << :own }
+      end
+      assert_equal [:own], own
+    end
 
     def touch_other_instance(flag)
       Moderate::Flag.find(flag.id).update!(excerpt: "theirs #{SecureRandom.hex(2)}")
@@ -293,6 +363,47 @@ module Moderate
         flaggable: @comment, field: "body", owner: @author, source: "text_filter", mode: "flag",
         excerpt: "slur", categories: ["hate"], scores: {}, context: {}
       ).tap { ModerateTestRecorder.clear }
+    end
+  end
+
+  # The same rules under Rails' transactional tests, where every test runs inside a
+  # wrapper transaction that is not joinable: a notice is sent when the gem's (or the
+  # host's) own transaction is released, exactly when a record's after_commit runs.
+  # This is what hosts' own transactional tests see.
+  class DeferredNoticesUnderTestWrapperTest < ActiveSupport::TestCase
+    setup do
+      Moderate.configure { |config| config.notify = ->(event) { ModerateTestRecorder.notify(event) } }
+      ModerateTestRecorder.clear
+      @author = User.create!(name: "Wrapped")
+    end
+
+    test "a notice is sent when its transaction is released inside the test wrapper, with after_commit" do
+      calls = []
+
+      ActiveRecord::Base.transaction do
+        flag = Moderate::Flag.flag!(
+          flaggable: @author, field: "name", owner: @author, source: "manual", mode: "flag",
+          excerpt: nil, categories: [], scores: {}, context: {}
+        )
+        flag.after_commit_notice { calls << :notice }
+        assert_empty calls
+        assert_empty ModerateTestRecorder.notifications_named(:content_flagged), "nor the flag's after_commit"
+      end
+
+      assert_equal [:notice], calls
+      assert_equal 1, ModerateTestRecorder.notifications_named(:content_flagged).size, "both at the same release"
+    end
+
+    test "inside the wrapper, a rolled-back transaction drops its notice" do
+      calls = []
+
+      ActiveRecord::Base.transaction do
+        @author.update!(name: "Wrapped, edited")
+        Moderate::DeferredNotices.defer(ActiveRecord::Base.connection) { calls << :notice }
+        raise ActiveRecord::Rollback
+      end
+
+      assert_empty calls
     end
   end
 end

@@ -402,6 +402,8 @@ end
 
 Events carry a stable envelope (`event.name`, `event.subject`, `event.recipients`, `event.actor`, `event.payload`), so a single `notify` hook can drive **goodmail** (user emails), **telegrama** (admin alerts), and **noticed** (in-app feed + push) at once. Notify users via email/in-app **and** ping admins on Telegram from the same place. (Recipes in [`docs/notifications.md`](docs/notifications.md).)
 
+**Notices follow Active Record's `after_commit` rules.** A decision, a report's receipt, a block: each notice belongs to the transaction it happened in and is sent when that transaction commits, never if it rolls back. If you decide inside a transaction of your own, nothing goes out until yours commits; inside nested transactions and savepoints, at the outermost commit; under a parent that isn't joinable (Rails' transactional tests run every test in one), when the savepoint is released, the same moment your models' `after_commit` runs; with no transaction open, at once.
+
 The full event vocabulary: `report_received`, `notice_received`, `report_decision`, `affected_user_decision`, `appeal_received`, `appeal_decision`, `user_blocked`, `user_unblocked`, `user_banned`, `content_flagged`, `content_removed`.
 
 ## ⚖️ DSA & app-store compliance, out of the box
