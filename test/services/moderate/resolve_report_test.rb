@@ -125,8 +125,14 @@ module Moderate
         report = create_report(reportable: comment, field: "body")
 
         # The gem's job is to INVOKE the host contract, not to know what "remove" means.
-        # Assert exactly that: the reportable's own method is called with the field.
-        comment.expects(:remove_reported_field!).with("body").returns(true)
+        # Assert exactly that: the reportable's own method is called with the field
+        # (and it removes it, which the gem then verifies).
+        called_with = []
+        comment.define_singleton_method(:remove_reported_field!) do |field|
+          called_with << field
+          update_column(:body, "")
+          true
+        end
         # Stub the reportable the report resolves so the expectation is on our instance.
         report.stubs(:reportable).returns(comment)
 
@@ -135,6 +141,7 @@ module Moderate
 
         assert_equal "actioned", report.reload.status
         assert_equal "content_removed", report.decision_visibility
+        assert_equal ["body"], called_with
       end
 
       test "dismissing closes the report with no enforcement and still opens an appeal window" do

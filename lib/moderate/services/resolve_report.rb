@@ -177,7 +177,11 @@ module Moderate
         # no way to remove it: refused like a removal that removed nothing.
         removable = report.reportable.present? && report.reportable.respond_to?(:remove_reported_field!)
         removed_text = text_about_to_be_removed if removable
-        refuse_unremoved! unless removable && report.reportable.remove_reported_field!(report.reported_field)
+        removed = removable && report.reportable.remove_reported_field!(report.reported_field)
+        # Verified, not taken on trust: the host said it removed something, so the field
+        # must read as gone now (re-read under the same lock). A host method that rewrote
+        # the field instead removed nothing: refused, nobody stamped, no digest recorded.
+        refuse_unremoved! unless removed && content_gone?
 
         actions[:removed_text_digest] = text_digest(removed_text) if removed_text.present?
         @content_removed = content_removed_payload(note)
@@ -246,6 +250,10 @@ module Moderate
         Moderate::Report.where(id: ids).update_all(covered_by_report_id: report.id) if ids.any?
       end
 
+      # Is the reported field's content gone, read fresh with a locking read? The
+      # record deleted, the record saying it is (`deleted?`, a soft-delete tombstone),
+      # or the field reading as empty through BOTH the snapshot accessor (what a report
+      # captures) and the field itself (an attachment, a non-text field).
       def content_gone?
         content = report.reportable&.reload(lock: true)
         return true if content.nil?
@@ -253,6 +261,7 @@ module Moderate
 
         field = report.reported_field
         return false if field.blank?
+        return false if content.respond_to?(:moderation_snapshot) && content.moderation_snapshot(field).present?
 
         value = content.respond_to?(:moderation_field_value, true) ? content.send(:moderation_field_value, field) : content.try(field)
         value.respond_to?(:attached?) ? !value.attached? : value.blank?

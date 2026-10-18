@@ -470,6 +470,7 @@ From 1.0 on, everything listed here keeps its name, its arguments and its meanin
 #### `Moderate::Reportable` (your content models)
 
 What you define (each has a default): `#reported_owner` (required in practice) · `#moderation_label` · `#moderation_snapshot` · `#moderation_content_type` · `#report_visible_to?` · `#remove_reported_field!` · `#removable_reported_field?` · `#moderation_subject_url` · `#moderation_return_path` · `#moderation_admin_path`.
+The removal seam's contract: `#remove_reported_field!(field)` removes that field's content as it is when called (clear it, purge the attachment, soft-delete the record so `deleted?` is true), persists that, and returns whether anything was removed; it must not rewrite the field to other content first. The gem verifies it: after a true return the field is read again under the same lock, and unless it reads as gone (through `#moderation_snapshot` and the field itself, or `deleted?`) the decision is refused as "nothing was removed".
 What you get: `#reports` · `#open_reports` · `#reported?` · `#flagged?` · `#moderation_flags` · `#pending_moderation_flags` · `#to_moderation_sgid` · `#reportable_field_label` · `#reportable_field_allowed?` · `Moderate::Reportable::ClassMethods#reportable_field_label`.
 
 #### `Moderate::ContentFilterable` (seams you may override)

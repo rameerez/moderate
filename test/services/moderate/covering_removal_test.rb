@@ -158,4 +158,20 @@ class Moderate::CoveringRemovalTest < ActiveSupport::TestCase
     assert_match "Nothing was removed", error.message
     assert_predicate @second.reload, :open?
   end
+
+  test "a host method that rewrites the field and says it removed it is refused: no stamp, no digest" do
+    comment = @first.reportable
+    comment.define_singleton_method(:remove_reported_field!) { |_field| update_column(:body, "[edited by moderator]") && true }
+    @first.stubs(:reportable).returns(comment)
+
+    error = assert_raises(ActiveRecord::RecordInvalid) do
+      @first.resolve!(by: @moderator, note: "Harassment", remove_content: true)
+    end
+
+    assert_match "Nothing was removed", error.message
+    assert_predicate @first.reload, :open?
+    assert_nil @first.resolution_actions["removed_text_digest"]
+    assert_nil @second.reload.covered_by_report_id, "nobody stamped"
+    assert_equal "vile words", @comment.reload.body, "the rewrite rolled back with the refused decision"
+  end
 end

@@ -126,7 +126,8 @@ this entry.
   removed nothing and was refused. A decision that removes content now reads, under the
   content's lock and right before removing, the text it is about to remove (recorded as
   `resolution_actions["removed_text_digest"]`), and stamps the OTHER reports pending on
-  that content and field whose intake snapshot holds exactly that text
+  that content and field whose intake snapshot holds exactly that text, once the removal is
+  verified (below),
   (`covered_by_report_id`, readable as `Report#covered_by`); with no readable text it
   stamps nobody. A stamped report resolved with `remove_content: true` closes against that
   decision while the decision stands (no appeal against it upheld: an overturned removal
@@ -141,6 +142,14 @@ this entry.
   announced a second time, the author gets no second statement of
   reasons (unless this decision also bans), and the reporter's `report_decision` carries
   `content_already_removed_by` and says "already removed by the decision on Report #X".
+- **A removal is verified, not taken on trust.** When the reportable's
+  `remove_reported_field!` returns true, the field is read again under the same lock; unless
+  it reads as gone (through `moderation_snapshot` and the field itself, or `deleted?`) the
+  decision is refused as "Nothing was removed", nobody is stamped and no digest recorded. A
+  host method that rewrote the field instead of removing it used to be recorded as a
+  removal. The seam's contract is now written in the README: remove the field's content as
+  it is when called, persist it, return whether anything was removed, and never rewrite the
+  field first.
 - **A report whose content was deleted can be decided.** The intake check that a report
   without content names a URL ran on every save, so once the content was deleted (its
   pointer nullified) no decision on the report could be saved. It now runs at intake.
