@@ -504,7 +504,7 @@ To be explicit about the boundary this guide sits on:
 | `moderate` ships (the primitives) | You build (the UI chrome) |
 | --- | --- |
 | The models (`Report`/`Flag`/`Appeal`/`Block`) | The madmin resources (columns, labels, fields) |
-| The queue scopes (`.pending`, `.resolved`, …) | The index/show screens & nav grouping |
+| The queue scopes (`.pending`, `.actioned`, `.dismissed`, `.recent_first`) | The index/show screens & nav grouping |
 | The decision methods (`resolve!`/`dismiss!`/`uphold!`/`reject!`) — atomic enforcement + notify + audit + appeal window | The buttons/forms that call them |
 | The optional `Moderate::Moderation` controller concern | Auth (`current_user`, admin gate) |
 | Helpers + the evidence snapshot on each record | Your branding, layout, extra columns |

@@ -253,7 +253,7 @@ module Moderate
         assert_empty ModerateTestRecorder.notifications_named(:affected_user_decision)
         I18n.with_locale(:es) do
           assert_raises(ActiveRecord::RecordInvalid) { report.resolve!(by: moderator, note: "x") }
-          assert_match "desestímala", report.errors.full_messages.join
+          assert_match "descártala", report.errors.full_messages.join
         end
       end
 

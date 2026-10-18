@@ -11,8 +11,28 @@ en:
       # A :block attachment whose direct upload hasn't finished: nothing enters unverified.
       upload_not_finished: "hasn't finished uploading yet"
   moderate:
+    # Flash messages of the Moderate::Moderation controller concern.
+    moderation:
+      resolved: "Report resolved."
+      dismissed: "Report dismissed."
+      flag_resolved: "Flag actioned."
+      flag_dismissed: "Flag dismissed."
+      upheld: "Appeal upheld."
+      rejected: "Appeal rejected."
     # Refusals and validation messages (the inline defaults in the code are English).
     errors:
+      anonymous_notice_child_safety_only: "anonymous notices are only allowed for offences against minors"
+      appeal_already_closed: "This appeal has already been decided."
+      appeal_report_must_be_closed: "decision can only be appealed after it is made"
+      appeal_window_expired: "the appeal window for this decision has closed"
+      cannot_block_self: "You can't block yourself"
+      invalid_reported_field: "is not a reportable field"
+      invalid_subject_url: "must be a valid http(s) URL"
+      missing_subject_url: "is required"
+      not_reportable_by_reporter: "isn't something you can report"
+      nothing_removed: "Nothing was removed: %{content} has nothing removable there (already removed, deleted, or not removable). Resolve without removing content, or dismiss."
+      report_already_closed: "This report has already been resolved."
+      reporter_cannot_report_self: "You can't report yourself"
       resolve_needs_action: "Resolving a report restricts something: remove the content, ban the account, or both. To close it without a restriction, dismiss it."
     appeals:
       reported_field: "Content"

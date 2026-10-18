@@ -336,5 +336,17 @@ module Moderate
       @user_seq += 1
       User.create!(name: "User #{@user_seq}", email: "user#{@user_seq}@example.com", **attributes)
     end
+
+    test "reported_content_text is the snapshot taken at intake, not the content as it is now" do
+      reporter = User.create!(name: "R", email: "r-snap@example.com")
+      comment = Comment.create!(user: User.create!(name: "A", email: "a-snap@example.com"), body: "the words reported")
+      report = reporter.report!(comment, category: :harassment, field: :body)
+
+      comment.update_column(:body, "edited after the report")
+
+      assert_equal "the words reported", report.reload.reported_content_text
+      comment.destroy
+      assert_equal "the words reported", report.reload.reported_content_text, "it survives deletion too"
+    end
   end
 end

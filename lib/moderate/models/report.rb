@@ -324,12 +324,11 @@ module Moderate
       Moderate.reportable_field_label(reportable || type, reported_field)
     end
 
-    # The snapshotted text of the reported field, asked of the reportable. Returns
-    # nil when the reportable doesn't expose snapshot text (or there's no record).
+    # The reported field's text as it was when the report was filed: the evidence
+    # snapshot taken at intake, so it survives the content being edited or deleted.
+    # nil when the reportable exposed no text, or once a purge redacted the report.
     def reported_content_text
-      return unless reportable.respond_to?(:moderation_snapshot)
-
-      reportable.moderation_snapshot(reported_field)
+      snapshot.to_h.with_indifferent_access[:content_text]
     end
 
     # --- Signed GIDs for emailed links ---------------------------------------
@@ -585,9 +584,16 @@ module Moderate
         legal_country_code: legal_country_code,
         content_type: content_type,
         reported_account_identifier: reported_account_identifier,
-        content_text: reported_content_text,
+        content_text: live_content_text,
         captured_at: Time.current.iso8601
       }.compact
+    end
+
+    # The reported field's text now, asked of the reportable (what the snapshot keeps).
+    def live_content_text
+      return unless reportable.respond_to?(:moderation_snapshot)
+
+      reportable.moderation_snapshot(reported_field)
     end
 
     def capture_automated_processing
@@ -765,7 +771,7 @@ module Moderate
       policy = Moderate.filter_policy_for(reportable, reported_field)
       return unless policy.block?
 
-      value = reported_content_text
+      value = live_content_text
       return if value.blank?
 
       Moderate.classify(value, policy: policy)

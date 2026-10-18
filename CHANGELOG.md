@@ -80,6 +80,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`Report#reported_content_text` is the evidence snapshot**, as its documentation always
+  said: the reported field's text when the report was filed, surviving edits and deletion
+  (nil once a purge redacts the report). It read the live content.
+- **Refusals, validation messages and the admin concern's flash messages ship in English
+  and Spanish** (`moderate.errors.*`, `moderate.moderation.*`); they existed only as inline
+  English defaults. A test keeps every such key covered in both files. (The notice, appeal
+  and transparency pages' own copy still has inline English defaults, overridable under
+  `moderate.notices.*`, `moderate.appeals.*`, `moderate.transparency.*`.)
+- **docs/madmin.md listed a `.resolved` scope** that doesn't exist; the scopes are
+  `.pending`, `.actioned`, `.dismissed` and `.recent_first`.
 - **A second report on content an earlier decision already removed closes against it.**
   Flags had "already dealt with"; reports had no truthful way to close: removing again
   removed nothing and was refused. `resolve!(remove_content: true)` now finds an actioned
