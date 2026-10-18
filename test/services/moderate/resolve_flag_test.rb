@@ -253,15 +253,109 @@ module Moderate
         assert_equal 1, ModerateTestRecorder.notifications_named(:affected_user_decision).size
       end
 
-      test "a flag on other content doesn't open the field whitelist" do
+      test "the escalation exception isn't a host-assignable attribute" do
+        flag = create_flag(field: "image")
+
+        assert_raises(ActiveModel::UnknownAttributeError) do
+          Moderate::Report.new(reportable: flag.flaggable, reported_field: "image", escalated_from_flag: flag)
+        end
+        assert_not Moderate::Report.new.respond_to?(:escalated_from_flag=), "private: only ResolveFlag sets it"
+      end
+
+      test "even set, the exception holds only for a system report on the flag's own content and field" do
         flag = create_flag(field: "image")
         other = Comment.create!(user: flag.owner, body: "elsewhere")
+        reporter = User.create!(name: "Reporter", email: "r-exc@example.com")
+        base = { reported_field: "image", category: "other", message: "x", good_faith_confirmed: true }
+        dsa = { intake_kind: "dsa", legal_reason: "violence", legal_country_code: "ES", content_type: "other",
+                notifier_name: "N", notifier_email: "n@example.com" }
 
-        report = Moderate::Report.new(reportable: other, reported_field: "image", category: "other",
-                                      message: "x", good_faith_confirmed: true, escalated_from_flag: flag)
+        refused = {
+          "other content" => Moderate::Report.new(reportable: other, **base),
+          "a person's report" => Moderate::Report.new(reportable: flag.flaggable, reporter: reporter, **base),
+          "a DSA notice" => Moderate::Report.new(reportable: flag.flaggable, **base, **dsa)
+        }
+        refused.each do |what, report|
+          report.send(:escalated_from_flag=, flag)
+          assert_not report.valid?, what
+          assert_predicate report.errors[:reported_field], :any?, what
+        end
 
-        assert_not report.valid?
-        assert_predicate report.errors[:reported_field], :any?
+        system = Moderate::Report.new(reportable: flag.flaggable, **base)
+        system.send(:escalated_from_flag=, flag)
+        assert_predicate system, :valid?
+      end
+
+      # --- Legacy decisions and bans per person ---------------------------------
+
+      test "an older decision that says removed but left the content up doesn't cover a new removal" do
+        moderator = User.create!(name: "Mod")
+        flag = create_flag(comment_class: EscalationComment)
+        legacy = Moderate::Report.create!(
+          reportable: flag.flaggable, reported_field: "body", category: "hate", message: "legacy",
+          good_faith_confirmed: true
+        )
+        legacy.update_columns(status: "actioned", resolution_note: "old", resolved_at: Time.current,
+                              resolution_actions: { "remove_content" => true }, decision_visibility: "content_removed")
+        assert_equal "ok body", flag.flaggable.reload.body, "the legacy shape: recorded a removal, removed nothing"
+
+        flag.action!(by: moderator, note: "Remove it for real.", remove_content: true)
+
+        assert_not_equal legacy, flag.reload.report
+        assert_equal ["body"], EscalationComment.removed_fields
+        assert_nil flag.flaggable.reload.body
+      end
+
+      test "two flags on different fields of one record ban the person once" do
+        Moderate.configure { |config| config.ban_handler = ModerateTestRecorder.method(:ban_handler) }
+        moderator = User.create!(name: "Mod")
+        body_flag = create_flag(comment_class: EscalationComment)
+        image_flag = Moderate::Flag.flag!(
+          flaggable: body_flag.flaggable, field: "image", owner: body_flag.owner, source: "manual", mode: "flag",
+          excerpt: nil, categories: [], scores: {}, context: {}
+        )
+
+        body_flag.action!(by: moderator, note: "Slur.", ban_user: true)
+        image_flag.action!(by: moderator, note: "And the photo.", ban_user: true)
+
+        assert_equal 1, ModerateTestRecorder.bans.size
+        second = image_flag.reload.report
+        assert_equal body_flag.reload.report.id, second.resolution_actions["ban_already_applied_by"]
+        assert_equal "account_suspended", second.decision_visibility, "true: the account is suspended"
+        assert_equal 1, ModerateTestRecorder.notifications_named(:user_banned).size
+      end
+
+      test "a second decision on the same person, about other content, doesn't ban again" do
+        Moderate.configure { |config| config.ban_handler = ModerateTestRecorder.method(:ban_handler) }
+        moderator = User.create!(name: "Mod")
+        first = create_flag
+        other = Comment.create!(user: first.owner, body: "more abuse")
+        second = Moderate::Flag.flag!(
+          flaggable: other, field: "body", owner: first.owner, source: "text_filter", mode: "flag",
+          excerpt: "more abuse", categories: ["harassment"], scores: {}, context: {}
+        )
+
+        first.action!(by: moderator, note: "Abuse.", ban_user: true)
+        second.action!(by: moderator, note: "Abuse again.", ban_user: true)
+
+        assert_equal 1, ModerateTestRecorder.bans.size
+        assert_equal first.reload.report.id, second.reload.report.resolution_actions["ban_already_applied_by"]
+      end
+
+      test "a ban before this conduct was raised doesn't stand in for a new one" do
+        Moderate.configure { |config| config.ban_handler = ModerateTestRecorder.method(:ban_handler) }
+        moderator = User.create!(name: "Mod")
+        earlier = create_flag
+        earlier.action!(by: moderator, note: "First episode.", ban_user: true)
+        travel 1.day
+        later = Moderate::Flag.flag!(
+          flaggable: Comment.create!(user: earlier.owner, body: "back at it"), field: "body", owner: earlier.owner,
+          source: "text_filter", mode: "flag", excerpt: "x", categories: [], scores: {}, context: {}
+        )
+
+        later.action!(by: moderator, note: "Second episode.", ban_user: true)
+
+        assert_equal 2, ModerateTestRecorder.bans.size, "the person may have been unbanned in between"
       end
 
       test "a new kind of enforcement on the same content is a new decision" do

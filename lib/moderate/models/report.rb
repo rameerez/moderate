@@ -19,6 +19,7 @@ module Moderate
   # what fields may be reported are all answered by the polymorphic `has_reportable_content`
   # (through the `Moderate::Reportable` interface), never by anything domain-specific.
   class Report < ApplicationRecord
+    include Moderate::DeferredNotices
     self.table_name = "moderate_reports"
 
     STATUSES = %w[open actioned dismissed].freeze
@@ -99,9 +100,7 @@ module Moderate
     # persist; the services read them. Kept here so both the model and its services
     # share one definition.
     attr_accessor :skip_received_notice, :block_reported_user
-    # The Moderate::Flag a system report was opened from (Flag#action! enforcing).
-    # Such a report may name the flag's field even if people can't report that field.
-    attr_accessor :escalated_from_flag
+
 
     # All actor associations resolve to the HOST's configured user class, read
     # lazily from the configuration as a String so this file loads before the host
@@ -589,10 +588,19 @@ module Moderate
       errors.add(:reportable, message)
     end
 
-    # The report was opened from a flag on THIS content and field (Flag#action!).
+    # The Moderate::Flag a system report was opened from (Flag#action! enforcing).
+    # Such a report may name the flag's field even if people can't report that field.
+    # Private: only Services::ResolveFlag sets it, so it isn't mass-assignable or a
+    # general way around the field whitelist.
+    attr_accessor :escalated_from_flag
+
+    # The report was opened from a flag on THIS content and field (Flag#action!) —
+    # a system report: no reporter, community intake, never a DSA notice.
     def escalated_from_this_flag?
       flag = escalated_from_flag
-      flag.is_a?(Moderate::Flag) && flag.field.to_s == reported_field.to_s &&
+      return false unless flag.is_a?(Moderate::Flag) && community? && reporter.nil?
+
+      flag.field.to_s == reported_field.to_s &&
         flag.flaggable_type == reportable_type && flag.flaggable_id.to_s == reportable_id.to_s
     end
 

@@ -64,13 +64,14 @@ module Moderate
           # might not be wired. See: https://eur-lex.europa.eu/eli/reg/2022/2065/oj
           report.acknowledge!
           block_reported_user
+          # The receipt waits for the report to be durable (Moderate::DeferredNotices):
+          # never a "we got your report" for a report a surrounding transaction undid.
+          report.after_commit_notice { deliver_receipt }
+          audit_intake
           true
         end
-        return false unless saved
 
-        deliver_receipt
-        audit_intake
-        true
+        saved
       end
 
       private

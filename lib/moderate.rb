@@ -302,7 +302,11 @@ module Moderate
     # Raises ConfigurationError when no ban_handler is wired: auditing and announcing
     # `user_banned` for a ban nothing applied would put a false statement in the
     # audit trail and in the person's inbox.
-    def apply_ban(user:, by:, reason:)
+    #
+    # `announce: false` (the decision services) audits now but leaves the
+    # `user_banned` notice to the caller: it returns the event's keywords for
+    # `Moderate.announce_ban`, so the notice can wait for the decision's commit.
+    def apply_ban(user:, by:, reason:, announce: true)
       ensure_ban_handler!
       result = config.ban_handler.call(user: user, by: by, reason: reason)
       payload = {
@@ -310,10 +314,18 @@ module Moderate
         reason: reason,
         summary: "user #{user&.id || '(unknown)'} banned"
       }.compact
+      event = { subject: user, actor: by, recipients: [user].compact, payload: payload }
 
-      audit(:user_banned, subject: user, actor: by, recipients: [user].compact, payload: payload)
-      notify(:user_banned, subject: user, actor: by, recipients: [user].compact, payload: payload)
+      audit(:user_banned, **event)
+      return event unless announce
+
+      announce_ban(**event)
       result
+    end
+
+    # The `user_banned` notice for a ban applied with `apply_ban(announce: false)`.
+    def announce_ban(**event)
+      notify(:user_banned, **event)
     end
 
     # --- Responsibility -------------------------------------------------------
@@ -355,19 +367,6 @@ module Moderate
     end
 
     # --- Transactions -----------------------------------------------------------
-
-    # Run `block` once the caller's transactions have all committed — at once when
-    # none is open; never if one rolls back. The decision services send their notices
-    # through this, so a host that decides inside a transaction of its own (and later
-    # rolls it back) never emails a decision that didn't happen. On Rails 7.1, which
-    # has no `ActiveRecord.after_all_transactions_commit`, it runs at once.
-    def after_commit(&block)
-      if defined?(::ActiveRecord) && ::ActiveRecord.respond_to?(:after_all_transactions_commit)
-        ::ActiveRecord.after_all_transactions_commit(&block)
-      else
-        yield
-      end
-    end
 
     # Hold `record`'s row lock (SELECT … FOR UPDATE) for the block, or just run the
     # block when there's no saved row to lock. Enforcement takes the CONTENT's lock

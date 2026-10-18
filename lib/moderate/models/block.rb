@@ -16,6 +16,7 @@ module Moderate
   # Apple:  https://developer.apple.com/app-store/review/guidelines/#user-generated-content
   # Google: https://support.google.com/googleplay/android-developer/answer/9876937
   class Block < ApplicationRecord
+    include Moderate::DeferredNotices
     self.table_name = "moderate_blocks"
 
     # Both ends resolve to the host's configured user class (read lazily as a String
@@ -97,18 +98,12 @@ module Moderate
               summary: "user #{blocker.id} blocked user #{blocked.id}"
             )
           )
-        end
-      end
 
-      # Notify outside the transaction (see class doc): notify must never be able to
-      # roll back the action it's announcing.
-      if created
-        Moderate.notify(
-          :user_blocked,
-          subject: block,
-          actor: blocker,
-          payload: { blocker_id: blocker.id, blocked_id: blocked.id, summary: "user #{blocker.id} blocked user #{blocked.id}" }
-        )
+          # Announced once the block is durable (Moderate::DeferredNotices): after the
+          # outermost commit, never if a surrounding transaction rolls back, and
+          # outside any transaction, so notify can't roll back what it announces.
+          block.after_commit_notice { block.send(:announce, :user_blocked, blocker, blocked) }
+        end
       end
 
       block
@@ -122,6 +117,7 @@ module Moderate
 
       transaction do
         block.destroy!
+        block.after_commit_notice { block.send(:announce, :user_unblocked, blocker, blocked) }
         Moderate.audit(
           name: :user_unblocked,
           subject: block,
@@ -133,13 +129,6 @@ module Moderate
           }
         )
       end
-
-      Moderate.notify(
-        :user_unblocked,
-        subject: block,
-        actor: blocker,
-        payload: { blocker_id: blocker.id, blocked_id: blocked.id, summary: "user #{blocker.id} unblocked user #{blocked.id}" }
-      )
 
       true
     end
@@ -191,6 +180,16 @@ module Moderate
       {}
     end
     private_class_method :audit_payload_from_on_block
+
+    def announce(name, blocker, blocked)
+      verb = name == :user_blocked ? "blocked" : "unblocked"
+      Moderate.notify(
+        name,
+        subject: self,
+        actor: blocker,
+        payload: { blocker_id: blocker.id, blocked_id: blocked.id, summary: "user #{blocker.id} #{verb} user #{blocked.id}" }
+      )
+    end
 
     # The DB has a CHECK constraint (`moderate_blocks_no_self_block`) too; this gives
     # the friendly validation error before the row ever reaches the database.

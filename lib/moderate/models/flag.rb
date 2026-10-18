@@ -16,6 +16,7 @@ module Moderate
   # consumer (e.g. a job that auto-actions high-confidence flags), so the gem
   # doesn't presume a human is the only reviewer.
   class Flag < ApplicationRecord
+    include Moderate::DeferredNotices
     self.table_name = "moderate_flags"
 
     STATUSES = %w[pending actioned dismissed].freeze

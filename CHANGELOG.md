@@ -81,8 +81,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gets the statement of reasons and the appeal window a restriction requires. It runs under
   the flag's row lock and then the content's, so two moderators enforcing the same flag, or
   two flags on the same content, enforce once: the second closes against the decision the
-  first took (unless it asks for more, say a ban after a removal). A system report may name
-  the flag's field even when people can't report that field (a filtered image), and
+  first took (unless it asks for more, say a ban after a removal). A recorded removal only
+  counts if the content is gone now, so an older decision that said "removed" without
+  removing anything doesn't stand in for a real one. A system report may name the flag's
+  field even when people can't report that field (a filtered image) — an exception only
+  the escalation sets, on a report with no reporter, never on a DSA notice — and
   enforcing a classifier's flag through a person's earlier report adds the classifier to
   that report's automated-means disclosure. `flag.report` is the report it went through.
   Hosts that hand-wrote this bridge (find-or-create a report, resolve it, then close the
@@ -107,22 +110,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   always did) instead of overwriting the first decision.
 - **`ResolveReport.new(report, by:, deliver: false)`** holds the decision notices back for a
   caller that decides inside a lock of its own; `#deliver_decision_notices` sends them.
-- **Decision notices wait for the caller's transaction.** Report and flag decisions send
-  their notices through `Moderate.after_commit`, which is
-  `ActiveRecord.after_all_transactions_commit` on Rails 7.2+: a host that decides inside a
-  transaction of its own and rolls it back no longer emails a decision that didn't happen.
-  On Rails 7.1 the notices go out when the gem's own lock is released, as before.
-- **One lock order for enforcement: flag, then content, then report.** A report decision
-  now takes the reported content's row lock before the report's (`Moderate.with_row_lock`),
-  the same order a flag escalation takes, so concurrent decisions on the same content
-  serialize instead of deadlocking.
+- **Notices wait for the outermost commit, on every supported Rails.** Report, flag and
+  appeal decisions (with their `user_banned` and `content_removed`), the in-app report
+  receipt, and `user_blocked` / `user_unblocked` are queued on the record they announce
+  (`Moderate::DeferredNotices`, included in Report, Flag, Block and Appeal) and sent from
+  that record's own `after_commit`, dropped on `after_rollback`. A host that decides,
+  reports or blocks inside a transaction of its own and rolls it back tells nobody; Rails
+  7.1, 7.2 and 8.x behave the same. `Moderate.apply_ban(…, announce: false)` +
+  `Moderate.announce_ban` split the ban's notice from the ban for the same reason. (The
+  public notice and appeal forms' own receipts are unchanged.)
+- **One lock order for enforcement: flag, then content, then the person (for a ban), then
+  the report.** Row locks are taken by query (`Moderate.with_row_lock`), so concurrent
+  decisions on the same content, or bans of the same person from different content,
+  serialize instead of enforcing twice or deadlocking.
+- **One ban per person per episode.** A decision asked to ban someone who a decision on
+  any content or field has already banned since this conduct was raised (the report's
+  creation; the flag's, for an escalation) doesn't call the `ban_handler` again: it records
+  `resolution_actions["ban_already_applied_by"]` with that decision's id. An older ban
+  doesn't count (the person may have been unbanned since).
 - **A manual flag is not automated means.** A report's automated-processing disclosure
   (DSA Art. 17(3)(c)) no longer counts `source: "manual"` flags on the same content.
 
 - **Removing content that isn't removable refuses the decision.** `remove_content: true`
   when the reportable's `remove_reported_field!` removes nothing (the default for a
-  reportable that defines no removal, a field that isn't removable, content already gone)
-  now raises `RecordInvalid` ("Nothing was removed…", `moderate.errors.nothing_removed`)
+  reportable that defines no removal, a field that isn't removable, content already gone),
+  when the content was deleted (the report's reportable is nil), or when the reportable has
+  no removal method at all, now raises `RecordInvalid` ("Nothing was removed…", `moderate.errors.nothing_removed`)
   and rolls the decision back, a ban with it. Before, the report was closed with
   `decision_visibility: "content_removed"` and the affected person was told their content
   was removed while it was still up. **Behavior change:** offer "remove content" only where

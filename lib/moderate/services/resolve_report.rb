@@ -32,14 +32,20 @@ module Moderate
     #      means disclosure, appeal path). Different people, different rights — see
     #      docs/notifications.md ("Why two decision events").
     class ResolveReport
-      # `deliver: false` holds the decision notices back so a caller that runs this
-      # decision inside a lock of its own (ResolveFlag escalating a flag) can send
-      # them after ITS transaction commits, with `#deliver_decision_notices`. The
-      # default sends them as soon as this decision's own lock is released.
-      def initialize(report, by:, deliver: true)
+      # The decision notices are queued on the report and sent when the outermost
+      # transaction commits (Moderate::DeferredNotices). `deliver: false` leaves them
+      # to a caller that queues them on a record of its own (ResolveFlag, on the flag),
+      # via `#deliver_decision_notices`.
+      #
+      # `conduct_since:` is when the conduct this decision answers was first raised —
+      # the report's own creation by default; ResolveFlag passes the flag's. A ban
+      # decided on the same person since then already answered it (see
+      # #ban_reported_user!).
+      def initialize(report, by:, deliver: true, conduct_since: nil)
         @report = report
         @moderator = by
         @deliver = deliver
+        @conduct_since = conduct_since
       end
 
       # The report being decided.
@@ -63,7 +69,7 @@ module Moderate
 
         transition!("actioned", note: note, actions: actions) do
           remove_reported_content!(note: note) if actions[:remove_content]
-          ban_reported_user!(note: note) if actions[:ban_user]
+          ban_reported_user!(note: note, actions: actions) if actions[:ban_user]
         end
       end
 
@@ -78,6 +84,7 @@ module Moderate
       # The two decision events (see the class doc, point 4). Sent by `resolve!` /
       # `dismiss!` themselves unless this service was built with `deliver: false`.
       def deliver_decision_notices
+        notify_user_banned
         notify_reporter
         notify_affected_user
         notify_content_removed
@@ -91,15 +98,15 @@ module Moderate
       # the (slow, fallible) notifications happen AFTER the lock is released, so a
       # broken mailer can't hold a database lock or roll back the decision.
       def transition!(status, note:, actions:, &enforcement)
-        # The content's lock first, then the report's (Moderate.with_row_lock): the
-        # same order a flag escalation takes, so the two never deadlock.
+        # One lock order everywhere: content, then (for a ban) the person, then the
+        # report — the order a flag escalation takes too, so they never deadlock. The
+        # person's lock serializes two bans of one account from different content.
         Moderate.with_row_lock(report.reportable) do
-          lock_and_transition!(status, note: note, actions: actions, &enforcement)
+          Moderate.with_row_lock(actions[:ban_user] ? report.reported_user : nil) do
+            lock_and_transition!(status, note: note, actions: actions, &enforcement)
+          end
         end
 
-        # After the decision is durably committed (Moderate.after_commit): never an
-        # email for a decision a host's surrounding transaction then rolled back.
-        Moderate.after_commit { deliver_decision_notices } if @deliver
         report
       end
 
@@ -134,6 +141,9 @@ module Moderate
           )
 
           audit_decision(status, actions, note)
+
+          # Sent when the outermost transaction commits, never on a rollback.
+          report.after_commit_notice { deliver_decision_notices } if @deliver
         end
       end
 
@@ -143,15 +153,14 @@ module Moderate
       # removed something, the removal is audited here, inside the decision's
       # transaction, and announced as `content_removed` with the decision notices.
       def remove_reported_content!(note:)
-        return if report.reportable.blank?
-        return unless report.reportable.respond_to?(:remove_reported_field!)
-
-        removed = report.reportable.remove_reported_field!(report.reported_field)
-        refuse_unremoved! unless removed
+        # Nothing to remove from (the content was deleted, its report nullified) or
+        # no way to remove it: refused like a removal that removed nothing.
+        removable = report.reportable.present? && report.reportable.respond_to?(:remove_reported_field!)
+        refuse_unremoved! unless removable && report.reportable.remove_reported_field!(report.reported_field)
 
         @content_removed = content_removed_payload(note)
         Moderate.audit(:content_removed, **content_removed_event)
-        removed
+        true
       end
 
       # "Remove the content" was asked and the reportable removed nothing (the field
@@ -163,7 +172,7 @@ module Moderate
           "moderate.errors.nothing_removed",
           content: report.reportable_label,
           default: "Nothing was removed: #{report.reportable_label} has nothing removable there (already " \
-                   "removed, or not removable). Resolve without removing content, or dismiss."
+                   "removed, deleted, or not removable). Resolve without removing content, or dismiss."
         )
         report.errors.add(:base, message)
         raise ActiveRecord::RecordInvalid, report
@@ -185,17 +194,40 @@ module Moderate
         { subject: report, actor: moderator, recipients: [report.reported_user].compact, payload: @content_removed }
       end
 
-      def ban_reported_user!(note:)
+      # The gem never bans directly — it asks the host's ban_handler what "banned"
+      # means (suspend, soft-delete, flip a flag…). ONE ban per person per episode: if
+      # a decision on this same person, on any content or field, already banned them
+      # since this conduct was raised, the account is suspended already — this decision
+      # records which one (`ban_already_applied_by`) instead of banning twice. (An
+      # older ban, before this conduct, doesn't count: the person may have been
+      # unbanned since, and new conduct deserves its own decision.)
+      def ban_reported_user!(note:, actions:)
         user = report.reported_user
         return if user.blank?
 
-        # The gem never bans directly — it asks the host's ban_handler what "banned"
-        # means (suspend, soft-delete, flip a flag…). No-op by default, so the
-        # decision still completes and audits even if no ban is wired.
-        Moderate.apply_ban(user: user, by: moderator, reason: note)
+        if (prior = prior_ban_decision(user))
+          actions[:ban_already_applied_by] = prior.id
+          return
+        end
+
+        @user_banned = Moderate.apply_ban(user: user, by: moderator, reason: note, announce: false)
+      end
+
+      def prior_ban_decision(user)
+        since = @conduct_since || report.created_at
+        Moderate::Report.actioned.where(reported_user_id: user.id).where(resolved_at: since..).where.not(id: report.id)
+          .recent_first.find { |decided| truthy?(decided.resolution_actions.to_h["ban_user"]) }
       end
 
       # --- Notifications (after the lock) -------------------------------------
+
+      # user_banned → the banned person (Moderate.apply_ban, announced here so it waits
+      # for the commit like the rest).
+      def notify_user_banned
+        return unless @user_banned
+
+        Moderate.announce_ban(**@user_banned)
+      end
 
       # content_removed → the person whose content it was (when there is one) and the
       # host's admin channels. Only when the removal actually removed something.

@@ -63,9 +63,10 @@ module Moderate
           )
 
           audit_decision(status, note)
+          # Sent once the decision is durable (Moderate::DeferredNotices).
+          appeal.after_commit_notice { deliver_decision_notice(status) }
         end
 
-        deliver_decision_notice(status)
         appeal
       end
 

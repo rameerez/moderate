@@ -68,11 +68,12 @@ module Moderate
 
           decision, report = enforce!(note, enforcement, resolution_basis) if enforcement
           close!(status, note, report)
+
+          # The escalated decision's notices, queued on the flag: sent when the
+          # outermost transaction commits, never on a rollback (DeferredNotices).
+          flag.after_commit_notice { decision.deliver_decision_notices } if decision
         end
 
-        # Notify outside the lock and after the commit, as every decision does: a
-        # slow or broken mailer must not hold the row or roll the decision back.
-        Moderate.after_commit { decision.deliver_decision_notices } if decision
         flag
       end
 
@@ -86,7 +87,7 @@ module Moderate
           next [nil, prior] if prior
 
           report = escalation_report!(note)
-          decision = ResolveReport.new(report, by: moderator, deliver: false)
+          decision = ResolveReport.new(report, by: moderator, deliver: false, conduct_since: flag.created_at)
           decision.resolve!(note: note, resolution_basis: resolution_basis, **enforcement)
           [decision, report]
         end
@@ -94,11 +95,35 @@ module Moderate
 
       # A report on the same content and field, decided since this flag was filed,
       # that already did everything asked now (removed it, banned the person). The
-      # flag closes against it instead of restricting a second time.
+      # flag closes against it instead of restricting a second time. A recorded
+      # removal only counts if the content is actually gone now: an older decision
+      # may say "removed" without having removed anything.
       def covering_decision(enforcement)
         asked = enforcement.select { |_action, wanted| wanted }.keys.map(&:to_s)
+        return if asked.include?("remove_content") && !content_gone?
+
         decided = Moderate::Report.actioned.where(same_content).where(resolved_at: flag.created_at..).recent_first
         decided.find { |report| asked.all? { |action| truthy?(report.resolution_actions.to_h[action]) } }
+      end
+
+      # Is the flagged field's content gone? The record deleted, the record saying it
+      # is (`deleted?`, a soft-delete tombstone), or the field reading as empty. Read
+      # fresh, under the content's lock: a decision that just committed removed it.
+      def content_gone?
+        content = flag.flaggable&.reload
+        return true if content.nil?
+        return true if content.respond_to?(:deleted?) && content.deleted?
+
+        value = flagged_value(content)
+        value.respond_to?(:attached?) ? !value.attached? : value.blank?
+      rescue ActiveRecord::RecordNotFound
+        true
+      end
+
+      def flagged_value(content)
+        return content.send(:moderation_field_value, flag.field) if content.respond_to?(:moderation_field_value, true)
+
+        content.public_send(flag.field) if content.respond_to?(flag.field)
       end
 
       def close!(status, note, report)
@@ -129,12 +154,17 @@ module Moderate
       # PERSON may report for the gem to enforce on it.
       def system_report!(note)
         message = "Escalated from flag ##{flag.id} (#{flag.source}): #{note}"
-        Moderate::Report.create!(
+        report = Moderate::Report.new(
           reportable: flag.flaggable, reported_field: flag.field, reported_user: flag.owner,
           intake_kind: "community", category: escalation_category,
           message: message.truncate(Moderate::Report::MESSAGE_MAX_LENGTH),
-          good_faith_confirmed: true, skip_received_notice: true, escalated_from_flag: flag
+          good_faith_confirmed: true, skip_received_notice: true
         )
+        # Private on Report, set only here: not a host-assignable way around the
+        # field whitelist.
+        report.send(:escalated_from_flag=, flag)
+        report.save!
+        report
       end
 
       # A person's report filed BEFORE a classifier flagged the same content never

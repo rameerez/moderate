@@ -35,6 +35,12 @@ module Moderate
       end
     end
 
+    # Content that isn't a Moderate::Reportable at all: no removal method.
+    class PlainComment < ::ApplicationRecord
+      self.table_name = "comments"
+      belongs_to :user
+    end
+
     class ResolveReportTest < ActiveSupport::TestCase
       setup do
         Moderate.configure do |config|
@@ -316,36 +322,30 @@ module Moderate
         assert_equal audit.payload, event.payload
       end
 
-      # --- Notices wait for the host's transaction ------------------------------
+      test "removing content that's gone refuses the decision" do
+        author = User.create!(name: "Author", email: "author-gone@example.com")
+        comment = RemovableBodyComment.create!(user: author, body: "slur")
+        report = create_report(reportable: comment, field: "body")
+        comment.destroy! # the report is nullified (dependent: :nullify)
 
-      test "decided inside a host's transaction, the notices wait for it to commit" do
-        skip_without_after_all_transactions_commit
-        author = User.create!(name: "Author", email: "author-tx@example.com")
-        report = create_report(reportable: Comment.create!(user: author, body: "meh"), field: "body")
-        ModerateTestRecorder.clear
-
-        ActiveRecord::Base.transaction do
-          report.resolve!(by: User.create!(name: "Mod"), note: "Warned.")
-          assert_empty ModerateTestRecorder.notifications_named(:affected_user_decision), "not before the commit"
+        error = assert_raises(ActiveRecord::RecordInvalid) do
+          report.reload.resolve!(by: User.create!(name: "Mod"), note: "Gone.", remove_content: true)
         end
 
-        assert_equal 1, ModerateTestRecorder.notifications_named(:affected_user_decision).size
+        assert_match(/Nothing was removed/, error.record.errors[:base].sole)
+        assert_predicate report.reload, :open?
       end
 
-      test "decided inside a host's transaction that rolls back, nobody is told" do
-        skip_without_after_all_transactions_commit
-        author = User.create!(name: "Author", email: "author-rb@example.com")
-        report = create_report(reportable: Comment.create!(user: author, body: "meh"), field: "body")
-        ModerateTestRecorder.clear
+      test "removing content that can't be removed (no removal method) refuses the decision" do
+        author = User.create!(name: "Author", email: "author-plain@example.com")
+        plain = PlainComment.create!(user: author, body: "x")
+        report = Moderate::Report.create!(reportable: plain, reported_user: author, category: "other",
+                                          message: "plain", good_faith_confirmed: true)
 
-        ActiveRecord::Base.transaction do
-          report.resolve!(by: User.create!(name: "Mod"), note: "Warned.")
-          raise ActiveRecord::Rollback
+        assert_raises(ActiveRecord::RecordInvalid) do
+          report.resolve!(by: User.create!(name: "Mod"), note: "Remove.", remove_content: true)
         end
-
         assert_predicate report.reload, :open?
-        assert_empty ModerateTestRecorder.notifications_named(:affected_user_decision)
-        assert_empty ModerateTestRecorder.notifications_named(:report_decision)
       end
 
       test "removing content that isn't removable refuses the decision instead of claiming it" do
@@ -365,12 +365,6 @@ module Moderate
       end
 
       private
-
-      def skip_without_after_all_transactions_commit
-        return if ActiveRecord.respond_to?(:after_all_transactions_commit)
-
-        skip "ActiveRecord.after_all_transactions_commit needs Rails 7.2+"
-      end
 
       # A minimal community report the resolver acts on. The reporter is created here,
       # DISTINCT from the reportable's owner, on purpose: `Moderate::Report` infers the
