@@ -114,8 +114,12 @@ module Moderate
       end
 
       note = note.to_s.strip.presence
+      # The content's lock only, and a plain read of the waiting flag under it: see the
+      # lock order in Moderate.with_row_lock. Any other review of this content waits on
+      # the same lock, so the read can't race one; no flag row is locked, so this never
+      # waits on a moderator deciding that flag (who holds it, then the content).
       flag = Moderate.with_row_lock(record) do
-        where(flaggable: record, field: field_s).pending.recent_first.lock.first ||
+        where(flaggable: record, field: field_s).pending.recent_first.first ||
           file_for_review!(record, field_s, by: by, note: note)
       end
       audit_filed_for_review(flag, by: by, note: note) if flag.previously_new_record?

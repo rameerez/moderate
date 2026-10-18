@@ -82,10 +82,11 @@ module Moderate
         flag
       end
 
-      # Enforce under the CONTENT's row lock and then the PERSON's (after the flag's,
-      # before any report's — the gem's one lock order), so two flags on the same
-      # content, or on two contents of the same person, can't both enforce: the second
-      # waits, then finds the decision the first took.
+      # Enforce under the CONTENT's row lock and, when the decision can ban, the
+      # PERSON's (after the flag's, before any report's: the lock order in
+      # Moderate.with_row_lock), so two flags on the same content can't both enforce,
+      # nor two bans of the same person: the second waits, then finds the decision the
+      # first took. Removal-only enforcement never touches the person's row.
       #
       # Both locks come BEFORE the first read of moderate_reports, and that matters on
       # MySQL: its locking reads of the reports table (the checks below) take gap locks
@@ -95,7 +96,7 @@ module Moderate
       # Returns [the ResolveReport that decided, or nil, the report the flag answers to].
       def enforce!(note, enforcement, resolution_basis)
         Moderate.with_row_lock(flag.flaggable) do
-          Moderate.with_row_lock(flag.owner) do
+          Moderate.with_row_lock(enforcement[:ban_user] ? flag.owner : nil) do
             prior = covering_decision(enforcement)
             next [nil, prior] if prior
 

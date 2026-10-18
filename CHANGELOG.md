@@ -13,16 +13,24 @@ A fix-only beta: no API change, no migration.
 - **MySQL double enforcement under REPEATABLE READ.** Two moderators enforcing two flags on
   the same content, or banning the same person from two flags at once, could remove the
   content twice or call the `ban_handler` twice on MySQL. A plain `SELECT` there returns the
-  transaction's consistent snapshot, taken before the content's or the person's row lock was
-  granted, so the second worker never saw the decision it had waited for. Every check that
-  decides "already done" under a lock — the covering decision and the open report a flag
-  escalates to, whether the content is gone, the per-person prior ban, and
-  `Flag.flag_for_review!`'s waiting flag — is now a locking read (`SELECT … FOR UPDATE`),
-  identical on every database; the redundant plain reloads after `with_lock` are gone.
-  A flag escalation now takes the person's row lock right after the content's, before it
-  reads the reports table, so two escalations about the same person serialize before
-  either takes a gap lock (MySQL's locking reads take them, and two holders that each
-  insert a report deadlock). PostgreSQL and SQLite were not affected.
+  transaction's consistent snapshot, which may predate the content's or the person's row
+  lock, so the second worker never saw the decision it had waited for. Every check that
+  decides "already done" under a lock (the covering decision and the open report a flag
+  escalates to, whether the content is gone, the per-person prior ban) is now a locking read
+  (`SELECT … FOR UPDATE`), identical on every database; the redundant plain reloads after
+  `with_lock` are gone. A flag escalation that can ban takes the person's row lock right
+  after the content's, before it reads the reports table, so two bans of the same person
+  serialize before either takes a gap lock (MySQL's locking reads take them, and two holders
+  that each insert a report deadlock). PostgreSQL and SQLite were not affected.
+- **One lock order everywhere: flag, then content, then person, then report.**
+  `Flag.flag_for_review!` locked the content and then the waiting flag, the reverse of a
+  flag decision (the flag, then the content), so a review and an enforcement of the same
+  content could deadlock on any database. It now locks the content only and reads the
+  waiting flag with a plain read under that lock, which already serializes reviews of that
+  content. The order is documented once, on `Moderate.with_row_lock`.
+- **Removal-only enforcement no longer locks the person's row.** Only a decision that can
+  ban takes the account's lock, so removing one message never waits on (or holds up) other
+  work on the author's account.
 
 ## [1.0.0.beta3] - 2026-10-18
 

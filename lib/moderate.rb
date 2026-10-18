@@ -369,19 +369,34 @@ module Moderate
     # --- Transactions -----------------------------------------------------------
 
     # Hold `record`'s row lock (SELECT … FOR UPDATE) for the block, or just run the
-    # block when there's no saved row to lock. Enforcement takes the CONTENT's lock
-    # before the report's, everywhere (flag → content → report), so two decisions
-    # about the same content serialize instead of enforcing twice or deadlocking.
+    # block when there's no saved row to lock. The lock is taken by query, not with
+    # `record.with_lock`, so the caller's object is neither reloaded nor refused for
+    # carrying unsaved changes.
     #
-    # The lock is taken by query, not with `record.with_lock`, so the caller's object
-    # is neither reloaded nor refused for carrying unsaved changes.
+    # THE LOCK ORDER — one, everywhere; a path may skip a step, never reverse two:
+    #
+    #   flag  →  content  →  person  →  report
+    #
+    #   - Flag#action!/#dismiss! (ResolveFlag): the flag; to enforce, the content;
+    #     to ban, the person; then the report it resolves.
+    #   - Report#resolve!/#dismiss! (ResolveReport): the content; to ban, the person;
+    #     then the report.
+    #   - Flag.flag_for_review!: the content only. It never locks a flag row: it reads
+    #     "is a flag already waiting?" with a plain read under the content's lock,
+    #     which already serializes it against any other review of that content (a
+    #     locking read of the flags would invert the order against ResolveFlag, and take
+    #     gap locks on MySQL that two reviews inserting flags deadlock on).
+    #   - The person's lock is taken only when a decision can ban: removal-only
+    #     enforcement never waits on, or holds, an account's row.
     #
     # Under the lock, every check that decides "already done" (a covering decision, a
-    # prior ban, a waiting flag, whether content is gone) is itself a LOCKING read
-    # (`.lock`, `reload(lock: true)`). Under MySQL's REPEATABLE READ a plain read
-    # returns the transaction's snapshot, taken before the lock was granted, and would
-    # miss what the decision we waited for committed; a locking read returns the
-    # latest committed row on every database.
+    # prior ban, whether content is gone) is itself a LOCKING read (`.lock`,
+    # `reload(lock: true)`). Under MySQL's REPEATABLE READ a plain read returns the
+    # transaction's snapshot, which may predate the lock, and would miss what the
+    # decision we waited for committed; a locking read returns the latest committed
+    # row on every database. Those reads come after the locks that serialize them
+    # (content, and person for a ban), so two decisions never hold gap locks on the
+    # reports table at once.
     def with_row_lock(record)
       model = record.class
       return yield unless record.respond_to?(:persisted?) && record.persisted? && model.respond_to?(:lock)
