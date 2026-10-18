@@ -117,6 +117,24 @@ module Moderate
       assert appeal.snapshot["captured_at"].present?
     end
 
+    test "an appeal filed inside the window can still be decided after the window closes" do
+      moderator = create_user
+      appeal = Moderate::Appeal.create!(
+        report: closed_report(appeal_deadline_at: 1.week.from_now),
+        appellant_name: "Appealing User",
+        appellant_email: "appeal@example.com",
+        reason: "Please review this decision."
+      )
+
+      # Art. 20 bounds when a complaint may be FILED, not when it must be decided:
+      # a complaint lodged in time is decided whenever the review ends.
+      travel_to(2.months.from_now) do
+        appeal.reject!(by: moderator, note: "The decision stands")
+      end
+
+      assert_predicate appeal.reload, :rejected?
+    end
+
     private
 
     # A valid, persistable OPEN community report against the dummy comment.

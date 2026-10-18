@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      below the attachment" comments can go. An adapter that retries on
      `ActiveStorage::FileNotFoundError` may keep doing so; the job's own wait makes it rare.
 
+- **An appeal filed in time can be decided after the appeal window closes.** The six-month
+  check (`report_must_still_be_appealable`) ran on every save, so `appeal.uphold!` /
+  `reject!` on a complaint filed in month five and decided in month seven failed with "the
+  appeal window for this decision has closed". Art. 20 bounds when a complaint may be
+  filed, not when it is decided; the check now runs when the appeal is created.
+
 ### Removed
 
 - **Rails 7.1 and Ruby 3.2 are no longer supported** (both are end of life upstream). The
