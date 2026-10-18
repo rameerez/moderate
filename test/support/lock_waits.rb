@@ -23,9 +23,7 @@ module LockWaits
   def wait_until_blocked(id, timeout: 5)
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
     until blocked?(id)
-      if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-        flunk "connection #{id} was never blocked on a lock within #{timeout}s"
-      end
+      flunk "connection #{id} was never blocked on a lock within #{timeout}s" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
       sleep 0.01
     end
   end

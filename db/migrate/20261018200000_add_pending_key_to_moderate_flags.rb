@@ -97,12 +97,12 @@ class AddPendingKeyToModerateFlags < ActiveRecord::Migration[7.1]
   def newest_pending_without_key
     newest = {}
     Flag.where(status: "pending", pending_key: nil).select(:id, :flaggable_type, :flaggable_id, :field, :created_at)
-        .find_each do |flag|
+      .find_each do |flag|
       key = "#{flag.flaggable_type}/#{flag.flaggable_id}/#{flag.field}"
       newest[key] = flag if newest[key].nil? || flag.created_at > newest[key].created_at
     end
     taken = Flag.where.not(pending_key: nil).pluck(:pending_key).to_set
-    newest.reject { |key, _| taken.include?(key) }.to_h { |key, flag| [flag.id, key] }
+    newest.except(*taken).to_h { |key, flag| [flag.id, key] }
   end
 
   # The keys to write and the keys already written, in a temporary table whose key

@@ -222,7 +222,7 @@ module Moderate
       def prior_ban_decision(user)
         since = @conduct_since || report.created_at
         decided = Moderate::Report.actioned.where(reported_user_id: user.id, resolved_at: since..)
-                                  .where.not(id: report.id)
+          .where.not(id: report.id)
         # A locking read: a ban committed by a concurrent decision while we waited for
         # the person's lock is seen, whatever the isolation level.
         decided.recent_first.lock.find { |prior| truthy?(prior.resolution_actions.to_h["ban_user"]) }

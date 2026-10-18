@@ -8,16 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrading
 
-- **One migration, shipped with the gem: run `bin/rails db:migrate`.**
-  `db/migrate/20261018210000_add_retention_and_classifications_to_moderate_tables.rb` adds
-  `redacted_at` to `moderate_reports`, `moderate_flags` and `moderate_appeals`,
-  `held_until` (indexed) to `moderate_reports`, and creates `moderate_classifications`.
-  The engine adds the gem's `db/migrate` to
-  your app's migration paths, so there is nothing to copy (if you prefer copies,
-  `bin/rails moderate:install:migrations`, and the gem's own path is then skipped). It is
-  guarded both ways, so a fresh install (whose generated create migration already has the
-  columns) and a second run are no-ops, and it needs no backfill. It sorts after beta4's
-  `pending_key` migration.
+- **One migration: run `bin/rails db:migrate`** (after `bin/rails moderate:install:migrations`
+  if your app holds copies of the gem's migrations, `*.moderate.rb`, as every app installed
+  from 1.0.0.beta4 on does). `db/migrate/20261018210000_add_retention_and_classifications_to_moderate_tables.rb`
+  adds `redacted_at` to `moderate_reports`, `moderate_flags` and `moderate_appeals`,
+  `held_until` (indexed) to `moderate_reports`, and creates `moderate_classifications`. It
+  sorts after beta4's `pending_key` migration and needs no backfill. Like that one it is the
+  only thing that creates what it adds: `rails generate moderate:install` leaves it out of
+  `create_moderate_tables` and copies the migration after it, an app without copies gets it
+  through the engine, and its `down` drops only what it created.
 
 ### Added
 

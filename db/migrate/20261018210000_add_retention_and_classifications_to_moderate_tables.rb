@@ -14,10 +14,13 @@
 #                                  was classified (Moderate::Attachments). Ids, a
 #                                  digest of blob ids and timestamps; no content.
 #
-# Ships with the gem and runs with `bin/rails db:migrate`: the engine adds the gem's
-# db/migrate to your app's migration paths. Guarded both ways, so it is a no-op on a
-# fresh install (the install generator's tables already have all of this) and safe to
-# run twice. No backfill: nothing was redacted, held or claimed before 1.0.
+# The one migration that creates all of this, in a fresh app as in an upgraded one:
+# `rails generate moderate:install` copies it after create_moderate_tables (which
+# leaves it out), an app holding copies gets it with `bin/rails
+# moderate:install:migrations`, and an app installed without copies gets it through
+# the engine, which adds the gem's db/migrate to its paths. Its `down` drops only what
+# it created. Guarded, so a second run is a no-op. No backfill: nothing was redacted,
+# held or claimed before 1.0.
 class AddRetentionAndClassificationsToModerateTables < ActiveRecord::Migration[8.0]
   COLUMNS = {
     moderate_reports: %i[redacted_at held_until],
