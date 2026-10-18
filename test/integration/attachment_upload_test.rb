@@ -236,6 +236,85 @@ class AttachmentUploadTest < ActiveSupport::TestCase
     assert_equal 1, adapter.calls
   end
 
+  # --- Claims (Moderate::Attachments.classify_once) ---------------------------
+
+  def save_with_async_photo
+    configure(adapter: DummyImageAdapter.new)
+    comment = Comment.new(user: @user, body: "hello")
+    attach_photo(comment)
+    comment.save!
+    clear_enqueued_jobs
+    comment
+  end
+
+  def write_claim(comment, owner:, claimed_at:)
+    blobs = Moderate::Attachments.blobs(comment.photo)
+    key = Moderate::Attachments.marker_key(comment, "photo", blobs)
+    blobs.each do |blob|
+      blob.update_column(:metadata, blob.metadata.merge(
+        Moderate::Attachments::CLAIMS => { key => { "owner" => owner, "claimed_at" => claimed_at.iso8601 } }
+      ))
+    end
+  end
+
+  test "a live claim by another worker stops the job, which looks once more when the claim expires" do
+    comment = save_with_async_photo
+    write_claim(comment, owner: "other-worker", claimed_at: 1.minute.ago)
+
+    assert_no_difference -> { Moderate::Flag.count } do
+      Moderate::ClassifyJob.perform_now(comment, "photo")
+    end
+    recheck = enqueued_jobs.find { |job| job["job_class"] == "Moderate::ClassifyJob" }
+    assert recheck, "a recheck is queued for the claim's expiry"
+    assert_in_delta (1.minute.ago + Moderate.config.classification_claim_ttl).to_f, Time.iso8601(recheck["scheduled_at"]).to_f, 5
+
+    travel_to(20.minutes.from_now) do
+      clear_enqueued_jobs
+      ActiveJob::Base.execute(recheck) # the other worker died: its claim is stale now
+    end
+
+    assert_equal 1, Moderate::Flag.where(flaggable: comment, field: "photo").count
+    assert_empty enqueued_jobs.select { |job| job["job_class"] == "Moderate::ClassifyJob" }, "one recheck, never a loop"
+  end
+
+  test "a crashed worker's stale claim is taken over" do
+    comment = save_with_async_photo
+    write_claim(comment, owner: "dead-worker", claimed_at: 11.minutes.ago)
+
+    Moderate::ClassifyJob.perform_now(comment, "photo")
+
+    assert_equal 1, Moderate::Flag.where(flaggable: comment, field: "photo").count
+    blob = comment.photo.blob.reload
+    assert_nil blob.metadata[Moderate::Attachments::CLAIMS], "the claim is cleared on completion"
+    assert Moderate::Attachments.classified?(comment, "photo", comment.photo)
+  end
+
+  test "files changed while the adapter ran: that result is discarded, the new files are classified" do
+    comment = save_with_async_photo
+    replaced = false
+    adapter = Object.new
+    adapter.define_singleton_method(:synchronous?) { false }
+    adapter.define_singleton_method(:classify) do |_value|
+      unless replaced
+        replaced = true
+        Comment.find(comment.id).photo.attach(io: StringIO.new("new"), filename: "new.png", content_type: "image/png")
+      end
+      label = Moderate::Label.new(category: :sexual, subcategory: nil, score: 1.0, flagged: true, input: :image)
+      Moderate::Result.new(allowed: false, labels: [label], source: "image_filter")
+    end
+    Moderate.config.register_adapter :image, adapter
+    old_blob = comment.photo.blob
+
+    Moderate::ClassifyJob.perform_now(comment, "photo")
+
+    assert_equal 0, Moderate::Flag.where(flaggable: comment, field: "photo").count, "the old files' result is discarded"
+    assert_nil old_blob.reload.metadata[Moderate::Attachments::CLAIMS], "and its claim released"
+
+    drain_classify_jobs
+    assert_equal 1, Moderate::Flag.where(flaggable: comment, field: "photo").count, "the new files are classified"
+    assert Moderate::Attachments.classified?(comment, "photo", Comment.find(comment.id).photo)
+  end
+
   test "a changed set of files is classified again; the same set isn't" do
     configure(model: "PhotoPost", field: :photos)
     post = PhotoPost.new(user: @user, body: "hello")

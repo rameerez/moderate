@@ -220,17 +220,17 @@ module Moderate
       moderation_field_committed(field)
     end
 
-    # Under the record's row lock, so the guard job can't classify the same files at
-    # the same time (Moderate::Attachments): check, classify, flag, mark.
+    # Claim, classify outside any lock, complete (Moderate::Attachments): the guard
+    # job and this path never both classify the same files, and a slow adapter never
+    # holds this record's row.
     def moderate_classify_attachment(field, policy)
-      Moderate.with_row_lock(self) do
-        value = moderation_field_value(field)
-        next if Moderate::Attachments.classified?(self, field, value)
-
-        result = Moderate.classify(value, policy: policy)
-        moderate_file_flag(field, policy, value, result) if result.flagged?
-        Moderate::Attachments.mark_classified!(self, field, value)
-      end
+      Moderate::Attachments.classify_once(
+        self, field,
+        owner: SecureRandom.uuid,
+        read: -> { self.class.unscoped.find_by(id: id)&.send(:moderation_field_value, field) },
+        classify: ->(value) { Moderate.classify(value, policy: policy) },
+        file: ->(value, result) { moderate_file_flag(field, policy, value, result) }
+      )
     end
 
     def moderate_file_flag(field, policy, value, result)

@@ -288,6 +288,14 @@ config.locale = :en   # default: your app's I18n.default_locale
 
 The locale for copy `moderate` generates on its own — filter validation messages, the DSA statement-of-reasons taxonomy labels, the notice-form strings. Leave it unset to follow `I18n.default_locale`.
 
+### `classification_claim_ttl`
+
+```ruby
+config.classification_claim_ttl = 10.minutes   # default (600 seconds)
+```
+
+How long one worker's claim on a set of attached files lasts. An attachment is classified by whoever claims it first (the inline path, the immediate `ClassifyJob` or the after-upload guard); the others see the live claim and stop, and the adapter runs outside any lock. Make it longer than your slowest adapter call: a claim that expires mid-call lets another worker classify the same files, and the first result is then discarded. When a worker dies mid-call, the files wait this long before a job takes them over.
+
 ---
 
 ## How the macros relate to config

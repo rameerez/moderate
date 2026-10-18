@@ -64,6 +64,13 @@ module Moderate
     # --- Misc -----------------------------------------------------------------
     attr_accessor :locale
 
+    # --- Attachment classification ----------------------------------------------
+    # How long a worker's claim on a set of attached files lasts (seconds, or an
+    # ActiveSupport::Duration) before another worker may take it over: longer than
+    # your slowest adapter call, short enough that a worker that died mid-call doesn't
+    # leave the files unclassified for long. See Moderate::Attachments.
+    attr_accessor :classification_claim_ttl
+
     # --- DSA notice form ------------------------------------------------------
     # Documented in docs/dsa-notice-form.md. Held here so the engine/controller
     # (written by other components) read them off the same Configuration object.
@@ -123,6 +130,8 @@ module Moderate
 
       # Misc. nil locale ⇒ follow I18n.default_locale at use time.
       @locale = nil
+
+      @classification_claim_ttl = 600 # 10 minutes, in seconds
 
       # Engine controller defaults. The parent controller defaults to a stock base so
       # the engine works even on API-only apps — the same `parent_controller`

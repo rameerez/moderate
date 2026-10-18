@@ -3,10 +3,10 @@
 require "test_helper"
 
 # The immediate ClassifyJob and the after-upload guard running at the same moment on
-# one attachment: both take the content record's row lock around check + classify +
-# mark (Moderate::Attachments), so the second finds the first one's mark and the
-# adapter is called once. Real threads on real connections, so this test commits and
-# cleans up after itself.
+# one attachment: the first claims the files under the content's row lock, the second
+# finds the live claim and stops, so the adapter is called once; and while the adapter
+# runs, no lock is held on the content's row. Real threads on real connections, so
+# this test commits and cleans up after itself.
 #
 # PostgreSQL and MySQL only: SQLite has no row locks (SELECT ... FOR UPDATE is a
 # no-op there), so there is nothing for this test to prove on it.
@@ -23,8 +23,11 @@ class AttachmentClassifyRaceTest < ActiveSupport::TestCase
 
     def synchronous? = false
 
+    attr_accessor :during_call
+
     def classify(_value)
       @calls.increment
+      during_call&.call
       sleep 0.3
       Moderate::Result.allowed(source: "image_filter")
     end
@@ -67,6 +70,41 @@ class AttachmentClassifyRaceTest < ActiveSupport::TestCase
     2.times { gate << :go }
     threads.each(&:join)
 
-    assert_equal 1, @adapter.calls.value, "the second job waited for the lock, then found the mark"
+    assert_equal 1, @adapter.calls.value, "the second job found the first one's live claim"
+  end
+
+  test "no lock is held on the content's row while the adapter runs" do
+    updated = nil
+    @adapter.during_call = lambda do
+      Thread.new do
+        ActiveRecord::Base.connection_pool.with_connection do |connection|
+          with_short_lock_timeout(connection) do
+            updated = Comment.where(id: @comment.id).update_all(body: "edited while classifying")
+          end
+        end
+      end.join
+    end
+
+    Moderate::ClassifyJob.perform_now(Comment.find(@comment.id), "photo")
+
+    assert_equal 1, updated, "another connection updated the row without waiting"
+    assert_equal 1, @adapter.calls.value
+  end
+
+  private
+
+  def with_short_lock_timeout(connection)
+    if connection.adapter_name.downcase.include?("postgres")
+      connection.execute("SET lock_timeout = '1s'")
+    else
+      connection.execute("SET SESSION innodb_lock_wait_timeout = 1")
+    end
+    yield
+  ensure
+    if connection.adapter_name.downcase.include?("postgres")
+      connection.execute("SET lock_timeout = 0")
+    else
+      connection.execute("SET SESSION innodb_lock_wait_timeout = 50")
+    end
   end
 end

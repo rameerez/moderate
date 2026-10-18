@@ -70,7 +70,9 @@ module Moderate
     # @param upload_attempt [Integer] which look at a not-yet-uploaded attachment
     #   this is (the job sets it when it re-enqueues itself; callers leave it).
     # @param blob_ids [Array<Integer>, nil] the attachment's blobs when enqueued.
-    def perform(record, field, adapter: nil, upload_attempt: 1, blob_ids: nil)
+    # @param claim_recheck [Boolean] this run is the one look the job takes after
+    #   another worker's claim on the same files expires (set by the job itself).
+    def perform(record, field, adapter: nil, upload_attempt: 1, blob_ids: nil, claim_recheck: false)
       # The record may have been destroyed between enqueue and execution — nothing
       # to classify, nothing to flag. (ActiveJob raises DeserializationError for a
       # GlobalID that no longer resolves; that's rescued at the framework level, but
@@ -87,7 +89,8 @@ module Moderate
       value = field_value(record, field)
       return if blank?(value)
       if Moderate::Attachments.attachment?(value)
-        return classify_attachment(record, field, policy, adapter: adapter, attempt: upload_attempt, blob_ids: blob_ids)
+        return classify_attachment(record, field, policy, adapter: adapter, attempt: upload_attempt, blob_ids: blob_ids,
+          claim_recheck: claim_recheck)
       end
 
       result = Moderate.classify(value, policy: policy)
@@ -165,21 +168,35 @@ module Moderate
       value.to_s[0, 500]
     end
 
-    # Check, classify, flag and mark under the content record's row lock (content
-    # first, as everywhere), so this job and the inline path or the guard can't
-    # classify the same files at once (Moderate::Attachments).
-    def classify_attachment(record, field, policy, adapter:, attempt:, blob_ids:)
-      Moderate.with_row_lock(record) do
-        value = field_value(record, field)
-        next if blank?(value)
-        next if blob_ids && Moderate::Attachments.blob_ids(value) != Array(blob_ids).sort
-        next if Moderate::Attachments.classified?(record, field, value)
-        next wait_for_upload(record, field, adapter, attempt, blob_ids) unless Moderate::Attachments.uploaded?(value)
+    # Claim, classify outside any lock, complete (Moderate::Attachments): this job
+    # and the inline path or the guard never classify the same files at once, and a
+    # slow adapter never holds the content's row. When another worker holds a live
+    # claim, the job looks once more when that claim expires, so a worker that died
+    # mid-call doesn't leave the files unclassified.
+    def classify_attachment(record, field, policy, adapter:, attempt:, blob_ids:, claim_recheck:)
+      value = field_value(record, field)
+      return if blob_ids && Moderate::Attachments.blob_ids(value) != Array(blob_ids).sort
+      return wait_for_upload(record, field, adapter, attempt, blob_ids) unless Moderate::Attachments.uploaded?(value)
 
-        result = Moderate.classify(value, policy: policy)
-        file_flag(record, field, policy, result, value) if result.flagged?
-        Moderate::Attachments.mark_classified!(record, field, value)
-      end
+      outcome = Moderate::Attachments.classify_once(
+        record, field,
+        owner: job_id,
+        read: -> { fresh_value(record, field) },
+        classify: ->(current) { Moderate.classify(current, policy: policy) },
+        file: ->(current, result) { file_flag(record, field, policy, result, current) }
+      )
+      return unless outcome == :claimed && !claim_recheck
+
+      expires_at = Moderate::Attachments.claim_expires_at(record, field, value) || Time.current
+      self.class.set(wait_until: expires_at + 1)
+        .perform_later(record, field, adapter: adapter, blob_ids: blob_ids, claim_recheck: true)
+    end
+
+    # The field as committed now, read through a fresh instance (the job's own copy
+    # caches the attachment it was enqueued with).
+    def fresh_value(record, field)
+      fresh = record.class.unscoped.find_by(id: record.id)
+      fresh && field_value(fresh, field)
     end
 
     def wait_for_upload(record, field, adapter, attempt, blob_ids)
