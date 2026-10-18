@@ -47,6 +47,7 @@ module Moderate
   # async via its own `synchronous? == false`, which the spine honors regardless of
   # whether the adapter inherits from `Base`.
   module Filters
+    # The optional base class for adapters (see the comment above).
     class Base
       class << self
         # The class-level entry point the registry resolution path calls. Spins up

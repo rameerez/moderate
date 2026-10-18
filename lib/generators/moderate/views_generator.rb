@@ -41,9 +41,9 @@ module Moderate
         end
 
         # The engine layout (only if one ships under layouts/moderate).
-        if include?("layout")
-          directory "layouts/moderate", "app/views/layouts/moderate" if engine_view_exists?("layouts/moderate")
-        end
+        return unless include?("layout")
+
+        directory "layouts/moderate", "app/views/layouts/moderate" if engine_view_exists?("layouts/moderate")
       end
 
       private

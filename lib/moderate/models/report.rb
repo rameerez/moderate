@@ -20,6 +20,7 @@ module Moderate
   # (through the `Moderate::Reportable` interface), never by anything domain-specific.
   class Report < ApplicationRecord
     include Moderate::DeferredNotices
+
     self.table_name = "moderate_reports"
 
     STATUSES = %w[open actioned dismissed].freeze
@@ -389,8 +390,8 @@ module Moderate
     # out-of-transaction notify, statement-of-reasons + appeal-window stamping); this
     # only forwards. `by:` is the moderator; the rest (`note:`, `remove_content:`,
     # `ban_user:`, `resolution_basis:`) pass straight through.
-    def resolve!(by:, **options)
-      Moderate::Services::ResolveReport.new(self, by: by).resolve!(**options)
+    def resolve!(by:, **)
+      Moderate::Services::ResolveReport.new(self, by: by).resolve!(**)
     end
 
     # Dismiss this report (no action taken) — sugar over
@@ -410,7 +411,7 @@ module Moderate
 
       return true if boolean.cast(automation["used"])
 
-      automation.except("used").values.any? { |value| value == true || value == "true" }
+      automation.except("used").values.any? { |value| [true, "true"].include?(value) }
     end
 
     private
@@ -660,7 +661,9 @@ module Moderate
       return unless anonymous?
       return if legal_reason == "protection_of_minors"
 
-      errors.add(:anonymous, I18n.t("moderate.errors.anonymous_notice_child_safety_only", default: "anonymous notices are only allowed for offences against minors"))
+      errors.add(:anonymous,
+        I18n.t("moderate.errors.anonymous_notice_child_safety_only",
+          default: "anonymous notices are only allowed for offences against minors"))
     end
 
     # Accept either a multi-URL list or newline-separated text, fold in the single
@@ -707,7 +710,7 @@ module Moderate
       if result&.flagged?
         evidence["used"] = true
         evidence["field"] = reported_field
-        evidence["sources"] = Array(evidence["sources"]).concat([result.source]).compact.uniq
+        evidence["sources"] = Array(evidence["sources"]).push(result.source).compact.uniq
         evidence["categories"] = Array(evidence["categories"]).concat(result.categories).compact.uniq
         evidence["scores"] = result.scores
         # `raw` is the untouched provider payload (Moderate::Result#raw) — kept for

@@ -344,7 +344,7 @@ module Moderate
       return false if owner.nil?
 
       if owner.respond_to?(:id) && viewer.respond_to?(:id)
-        owner.id == viewer.id && owner.class == viewer.class
+        owner.id == viewer.id && owner.instance_of?(viewer.class)
       else
         owner == viewer
       end

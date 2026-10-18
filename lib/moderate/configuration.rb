@@ -74,11 +74,11 @@ module Moderate
     # the controller auto-uses Turnstile instead and this proc is bypassed.
     attr_reader :parent_controller
     attr_accessor :notice_form_enabled, :notice_rate_limit,
-                  :notice_turnstile_site_key, :notice_turnstile_secret_key,
-                  :notice_captcha_verifier, :notice_guard, :notice_human_verification_skip_if,
-                  :appeal_form_enabled, :appeal_rate_limit, :appeal_guard,
-                  :appeal_human_verification_skip_if, :appeal_return_path,
-                  :transparency_report_enabled
+      :notice_turnstile_site_key, :notice_turnstile_secret_key,
+      :notice_captcha_verifier, :notice_guard, :notice_human_verification_skip_if,
+      :appeal_form_enabled, :appeal_rate_limit, :appeal_guard,
+      :appeal_human_verification_skip_if, :appeal_return_path,
+      :transparency_report_enabled
 
     def initialize
       # Identity. "User" is the overwhelmingly common case; the host overrides it
@@ -310,9 +310,7 @@ module Moderate
     # the ecosystem-wide convention.
     def normalize_mode(value)
       mode = value.to_s.strip.downcase.to_sym
-      unless FILTER_MODES.include?(mode)
-        raise ArgumentError, "default_filter_mode must be one of: #{FILTER_MODES.join(', ')}"
-      end
+      raise ArgumentError, "default_filter_mode must be one of: #{FILTER_MODES.join(", ")}" unless FILTER_MODES.include?(mode)
 
       mode
     end

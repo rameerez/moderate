@@ -340,7 +340,7 @@ module Moderate
         author = User.create!(name: "Author", email: "author-plain@example.com")
         plain = PlainComment.create!(user: author, body: "x")
         report = Moderate::Report.create!(reportable: plain, reported_user: author, category: "other",
-                                          message: "plain", good_faith_confirmed: true)
+          message: "plain", good_faith_confirmed: true)
 
         assert_raises(ActiveRecord::RecordInvalid) do
           report.resolve!(by: User.create!(name: "Mod"), note: "Remove.", remove_content: true)

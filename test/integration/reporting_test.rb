@@ -23,6 +23,7 @@ class ReportingTest < ActiveSupport::TestCase
   # INSTANCE (set per `view_context` call), so there's no shared class state to leak.
   class FakeHostController < ActionController::Base
     attr_accessor :test_viewer
+
     helper_method :current_user
     def current_user = test_viewer
   end
@@ -96,7 +97,7 @@ class ReportingTest < ActiveSupport::TestCase
 
   test "moderate_report_link accepts a custom label and passes through HTML options" do
     html = render_report_link(@comment, viewer: @viewer, field: :body,
-                              label: "Flag this", html_options: { class: "report-btn", "data-test": "x" })
+      label: "Flag this", html_options: { class: "report-btn", "data-test": "x" })
 
     assert_includes html, "Flag this"
     assert_includes html, "report-btn"

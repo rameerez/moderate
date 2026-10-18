@@ -17,6 +17,7 @@ module Moderate
   # Google: https://support.google.com/googleplay/android-developer/answer/9876937
   class Block < ApplicationRecord
     include Moderate::DeferredNotices
+
     self.table_name = "moderate_blocks"
 
     # Both ends resolve to the host's configured user class (read lazily as a String
@@ -36,7 +37,7 @@ module Moderate
 
     # Find the edge between two users in EITHER direction (used to answer
     # "blocked_with?" — is there a block between us, regardless of who blocked whom).
-    scope :between, ->(user_a, user_b) {
+    scope :between, lambda { |user_a, user_b|
       return none if user_a.blank? || user_b.blank?
 
       where(blocker_id: user_a.id, blocked_id: user_b.id)

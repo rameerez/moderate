@@ -48,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `:retention_purged`. `docs/compliance.md` gains a retention section: what the gem stores,
   that nothing is purged by default, and what the DSA and the GDPR expect.
 
+- **RuboCop runs in CI** (a `rubocop` job next to the test matrix) and the codebase has zero
+  offenses. `.rubocop.yml` now describes the code as it is: size metrics off (the gem
+  explains itself in long, commented methods), complexity metrics capped where the code is,
+  140-column lines, continuation lines indented one step, and the ecosystem's `has_*` macro
+  names allowed. The rest was fixed: safe autocorrections plus a few by hand (`rescue
+  StandardError`, double-quoted strings, documentation comments on the small classes,
+  `FileUtils.rm_f`). New cops are enabled.
+
 ### Fixed
 
 - **docs/notifications.md's statement-of-reasons mailer had no working appeal link.** It

@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 module Moderate
+  # The 0.x profanity check behind `validates :field, moderate: true`, kept for
+  # compatibility. 1.0 code classifies through adapters (Moderate.classify).
   class Text
     class << self
       def bad_words?(text)

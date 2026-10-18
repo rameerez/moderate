@@ -56,8 +56,8 @@ module Moderate
       age = older_than.to_i
       if older_than.nil? || age < minimum_age.to_i
         raise ArgumentError,
-              "older_than must be at least the #{minimum_age.inspect} appeal window (got #{older_than.inspect}): " \
-              "a decision that can still be appealed keeps its evidence"
+          "older_than must be at least the #{minimum_age.inspect} appeal window (got #{older_than.inspect}): " \
+          "a decision that can still be appealed keeps its evidence"
       end
 
       cutoff = now - older_than
@@ -148,6 +148,6 @@ module Moderate
     end
 
     private_class_method :reports_due, :flags_due, :appeals_due, :report_redaction, :flag_redaction,
-                         :appeal_redaction, :redact, :audit
+      :appeal_redaction, :redact, :audit
   end
 end

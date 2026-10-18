@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+# Resolves the host's `config.parent_controller` once, for the engine's base controller.
 module Moderate
   # Base controller for the engine's OWN controllers (today: the public DSA notice
   # form). It is NOT used by the host's in-app report/admin controllers — those are
@@ -32,14 +33,13 @@ module Moderate
     ::ActionController::Base
   end
 
+  # The base of the engine's own controllers (notices, appeals, transparency).
   class ApplicationController < parent
     # CSRF protection — but only when the parent actually supports it. On
     # `ActionController::API` (or a host base that doesn't include the module),
     # `protect_from_forgery` isn't defined, so we guard the call. The public notice
     # form is a state-changing POST, so we want forgery protection whenever it's
     # available. `with: :exception` is the modern Rails default.
-    if respond_to?(:protect_from_forgery)
-      protect_from_forgery with: :exception
-    end
+    protect_from_forgery with: :exception if respond_to?(:protect_from_forgery)
   end
 end

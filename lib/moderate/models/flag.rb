@@ -17,6 +17,7 @@ module Moderate
   # doesn't presume a human is the only reviewer.
   class Flag < ApplicationRecord
     include Moderate::DeferredNotices
+
     self.table_name = "moderate_flags"
 
     STATUSES = %w[pending actioned dismissed].freeze

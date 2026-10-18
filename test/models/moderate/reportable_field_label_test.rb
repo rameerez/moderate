@@ -77,6 +77,7 @@ module Moderate
         self.table_name = "comments"
         def self.name = "IncludeLabelNote"
         include Moderate::Reportable
+
         reportable_fields :body, labels: { "body" => "Via include" }
       end
 

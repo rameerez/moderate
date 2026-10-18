@@ -36,7 +36,7 @@ module Moderate
       super(
         category: normalize_symbol(category),
         subcategory: subcategory.nil? ? nil : normalize_symbol(subcategory),
-        score: score.nil? ? nil : score.to_f,
+        score: score&.to_f,
         flagged: flagged ? true : false,
         input: normalize_symbol(input || :unknown)
       )

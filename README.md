@@ -546,6 +546,7 @@ We use Minitest. Run the suite (a dummy Rails app under `test/dummy`, against SQ
 
 ```bash
 bundle exec rake test
+bundle exec rubocop   # CI expects zero offenses
 ```
 
 ## Development

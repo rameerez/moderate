@@ -53,13 +53,13 @@ class AwsRekognitionAdapter
   # change that default if a different fallback fits your app.
   CATEGORY_MAP = {
     "Explicit Nudity" => [:sexual, nil],
-    "Sexual"          => [:sexual, nil],
+    "Sexual" => [:sexual, nil],
     "Non-Explicit Nudity of Intimate parts and Kissing" => [:sexual, nil],
-    "Violence"        => [:violence, nil],
-    "Visually Disturbing" => [:violence, :graphic],
-    "Hate Symbols"    => [:hate, nil],
+    "Violence" => [:violence, nil],
+    "Visually Disturbing" => %i[violence graphic],
+    "Hate Symbols" => [:hate, nil],
     "Drugs & Tobacco" => [:illicit, nil],
-    "Gambling"        => [:illicit, nil]
+    "Gambling" => [:illicit, nil]
   }.freeze
 
   def initialize(client: nil)
@@ -89,7 +89,7 @@ class AwsRekognitionAdapter
       source: "image_filter",
       raw: response.to_h
     )
-  rescue => error
+  rescue StandardError => error
     # FAIL OPEN on everything, same rationale as any network classifier: a moderation
     # API is defense-in-depth, not a gatekeeper that should block uploads on an AWS
     # blip. The image simply isn't auto-flagged this time; users can still report it.

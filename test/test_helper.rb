@@ -44,8 +44,8 @@ class ActiveSupport::TestCase
   end
 
   # Quickly file a report for assertions.
-  def report!(reporter, content, category: :harassment, **opts)
-    reporter.report!(content, category: category, **opts)
+  def report!(reporter, content, category: :harassment, **)
+    reporter.report!(content, category: category, **)
   end
 
   # Quickly create a block edge for assertions.

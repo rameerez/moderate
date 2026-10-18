@@ -244,14 +244,14 @@ module Moderate
     # on this save. `attachment_changes` only exists on Active Storage models —
     # plain models skip straight through.
     def moderate_snapshot_attachment_changes
-      return true unless respond_to?(:attachment_changes)
+      return unless respond_to?(:attachment_changes)
 
       moderation_filtered_fields.each do |field|
         next unless attachment_changes.key?(field)
 
         (@moderate_changed_attachment_fields ||= Set.new) << field
       end
-      true # never halt the save chain
+      nil # a callback's return value never halts the save (only `throw :abort` does)
     end
 
     # Blank check that can see through an `ActiveStorage::Attached` proxy — an

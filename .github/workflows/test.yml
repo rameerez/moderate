@@ -13,6 +13,23 @@ on:
       - "LICENSE.txt"
 
 jobs:
+  # Style and lint: zero offenses against .rubocop.yml.
+  rubocop:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - name: Run RuboCop
+        run: bundle exec rubocop
+
   # Main test suite - tests Ruby versions and Rails compatibility with SQLite.
   # Every Ruby still maintained upstream (3.3+) × every supported Rails (7.2, 8.0,
   # 8.1). `Gemfile` is the committed lock (Rails 8.1, frozen install); the

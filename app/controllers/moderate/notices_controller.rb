@@ -154,9 +154,7 @@ module Moderate
       return @current_notifier if defined?(@current_notifier)
 
       @current_notifier =
-        if respond_to?(:current_user, true)
-          current_user
-        end
+        (current_user if respond_to?(:current_user, true))
     rescue StandardError
       # A host `current_user` that raises (e.g. a not-yet-migrated session) must not
       # break the public notice form — fall back to "anonymous".

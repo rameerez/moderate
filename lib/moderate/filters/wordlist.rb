@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "yaml"
-require "set"
 
 module Moderate
   module Filters
@@ -143,7 +142,7 @@ module Moderate
           .sub(/\\b\z/, "")          # drop trailing word boundary
           .gsub(/\\s[*+]?/, "")      # drop \s, \s*, \s+ whitespace matchers
           .gsub(/\[ ([^\]]*)\]/, '[\1]') # drop a literal space inside a char class
-          .delete(" ")               # drop any remaining literal spaces
+          .delete(" ") # drop any remaining literal spaces
       end
 
       def classify(value)

@@ -116,7 +116,7 @@ class AppealFormTest < ActionDispatch::IntegrationTest
 
   test "a configured human verification skip bypasses the appeal browser guard" do
     Moderate.config.appeal_guard = ->(_controller) { false }
-    Moderate.config.appeal_human_verification_skip_if = ->(controller) {
+    Moderate.config.appeal_human_verification_skip_if = lambda { |controller|
       controller.request.user_agent.to_s.include?("Hotwire Native")
     }
     report = closed_report

@@ -128,7 +128,7 @@ module Moderate
       body_flag = flag_comment!("body")
       flag_comment!("image")
 
-      assert_equal [ body_flag ], @comment.pending_moderation_flags(:body).to_a
+      assert_equal [body_flag], @comment.pending_moderation_flags(:body).to_a
     end
 
     private

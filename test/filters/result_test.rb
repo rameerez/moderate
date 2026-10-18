@@ -72,7 +72,7 @@ class Moderate::ResultTest < ActiveSupport::TestCase
     # loudly rather than silently diverging from OpenAI's wire labels (which the
     # OpenAI adapter, the wordlist YAMLs, and the DSA counters all key off).
     assert_equal %i[harassment hate sexual self-harm violence illicit].sort,
-                 Moderate::Label::CATEGORIES.sort
+      Moderate::Label::CATEGORIES.sort
     assert_equal %i[intent instructions], Moderate::Label::TAXONOMY[:"self-harm"]
     assert_includes Moderate::Label::INPUTS, :text
     assert_includes Moderate::Label::INPUTS, :image
@@ -94,7 +94,7 @@ class Moderate::ResultTest < ActiveSupport::TestCase
 
     refute result.allowed?
     assert result.flagged?
-    assert_equal [:hate, :"hate/threatening"], result.categories
+    assert_equal %i[hate hate/threatening], result.categories
     assert_equal({ "hate" => 0.97, "hate/threatening" => 0.81 }, result.scores)
     assert_equal "openai", result.source
     assert_equal 2, result.labels.size
@@ -124,7 +124,7 @@ class Moderate::ResultTest < ActiveSupport::TestCase
     )
 
     refute result.allowed?, "a flagged label must make the result deny by inference"
-    assert_equal [:hate, :"hate/threatening"], result.categories
+    assert_equal %i[hate hate/threatening], result.categories
     assert_equal({ "hate" => 0.97, "hate/threatening" => 0.81 }, result.scores)
 
     threatening = result.labels.find { |label| label.subcategory == :threatening }

@@ -187,7 +187,7 @@ class Moderate::RetentionTest < ActiveSupport::TestCase
   end
 
   def with_env(values)
-    previous = values.keys.to_h { |key| [key, ENV[key]] }
+    previous = values.keys.to_h { |key| [key, ENV.fetch(key, nil)] }
     values.each { |key, value| ENV[key] = value }
     yield
   ensure

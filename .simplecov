@@ -46,13 +46,13 @@ SimpleCov.start do
   minimum_coverage line: 80, branch: 60
 
   # Disambiguate parallel test runs
-  command_name "Job #{ENV['TEST_ENV_NUMBER']}" if ENV["TEST_ENV_NUMBER"]
+  command_name "Job #{ENV["TEST_ENV_NUMBER"]}" if ENV["TEST_ENV_NUMBER"]
 end
 
 # Print coverage summary to terminal after tests complete
 SimpleCov.at_exit do
   SimpleCov.result.format!
-  puts "\n" + "=" * 60
+  puts "\n#{"=" * 60}"
   puts "COVERAGE SUMMARY"
   puts "=" * 60
   puts "Line Coverage:   #{SimpleCov.result.covered_percent.round(2)}%"

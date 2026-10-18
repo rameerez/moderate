@@ -156,7 +156,7 @@ class PublicApiTest < ActiveSupport::TestCase
   # Every event name the gem's own code hands to Moderate.notify / Moderate.audit,
   # read from the source with the comments stripped.
   def emitted_event_names
-    code = Dir[File.join(ROOT, "{lib,app}", "**", "*.rb")].sort.map do |path|
+    code = Dir[File.join(ROOT, "{lib,app}", "**", "*.rb")].map do |path|
       File.readlines(path).reject { |line| line.strip.start_with?("#") }.join
     end.join("\n")
 

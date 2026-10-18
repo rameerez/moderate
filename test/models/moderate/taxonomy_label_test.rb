@@ -25,7 +25,7 @@ module Moderate
 
     test "every value the gem defines has an English and a Spanish label" do
       assert_equal Moderate::TAXONOMY_LABEL_SCOPES.keys.sort, GEM_VALUES.keys.sort,
-                   "a new kind needs its values listed here"
+        "a new kind needs its values listed here"
 
       %i[en es].each do |locale|
         GEM_VALUES.each do |kind, values|

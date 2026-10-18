@@ -69,6 +69,15 @@ module Moderate
         true
       end
 
+      # The anonymous-notifier recipient. Intentionally tiny and NOT a User: the
+      # host's notify hook reaches `recipient.email` / `recipient.name` and nothing
+      # else. Frozen value object.
+      NotifierRecipient = Data.define(:email, :name) do
+        # Mirror the User-ish reader some host mailers reach for, so a notifier and a
+        # User are interchangeable at the `recipient.email` call site.
+        def display_name = name.to_s.empty? ? email : name
+      end
+
       private
 
       attr_reader :reporter
@@ -103,7 +112,7 @@ module Moderate
             subject_url: report.subject_url,
             # Redaction-safe admin one-liner. We deliberately keep host content out
             # of it — just the legal ground and an opaque pointer to the record.
-            summary: "New DSA notice (#{report.legal_reason || 'illegal_content'}) — Report ##{report.id}"
+            summary: "New DSA notice (#{report.legal_reason || "illegal_content"}) — Report ##{report.id}"
           }
         )
       end
@@ -117,15 +126,6 @@ module Moderate
         return report.reporter if report.reporter
 
         NotifierRecipient.new(report.notifier_email, report.notifier_name)
-      end
-
-      # The anonymous-notifier recipient. Intentionally tiny and NOT a User: the
-      # host's notify hook reaches `recipient.email` / `recipient.name` and nothing
-      # else. Frozen value object.
-      NotifierRecipient = Data.define(:email, :name) do
-        # Mirror the User-ish reader some host mailers reach for, so a notifier and a
-        # User are interchangeable at the `recipient.email` call site.
-        def display_name = name.to_s.empty? ? email : name
       end
     end
   end

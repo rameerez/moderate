@@ -101,7 +101,7 @@ module Moderate
 
     private
 
-    def on(shard, &block) = ShardRecord.connected_to(shard: shard, &block)
+    def on(shard, &) = ShardRecord.connected_to(shard: shard, &)
 
     # The current connection's open transaction holds no Envelope.
     def assert_nothing_enrolled_here

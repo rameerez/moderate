@@ -14,10 +14,10 @@ group :development do
   gem "web-console"
 
   # Code quality
-  gem "standard"
   gem "rubocop", "~> 1.0"
   gem "rubocop-minitest", "~> 0.35"
   gem "rubocop-performance", "~> 1.0"
+  gem "standard"
 end
 
 group :test do
@@ -35,19 +35,19 @@ group :test do
   # notice form + controller concern), but these three frameworks are standalone
   # gems Bundler won't install transitively, so the dummy can't `require` their
   # railties without them being declared here.
-  gem "activejob"
   gem "actionmailer"
+  gem "activejob"
   gem "activestorage"
 
   # Database adapters (for multi-database testing)
-  gem "sqlite3"
-  gem "pg"
   gem "mysql2"
+  gem "pg"
+  gem "sqlite3"
 
   # Dummy Rails app
   gem "bootsnap", require: false
-  gem "puma"
   gem "importmap-rails"
+  gem "puma"
   gem "sprockets-rails"
   gem "stimulus-rails"
   gem "turbo-rails"

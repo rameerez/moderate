@@ -5,6 +5,7 @@ require "rails/generators/active_record"
 
 module Moderate
   module Generators
+    # `rails generate moderate:install`: the adaptive migration and the initializer.
     class InstallGenerator < Rails::Generators::Base
       include ActiveRecord::Generators::Migration
 

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "set"
-
 # We lean on a couple of ActiveSupport core extensions (notably String#constantize
 # for the lazy class-name resolution that lets `config.user_class = "User"` work
 # before the User model is loaded). In a Rails host these are always present; we
@@ -33,7 +31,7 @@ require_relative "moderate/macros"
 # the public DSA notice form, and registers the macros on ActiveRecord. Required
 # only when Rails is present so the value objects + macros above can still be used
 # in a plain-Ruby context (a console, a non-Rails script) without booting an engine.
-require_relative "moderate/engine" if defined?(::Rails::Engine)
+require_relative "moderate/engine" if defined?(Rails::Engine)
 
 # `moderate` — a complete Trust & Safety layer for Rails apps with user-generated
 # content: report, block, filter, moderate, appeal, comply (EU DSA / Apple App
@@ -79,7 +77,7 @@ module Moderate
     # Read alias. Some ecosystem gems expose `.configuration`; we keep `.config`
     # as the canonical name (matches the README's `Moderate.config`) and provide
     # `.configuration` only as a courtesy alias for muscle memory.
-    alias_method :configuration, :config
+    alias configuration config
 
     # The host's entry point: `Moderate.configure do |config| ... end`.
     #
@@ -262,7 +260,7 @@ module Moderate
         # A lambda may legitimately return a delivery handle, a job, true, etc.
         # Anything truthy counts as delivered; nil/false counts as not-delivered.
         result ? true : false
-      rescue => error
+      rescue StandardError => error
         audit(
           name: :notify_failed,
           subject: event.subject,
@@ -288,7 +286,7 @@ module Moderate
       event = event_or_name.is_a?(Event) ? event_or_name : Event.new(name: event_or_name, **payload)
       config.audit.call(event)
       true
-    rescue => error
+    rescue StandardError => error
       logger&.warn("[moderate] audit hook failed for #{event&.name}: #{error.class}: #{error.message}")
       false
     end
@@ -315,14 +313,15 @@ module Moderate
     # `user_banned` notice to the caller: it returns the event's keywords for
     # `Moderate.announce_ban`, so the notice can wait for the decision's commit.
     #
-    # @api private: decisions ban through `report.resolve!(ban_user: true)` / `flag.action!(ban_user: true)`, which send the statement of reasons this skips.
+    # @api private: decisions ban through `report.resolve!(ban_user: true)` or
+    # `flag.action!(ban_user: true)`, which also send the statement of reasons.
     def apply_ban(user:, by:, reason:, announce: true)
       ensure_ban_handler!
       result = config.ban_handler.call(user: user, by: by, reason: reason)
       payload = {
         user_id: user&.id,
         reason: reason,
-        summary: "user #{user&.id || '(unknown)'} banned"
+        summary: "user #{user&.id || "(unknown)"} banned"
       }.compact
       event = { subject: user, actor: by, recipients: [user].compact, payload: payload }
 
@@ -374,10 +373,10 @@ module Moderate
       return true if config.ban_handler_configured?
 
       raise ConfigurationError,
-            "a ban was requested but no config.ban_handler is set, so nothing would suspend the account " \
-            "while the audit trail and the statement of reasons said it was. Wire one in " \
-            "config/initializers/moderate.rb, e.g. " \
-            "`config.ban_handler = ->(user:, by:, reason:) { user.suspend!(reason: reason) }`."
+        "a ban was requested but no config.ban_handler is set, so nothing would suspend the account " \
+        "while the audit trail and the statement of reasons said it was. Wire one in " \
+        "config/initializers/moderate.rb, e.g. " \
+        "`config.ban_handler = ->(user:, by:, reason:) { user.suspend!(reason: reason) }`."
     end
 
     # --- Transactions -----------------------------------------------------------
@@ -541,8 +540,8 @@ module Moderate
     # it unless the host schedules it. See Moderate::Retention and docs/compliance.md.
     #
     #   Moderate.purge(older_than: 1.year)   # => { reports: 12, flags: 40, appeals: 1 }
-    def purge(**options)
-      Retention.purge(**options)
+    def purge(**)
+      Retention.purge(**)
     end
 
     private
@@ -558,7 +557,7 @@ module Moderate
     # The internal reportable-name set. Set (not Array) so re-including the concern
     # is idempotent.
     def reportable_registry
-      @reportable_classes ||= Set.new
+      @reportable_registry ||= Set.new
     end
 
     # [Class or nil, class name or nil] for whatever reportable_field_label got.
