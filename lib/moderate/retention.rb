@@ -35,7 +35,7 @@ module Moderate
   # Pending reports, flags and appeals are never touched, whatever their age.
   module Retention
     # What a removed text column reads afterwards (message, excerpt and reason are
-    # NOT NULL). Also how a second run knows a row is already done.
+    # NOT NULL). Only a filler: whether a row is done is its `redacted_at`.
     REDACTED = "[redacted]"
 
     # The default age, counted from the decision. Six months of appeal window
@@ -50,8 +50,12 @@ module Moderate
     end
 
     # Redact what is old enough, and return how many rows of each kind changed (or
-    # would change, with `dry_run: true`). Audited as `:retention_purged` when
-    # anything changed. Idempotent: a second run finds nothing left to do.
+    # would change, with `dry_run: true`), plus, under `:held`, how many were old
+    # enough but kept for a legal hold. Audited as `:retention_purged` when anything
+    # changed. Idempotent: a row is selected while its `redacted_at` is nil, whatever
+    # its content says, and stamped when it is redacted.
+    #
+    #   Moderate.purge  # => { reports: 3, flags: 9, appeals: 1, held: { reports: 1, flags: 2, appeals: 0 } }
     def self.purge(older_than: DEFAULT_AGE, now: Time.current, dry_run: false)
       age = older_than.to_i
       if older_than.nil? || age < minimum_age.to_i
@@ -61,20 +65,44 @@ module Moderate
       end
 
       cutoff = now - older_than
-      scopes = {
-        reports: reports_due(cutoff, now),
-        flags: flags_due(cutoff),
-        appeals: appeals_due(cutoff)
-      }
-      return scopes.transform_values(&:count) if dry_run
+      due = { reports: reports_due(cutoff, now), flags: flags_due(cutoff), appeals: appeals_due(cutoff) }
+      held = due.to_h { |kind, scope| [kind, scope.where(hold_condition(kind, now, held: true)).count] }
+      free = due.to_h { |kind, scope| [kind, scope.where(hold_condition(kind, now, held: false))] }
+      return free.transform_values(&:count).merge(held: held) if dry_run
 
       counts = {
-        reports: redact(scopes[:reports], report_redaction(now)),
-        flags: redact(scopes[:flags], flag_redaction(now)),
-        appeals: redact(scopes[:appeals], appeal_redaction(now))
+        reports: redact(free[:reports], report_redaction(now)),
+        flags: redact(free[:flags], flag_redaction(now)),
+        appeals: redact(free[:appeals], appeal_redaction(now))
       }
-      audit(counts, cutoff: cutoff, older_than: age) if counts.values.sum.positive?
-      counts
+      audit(counts, held, cutoff: cutoff, older_than: age) if counts.values.sum.positive?
+      counts.merge(held: held)
+    end
+
+    # Put `report` under a legal hold until `until:` (a future time): the purge leaves
+    # the report, its appeals and the flags on its content alone, however old they
+    # are — an out-of-court dispute (DSA Art. 21), a court case, an authority's
+    # request. Placing it again moves the date (later or earlier). Audited as
+    # `:legal_hold_placed`.
+    def self.hold(report, until:, by: nil, reason: nil)
+      held_until = binding.local_variable_get(:until)
+      unless held_until.respond_to?(:to_time) && held_until.to_time > Time.current
+        raise ArgumentError, "a legal hold needs a time in the future (until: #{held_until.inspect})"
+      end
+
+      report.update_columns(held_until: held_until, updated_at: Time.current)
+      Moderate.audit(:legal_hold_placed, **hold_event(report, by: by, reason: reason, held_until: held_until))
+      report
+    end
+
+    # Lift `report`'s legal hold: the next purge treats it like any other report.
+    # Audited as `:legal_hold_released`. A report with no hold is returned unchanged.
+    def self.release_hold(report, by: nil, reason: nil)
+      return report if report.held_until.nil?
+
+      report.update_columns(held_until: nil, updated_at: Time.current)
+      Moderate.audit(:legal_hold_released, **hold_event(report, by: by, reason: reason, held_until: nil))
+      report
     end
 
     # Closed reports decided before `cutoff`, out of their appeal window and with
@@ -83,25 +111,45 @@ module Moderate
       reports = Moderate::Report
       open_appeals = Moderate::Appeal.pending.select(:report_id)
 
-      reports.where(status: reports::STATUSES - ["open"])
+      reports.where(status: reports::STATUSES - ["open"], redacted_at: nil)
         .where(resolved_at: ..cutoff)
         .where(reports.arel_table[:appeal_deadline_at].eq(nil).or(reports.arel_table[:appeal_deadline_at].lteq(now)))
         .where.not(id: open_appeals)
-        .where.not(message: REDACTED)
     end
 
     def self.flags_due(cutoff)
       flags = Moderate::Flag
-      flags.where(status: flags::STATUSES - ["pending"])
-        .where(reviewed_at: ..cutoff)
-        .merge(flags.where(excerpt: nil).or(flags.where.not(excerpt: REDACTED)))
+      flags.where(status: flags::STATUSES - ["pending"], redacted_at: nil).where(reviewed_at: ..cutoff)
     end
 
     def self.appeals_due(cutoff)
       appeals = Moderate::Appeal
-      appeals.where(status: appeals::STATUSES - ["open"])
-        .where(resolved_at: ..cutoff)
-        .where.not(reason: REDACTED)
+      appeals.where(status: appeals::STATUSES - ["open"], redacted_at: nil).where(resolved_at: ..cutoff)
+    end
+
+    # Arel for "kept by a legal hold" (held: true) or "not" (held: false): the
+    # report's own hold; an appeal's report's; for a flag, a held report on the same
+    # content and field (or on the whole record). Written both ways rather than
+    # negated, because NOT (held_until > now) is NULL, not true, for a report that
+    # was never held.
+    def self.hold_condition(kind, now, held:)
+      reports = Moderate::Report.arel_table
+      held_reports = Moderate::Report.where(reports[:held_until].gt(now))
+      case kind
+      when :reports
+        held ? reports[:held_until].gt(now) : reports[:held_until].eq(nil).or(reports[:held_until].lteq(now))
+      when :appeals
+        ids = held_reports.select(:id).arel
+        held ? Moderate::Appeal.arel_table[:report_id].in(ids) : Moderate::Appeal.arel_table[:report_id].not_in(ids)
+      when :flags
+        flags = Moderate::Flag.arel_table
+        same_content = held_reports
+          .where(reports[:reportable_type].eq(flags[:flaggable_type]))
+          .where(reports[:reportable_id].eq(flags[:flaggable_id]))
+          .where(reports[:reported_field].eq(flags[:field]).or(reports[:reported_field].eq(nil)))
+          .arel.exists
+        held ? same_content : same_content.not
+      end
     end
 
     def self.report_redaction(now)
@@ -114,16 +162,17 @@ module Moderate
         notifier_name: nil,
         notifier_email: nil,
         reporter_id: nil,
+        redacted_at: now,
         updated_at: now
       }
     end
 
     def self.flag_redaction(now)
-      { excerpt: REDACTED, context: { "redacted_at" => now.iso8601 }, updated_at: now }
+      { excerpt: REDACTED, context: { "redacted_at" => now.iso8601 }, redacted_at: now, updated_at: now }
     end
 
     def self.appeal_redaction(now)
-      { reason: REDACTED, appellant_name: nil, appellant_email: nil, updated_at: now }
+      { reason: REDACTED, appellant_name: nil, appellant_email: nil, redacted_at: now, updated_at: now }
     end
 
     # One UPDATE per batch, no callbacks or validations: a redacted DSA notice no
@@ -135,10 +184,11 @@ module Moderate
       changed
     end
 
-    def self.audit(counts, cutoff:, older_than:)
+    def self.audit(counts, held, cutoff:, older_than:)
       Moderate.audit(
         :retention_purged,
         payload: counts.merge(
+          held: held,
           cutoff: cutoff.iso8601,
           older_than_seconds: older_than,
           summary: "retention: redacted #{counts[:reports]} reports, #{counts[:flags]} flags, " \
@@ -147,7 +197,18 @@ module Moderate
       )
     end
 
-    private_class_method :reports_due, :flags_due, :appeals_due, :report_redaction, :flag_redaction,
-      :appeal_redaction, :redact, :audit
+    def self.hold_event(report, by:, reason:, held_until:)
+      {
+        subject: report,
+        actor: by,
+        payload: {
+          report_id: report.id, held_until: held_until&.iso8601, reason: reason,
+          summary: held_until ? "Report ##{report.id} held until #{held_until.to_date}" : "Report ##{report.id} hold released"
+        }.compact
+      }
+    end
+
+    private_class_method :reports_due, :flags_due, :appeals_due, :hold_condition, :report_redaction,
+      :flag_redaction, :appeal_redaction, :redact, :audit, :hold_event
   end
 end

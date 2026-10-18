@@ -400,6 +400,11 @@ module Moderate
       Moderate::Services::ResolveReport.new(self, by: by).dismiss!(note: note)
     end
 
+    # Under a legal hold right now (Moderate.hold)? The purge leaves it alone.
+    def held?(at: Time.current)
+      held_until.present? && held_until > at
+    end
+
     # DSA Art. 17(3)(c): did automated means (a wordlist/image/remote classifier)
     # participate in surfacing or deciding this report? The decision email reads this
     # to truthfully state whether automation was used. We treat the disclosure as

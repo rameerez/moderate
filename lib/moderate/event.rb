@@ -90,7 +90,7 @@ module Moderate
     AUDIT_NAMES = %i[
       report_received appeal_received report_decision flag_decision appeal_decision
       flag_filed user_blocked user_unblocked user_banned content_removed
-      notify_failed classification_skipped retention_purged
+      notify_failed classification_skipped retention_purged legal_hold_placed legal_hold_released
     ].freeze
   end
 end

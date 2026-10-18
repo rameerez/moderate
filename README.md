@@ -418,7 +418,7 @@ The full event vocabulary: `report_received`, `notice_received`, `report_decisio
 - **DSA Art. 17 (statement of reasons):** decision notices state the action, the legal/contractual ground, whether automated means were used, and the redress path.
 - **DSA Art. 20 (appeals):** a free, electronic internal complaint mechanism, open ≥ 6 months, decided by a human.
 - **DSA Art. 24 (transparency):** counters you can publish (notices received, actions taken, median handling time, appeal outcomes). The public transparency page is **opt-in** (`config.transparency_report_enabled = true`, off by default) — a live portal isn't itself required (the duty is to *publish* a report, and micro/small enterprises are exempt), so you turn it on only when you want it.
-- **Retention (GDPR storage limitation):** nothing is purged unless you ask. `Moderate.purge(older_than: 1.year)` (or `bin/rails moderate:purge`, opt-in, safe to run nightly) redacts the content copies and contact details from reports, flags and appeals whose decision is final, and keeps every decision and every transparency count. What is stored, for how long, and why: [`docs/compliance.md#5-retention-what-moderate-keeps-and-for-how-long`](docs/compliance.md#5-retention-what-moderate-keeps-and-for-how-long).
+- **Retention (GDPR storage limitation):** nothing is purged unless you ask. `Moderate.purge(older_than: 1.year)` (or `bin/rails moderate:purge`, opt-in, safe to run nightly) redacts the content copies and contact details from reports, flags and appeals whose decision is final, and keeps every decision and every transparency count. `Moderate.hold(report, until:)` keeps a report under external dispute out of it. What is stored, for how long, and why: [`docs/compliance.md#5-retention-what-moderate-keeps-and-for-how-long`](docs/compliance.md#5-retention-what-moderate-keeps-and-for-how-long).
 - **Apple Guideline 1.2 & Google Play UGC:** filter-before-post, in-app report **and** block, ongoing moderation, published contact — `moderate` covers all four. See the mapped checklist in [`docs/compliance.md`](docs/compliance.md).
 
 > Two taxonomies, on purpose: an in-app **community report** category set (harassment, spam, …) and a separate, regulator-aligned **DSA legal-reason** taxonomy for public notices. `moderate` ships both. The community set is host-customizable via `config.report_categories`; the DSA legal-reason taxonomy is regulator-defined and fixed.
@@ -478,13 +478,13 @@ What you get: `#reports` · `#open_reports` · `#reported?` · `#flagged?` · `#
 
 #### `Moderate` (the module)
 
-`.configure` · `.config` · `.configuration` · `.reset!` · `.user_class` · `.reportable_classes` · `.classify` · `.filter_policy_for` · `.register_adapter` · `.blocked_ids_for` · `.responsible_user` · `.reportable_field_label` · `.taxonomy_label` · `.transparency` · `.purge` · `Moderate::TAXONOMY_LABEL_SCOPES` · `Moderate::VERSION`
+`.configure` · `.config` · `.configuration` · `.reset!` · `.user_class` · `.reportable_classes` · `.classify` · `.filter_policy_for` · `.register_adapter` · `.blocked_ids_for` · `.responsible_user` · `.reportable_field_label` · `.taxonomy_label` · `.transparency` · `.purge` · `.hold` (`report, until:, by:, reason:`) · `.release_hold` · `Moderate::TAXONOMY_LABEL_SCOPES` · `Moderate::VERSION`
 
 #### `Moderate::Report`
 
 Queries: `.pending` · `.open` · `.actioned` · `.dismissed` · `.recent_first` · `.report_categories` · `.category_options` · `.locate_signed_reportable`.
 Decisions: `#resolve!` (`by:, note:, remove_content: false, ban_user: false, resolution_basis: "terms"`) · `#dismiss!` (`by:, note:`).
-Readers: `#pending?` · `#open?` · `#closed?` · `#actioned?` · `#dismissed?` · `#dsa?` · `#community?` · `#anonymous_notice?` · `#automated_processing_used?` · `#reported_field_label` · `#reportable_label` · `#notifier_label` · `#reported_content_text` · `#subject_url_list` · `#safe_subject_url` · `#safe_subject_urls` · `#safe_subject_url_for` · `#signed_appeal_gid` · `#skip_received_notice` · `#appeals` · `#flags`.
+Readers: `#pending?` · `#open?` · `#closed?` · `#actioned?` · `#dismissed?` · `#dsa?` · `#community?` · `#anonymous_notice?` · `#automated_processing_used?` · `#reported_field_label` · `#reportable_label` · `#notifier_label` · `#reported_content_text` · `#subject_url_list` · `#safe_subject_url` · `#safe_subject_urls` · `#safe_subject_url_for` · `#signed_appeal_gid` · `#held?` · `#skip_received_notice` · `#appeals` · `#flags`.
 Value lists: `::DEFAULT_CATEGORIES` · `::DSA_LEGAL_REASONS` · `::EU_COUNTRY_CODES` · `::CONTENT_TYPES` · `::RESOLUTION_BASES` · `::STATUSES` · `::INTAKE_KINDS` · `::APPEAL_WINDOW` · `::MESSAGE_MAX_LENGTH`.
 
 #### `Moderate::Flag`
@@ -522,7 +522,7 @@ Read-only: `config.adapters` · `config.filters` · `config.adapter_for` · `con
 
 Notify events (`Moderate::Event::NOTIFY_NAMES`): `:report_received` · `:notice_received` · `:report_decision` · `:affected_user_decision` · `:appeal_received` · `:appeal_decision` · `:user_blocked` · `:user_unblocked` · `:user_banned` · `:content_flagged` · `:content_removed`
 
-Audit events (`Moderate::Event::AUDIT_NAMES`): `:report_received` · `:appeal_received` · `:report_decision` · `:flag_decision` · `:appeal_decision` · `:flag_filed` · `:user_blocked` · `:user_unblocked` · `:user_banned` · `:content_removed` · `:notify_failed` · `:classification_skipped` · `:retention_purged`
+Audit events (`Moderate::Event::AUDIT_NAMES`): `:report_received` · `:appeal_received` · `:report_decision` · `:flag_decision` · `:appeal_decision` · `:flag_filed` · `:user_blocked` · `:user_unblocked` · `:user_banned` · `:content_removed` · `:notify_failed` · `:classification_skipped` · `:retention_purged` · `:legal_hold_placed` · `:legal_hold_released`
 
 Every hook receives one `Moderate::Event`: `#name` · `#subject` · `#actor` · `#recipients` · `#payload` (always with `:summary`) · `#occurred_at` · `#id` · `#summary` · `#to_h`. The contract for `config.notify`: it is called once per event, after the transaction that caused it commits (never for a rolled-back change); a truthy return means "delivered" (the gem stamps `decision_notified_at` / `affected_user_notified_at` and, for a DSA notice, treats the Art. 16(4) receipt as sent); an exception is swallowed, audited as `:notify_failed`, and never rolls back the decision. `config.audit` follows the same rules and its return value is ignored. Payload keys may be added in a minor release, never removed or renamed.
 

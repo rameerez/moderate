@@ -46,7 +46,7 @@ class Moderate::RetentionTest < ActiveSupport::TestCase
 
     counts = Moderate.purge(older_than: 1.year)
 
-    assert_equal({ reports: 1, flags: 0, appeals: 0 }, counts)
+    assert_equal(counts_of(reports: 1), counts)
     report.reload
     assert_equal Moderate::Retention::REDACTED, report.message
     assert_nil report.reporter_id
@@ -102,7 +102,7 @@ class Moderate::RetentionTest < ActiveSupport::TestCase
     end
 
     travel_to(4.years.from_now) do
-      assert_equal({ reports: 1, flags: 0, appeals: 1 }, Moderate.purge)
+      assert_equal(counts_of(reports: 1, appeals: 1), Moderate.purge)
     end
     assert_equal Moderate::Retention::REDACTED, appeal.reload.reason
     assert_nil appeal.appellant_email
@@ -129,12 +129,12 @@ class Moderate::RetentionTest < ActiveSupport::TestCase
   test "dry_run counts without changing anything, and a second run finds nothing to do" do
     report = decided_report(at: 2.years.ago)
 
-    assert_equal({ reports: 1, flags: 0, appeals: 0 }, Moderate.purge(dry_run: true))
+    assert_equal(counts_of(reports: 1), Moderate.purge(dry_run: true))
     assert_equal "They insulted me", report.reload.message
     assert_empty ModerateTestRecorder.audits_named(:retention_purged)
 
     Moderate.purge
-    assert_equal({ reports: 0, flags: 0, appeals: 0 }, Moderate.purge)
+    assert_equal(counts_of, Moderate.purge)
     audits = ModerateTestRecorder.audits_named(:retention_purged)
     assert_equal 1, audits.size, "only a run that changed something is audited"
     assert_equal 1, audits.first.payload[:reports]
@@ -150,6 +150,79 @@ class Moderate::RetentionTest < ActiveSupport::TestCase
     Moderate.purge
 
     assert_equal before, Moderate.transparency(**period).except(:period)
+  end
+
+  # --- Content can't fake being done (redacted_at, not the text, decides) -----
+
+  test "a report, flag and appeal whose text literally reads [redacted] are still purged, and dry_run counts them" do
+    report = decided_report(at: 2.years.ago, details: Moderate::Retention::REDACTED)
+    appeal = travel_to(2.years.ago + 1.day) do
+      Moderate::Appeal.create!(report: report, appellant: @reporter, reason: Moderate::Retention::REDACTED)
+    end
+    travel_to(2.years.ago + 2.days) { appeal.reject!(by: @moderator, note: "Stands") }
+    flag = Moderate::Flag.flag_for_review!(Comment.create!(user: @author, body: "x"), field: :body, by: @moderator)
+    flag.update_columns(excerpt: Moderate::Retention::REDACTED)
+    travel_to(2.years.ago) { flag.dismiss!(by: @moderator, note: "Fine") }
+
+    assert_equal(counts_of(reports: 1, flags: 1, appeals: 1), Moderate.purge(dry_run: true))
+    Moderate.purge
+
+    report.reload
+    assert_not_nil report.redacted_at
+    assert_nil report.reporter_id, "the reporter goes even though the message already read [redacted]"
+    assert_equal ["redacted_at"], report.snapshot.keys
+    assert_not_nil flag.reload.redacted_at
+    assert_equal ["redacted_at"], flag.context.keys
+    assert_nil appeal.reload.appellant_email
+    assert_not_nil appeal.redacted_at
+    assert_equal(counts_of, Moderate.purge)
+  end
+
+  # --- Legal holds ------------------------------------------------------------
+
+  test "a held report, its appeals and the flags on its content are kept; dry_run lists them as held" do
+    report = decided_report(at: 2.years.ago)
+    appeal = travel_to(2.years.ago + 1.day) do
+      Moderate::Appeal.create!(report: report, appellant: @reporter, reason: "Please look again")
+    end
+    travel_to(2.years.ago + 2.days) { appeal.reject!(by: @moderator, note: "Stands") }
+    flag = Moderate::Flag.flag_for_review!(@comment, field: :body, by: @moderator)
+    travel_to(2.years.ago) { flag.dismiss!(by: @moderator, note: "Fine") }
+    other = decided_report(at: 2.years.ago)
+    other.update_columns(reportable_id: nil, reportable_type: nil) # about something else
+
+    Moderate.hold(report, until: 6.months.from_now, by: @moderator, reason: "ODS case 114")
+
+    assert_predicate report.reload, :held?
+    assert_equal(counts_of(reports: 1, held: { reports: 1, flags: 1, appeals: 1 }), Moderate.purge(dry_run: true))
+    assert_equal(counts_of(reports: 1, held: { reports: 1, flags: 1, appeals: 1 }), Moderate.purge)
+    assert_equal "They insulted me", report.reload.message
+    assert_equal "Please look again", appeal.reload.reason
+    assert_nil flag.reload.redacted_at
+    assert_not_nil other.reload.redacted_at
+
+    placed = ModerateTestRecorder.audits_named(:legal_hold_placed).first
+    assert_equal "ODS case 114", placed.payload[:reason]
+    assert_equal @moderator, placed.actor
+  end
+
+  test "a hold expires on its own, and release_hold lifts it now" do
+    report = decided_report(at: 2.years.ago)
+    Moderate.hold(report, until: 1.month.from_now)
+
+    travel_to(2.months.from_now) { assert_equal 1, Moderate.purge(dry_run: true)[:reports], "an expired hold keeps nothing" }
+
+    Moderate.release_hold(report, by: @moderator)
+    assert_nil report.reload.held_until
+    assert_equal 1, Moderate.purge[:reports]
+    assert_equal 1, ModerateTestRecorder.audits_named(:legal_hold_released).size
+  end
+
+  test "a hold needs a time in the future" do
+    report = decided_report(at: 2.years.ago)
+
+    assert_raises(ArgumentError) { Moderate.hold(report, until: 1.day.ago) }
+    assert_raises(ArgumentError) { Moderate.hold(report, until: nil) }
   end
 
   test "older_than may not be shorter than the appeal window" do
@@ -171,6 +244,7 @@ class Moderate::RetentionTest < ActiveSupport::TestCase
 
     output = with_env("OLDER_THAN_DAYS" => "365", "DRY_RUN" => "1") { run_purge_task }
     assert_match "would redact 1 reports", output
+    assert_match "kept for a legal hold: 0 reports, 0 flags, 0 appeals", output
     assert_equal "They insulted me", report.reload.message
 
     output = with_env("OLDER_THAN_DAYS" => "365", "DRY_RUN" => nil) { run_purge_task }
@@ -179,6 +253,10 @@ class Moderate::RetentionTest < ActiveSupport::TestCase
   end
 
   private
+
+  def counts_of(reports: 0, flags: 0, appeals: 0, held: {})
+    { reports: reports, flags: flags, appeals: appeals, held: { reports: 0, flags: 0, appeals: 0 }.merge(held) }
+  end
 
   def run_purge_task
     task = Rake::Task["moderate:purge"]

@@ -201,26 +201,40 @@ So: content copies and contact details get a short life, decisions and counts a 
 ### `Moderate.purge`: opt in
 
 ```ruby
-Moderate.purge(older_than: 1.year)                 # => { reports: 12, flags: 40, appeals: 1 }
-Moderate.purge(older_than: 18.months, dry_run: true) # counts, changes nothing
+Moderate.purge(older_than: 1.year)
+# => { reports: 12, flags: 40, appeals: 1, held: { reports: 1, flags: 2, appeals: 0 } }
+Moderate.purge(older_than: 18.months, dry_run: true) # the same counts, changes nothing
 ```
+
+**`1.year` is a default, not a rule.** GDPR storage limitation asks for a period set by *your* purposes (how long a decision can be challenged where you operate, your repeat-misuse policy, your national rules), so set `older_than` to the period your privacy policy states; the gem only refuses one shorter than the six-month appeal window.
 
 ```bash
 bin/rails moderate:purge                              # OLDER_THAN_DAYS=365 by default
 bin/rails moderate:purge OLDER_THAN_DAYS=540 DRY_RUN=1
 ```
 
-Schedule it like any recurring job (cron, `config/recurring.yml` for Solid Queue, `sidekiq-cron`): `Moderate.purge` is safe to run every night.
+Schedule it like any recurring job (cron, `config/recurring.yml` for Solid Queue, `sidekiq-cron`): `Moderate.purge` is safe to run every night. The rake task prints what it redacted and what it kept for a legal hold.
+
+**Legal holds.** When a decision is under external redress (an out-of-court dispute settlement body, DSA Art. 21; a court case; an authority's request), hold that report and the nightly purge leaves it, its appeals and the flags on its content alone until the date you give:
+
+```ruby
+Moderate.hold(report, until: 1.year.from_now, by: admin, reason: "ODS case 2026-114")
+report.held?                                # => true
+Moderate.release_hold(report, by: admin)    # the dispute ended; the next purge treats it normally
+```
+
+Holding again moves the date; a hold that expires lifts itself. Both are audited (`:legal_hold_placed`, `:legal_hold_released`), and `dry_run` counts held rows under `:held` so you can see what a hold is keeping.
 
 | It redacts | Only when | It keeps |
 | --- | --- | --- |
-| **Reports and notices**: the message (→ `"[redacted]"`), the evidence snapshot, the reported URLs and account identifier, the notifier's name and email, the reporter. | The report is closed, was decided more than `older_than` ago, its appeal window has closed, and no appeal on it is open. | Every row; category, legal ground, member state, content type, status, timestamps; the whole decision (basis, actions, note, visibility, automated-means disclosure); the reported user. |
-| **Flags**: the excerpt (→ `"[redacted]"`) and the context. | The flag was decided more than `older_than` ago. | Every row; source, mode, categories, scores, status, the owner, the review. |
-| **Appeals**: the reason (→ `"[redacted]"`) and the appellant's name and email. | The appeal was decided more than `older_than` ago. | Every row; status, outcome note, timestamps, the appellant's account. |
+| **Reports and notices**: the message (→ `"[redacted]"`), the evidence snapshot, the reported URLs and account identifier, the notifier's name and email, the reporter. | The report is closed, was decided more than `older_than` ago, its appeal window has closed, no appeal on it is open, and it isn't held. | Every row; category, legal ground, member state, content type, status, timestamps; the whole decision (basis, actions, note, visibility, automated-means disclosure); the reported user. |
+| **Flags**: the excerpt (→ `"[redacted]"`) and the context. | The flag was decided more than `older_than` ago, and no held report is about its content and field. | Every row; source, mode, categories, scores, status, the owner, the review. |
+| **Appeals**: the reason (→ `"[redacted]"`) and the appellant's name and email. | The appeal was decided more than `older_than` ago, and its report isn't held. | Every row; status, outcome note, timestamps, the appellant's account. |
 
 Guarantees, each with a test in `test/models/moderate/retention_test.rb`:
 
-- **Never** a pending report, flag or appeal, a report still inside its appeal window, or a report with an open appeal, whatever their age. `older_than` below the six-month appeal window raises.
+- **Never** a pending report, flag or appeal, a report still inside its appeal window, a report with an open appeal, or anything a legal hold keeps, whatever their age. `older_than` below the six-month appeal window raises.
+- A redacted row is stamped `redacted_at`, and the purge selects on that column, never on the content: a message that literally reads `"[redacted]"` is purged like any other.
 - `Moderate.transparency` returns the same numbers before and after a purge, so a published report stays reproducible.
 - **Blocks are never touched**: they are live safety state, not a record of the past.
 - Idempotent (a second run finds nothing to do), `dry_run: true` only counts, and a run that changed something is audited as `:retention_purged` with the counts and the cutoff.
@@ -230,14 +244,15 @@ What it does **not** do, on purpose:
 
 - **Delete rows.** The default `1.year` keeps every decision forever, as pseudonymous rows that still name the reported account. If your policy says decisions go after N years, delete them yourself once the transparency report that counts them is published: `Moderate::Report.where.not(status: "open").where(resolved_at: ...N.years.ago).destroy_all` (appeals go with their report).
 - **Answer an erasure request.** Whether a given person's records must go now, or can be kept for a legal claim, is a decision for you and your counsel; the records are plain Active Record (`Moderate::Report.where(reporter: user)`, `Moderate::Appeal.where(appellant_email: email)`, `Moderate::Flag.where(owner: user)`).
-- **Know about legal holds.** If a record is part of a dispute or an authority's request, keep it out of the purge (raise `older_than`, or don't run it until the hold ends).
+- **Know about disputes by itself.** The gem can't see an out-of-court or court case; when one starts, `Moderate.hold` the report.
 
 | Requirement | How `moderate` satisfies it | Who | Proof |
 | --- | --- | --- | --- |
 | Keep decisions contestable for ≥ 6 months (Art. 20) and while an appeal is open. | `Moderate.purge` never touches a record inside its appeal window or with an open appeal, and refuses an `older_than` below it. | **[gem]** | `test/models/moderate/retention_test.rb` |
 | Keep what the annual transparency report counts (Art. 15, 24). | Redaction keeps every row and every counted column; `Moderate.transparency` is unchanged by a purge. | **[gem]** | `test/models/moderate/retention_test.rb` |
 | Storage limitation for personal data (GDPR Art. 5(1)(e)). | `Moderate.purge` / `moderate:purge` redacts content copies and contact details from final records. | **[gem + you]** schedule it, choose `older_than` | `test/models/moderate/retention_test.rb` |
-| A written retention period, erasure requests, legal holds. | Out of scope for a gem: your privacy policy and your counsel decide. | **[you]** | manual |
+| Keep evidence during external redress (Art. 21, courts, authorities). | `Moderate.hold(report, until:)` keeps the report, its appeals and the flags on its content out of the purge. | **[gem + you]** place the hold | `test/models/moderate/retention_test.rb` |
+| A written retention period, erasure requests. | Out of scope for a gem: your privacy policy and your counsel decide (`older_than` is yours to set). | **[you]** | manual |
 
 ---
 

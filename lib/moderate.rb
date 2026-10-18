@@ -544,6 +544,19 @@ module Moderate
       Retention.purge(**)
     end
 
+    # Keep `report` (its appeals, the flags on its content) out of the purge until
+    # `until:`: an out-of-court dispute, a court case, an authority's request.
+    #
+    #   Moderate.hold(report, until: 1.year.from_now, by: admin, reason: "ODS case 2026-114")
+    #   Moderate.release_hold(report, by: admin)
+    def hold(report, **)
+      Retention.hold(report, **)
+    end
+
+    def release_hold(report, **)
+      Retention.release_hold(report, **)
+    end
+
     private
 
     # Median seconds between paired (created_at, resolved_at) timestamps; 0 when empty.

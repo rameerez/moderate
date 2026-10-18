@@ -13,7 +13,9 @@ namespace :moderate do
     dry_run = %w[1 true yes].include?(ENV["DRY_RUN"].to_s.downcase)
     counts = Moderate.purge(older_than: days.to_i.days, dry_run: dry_run)
     verb = dry_run ? "would redact" : "redacted"
+    held = counts[:held]
     puts "moderate:purge #{verb} #{counts[:reports]} reports, #{counts[:flags]} flags, " \
-         "#{counts[:appeals]} appeals decided more than #{days} days ago"
+         "#{counts[:appeals]} appeals decided more than #{days} days ago; kept for a legal hold: " \
+         "#{held[:reports]} reports, #{held[:flags]} flags, #{held[:appeals]} appeals"
   end
 end

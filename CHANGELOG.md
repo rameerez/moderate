@@ -58,7 +58,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transparency counts are unchanged; blocks and pending records are never touched;
   `older_than` below the six-month appeal window raises. Idempotent, batched, audited as
   `:retention_purged`. `docs/compliance.md` gains a retention section: what the gem stores,
-  that nothing is purged by default, and what the DSA and the GDPR expect.
+  that nothing is purged by default, and what the DSA and the GDPR expect. A purged row is
+  stamped `redacted_at`, and the purge selects on that column, never on the content (a
+  message that literally read `"[redacted]"` would otherwise have kept its snapshot, URLs,
+  contacts and reporter, and `dry_run` under-counted it). The returned counts carry `:held`.
+  `1.year` is documented as a default the host sets per its own purposes.
+- **Legal holds: `Moderate.hold(report, until:, by: nil, reason: nil)` /
+  `Moderate.release_hold(report)`** and `Report#held?`. A held report, its appeals and the
+  flags on its content are left out of the purge until the date (an out-of-court dispute
+  under DSA Art. 21, a court case, an authority's request); `dry_run` and the rake task
+  report held rows separately; both are audited (`:legal_hold_placed`,
+  `:legal_hold_released`).
 
 - **RuboCop runs in CI** (a `rubocop` job next to the test matrix) and the codebase has zero
   offenses. `.rubocop.yml` now describes the code as it is: size metrics off (the gem
