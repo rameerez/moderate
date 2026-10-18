@@ -80,6 +80,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A second report on content an earlier decision already removed closes against it.**
+  Flags had "already dealt with"; reports had no truthful way to close: removing again
+  removed nothing and was refused. `resolve!(remove_content: true)` now finds an actioned
+  report on the same content and field whose decision removed it, while the content is
+  gone now (read fresh under the content's lock; deleted content counts, matched through
+  the snapshot), and records `resolution_actions["content_already_removed_by"]`. Nothing
+  is removed, audited or announced a second time, the author gets no second statement of
+  reasons (unless this decision also bans), and the reporter's `report_decision` carries
+  `content_already_removed_by` and says "already removed by the decision on Report #X".
+- **A report whose content was deleted can be decided.** The intake check that a report
+  without content names a URL ran on every save, so once the content was deleted (its
+  pointer nullified) no decision on the report could be saved. It now runs at intake.
 - **A report resolved with neither removal nor ban is refused.** It recorded
   `decision_visibility: "other_restriction"` and sent the author a statement of reasons
   for a restriction nobody imposed. `resolve!` restricts something (`remove_content:`,

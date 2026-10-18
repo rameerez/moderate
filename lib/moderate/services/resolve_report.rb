@@ -74,7 +74,7 @@ module Moderate
         Moderate.ensure_ban_handler! if actions[:ban_user] && report.reported_user.present?
 
         transition!("actioned", note: note, actions: actions) do
-          remove_reported_content!(note: note) if actions[:remove_content]
+          remove_reported_content!(note: note, actions: actions) if actions[:remove_content]
           ban_reported_user!(note: note, actions: actions) if actions[:ban_user]
         end
       end
@@ -164,7 +164,15 @@ module Moderate
       # The reportable's own removal (`remove_reported_field!`). When it says it
       # removed something, the removal is audited here, inside the decision's
       # transaction, and announced as `content_removed` with the decision notices.
-      def remove_reported_content!(note:)
+      def remove_reported_content!(note:, actions:)
+        # Already removed by an earlier decision on the same content and field: close
+        # against it (like a flag does), the reporter told it's gone, nothing removed
+        # or announced a second time.
+        if (prior = covering_removal)
+          actions[:content_already_removed_by] = prior.id
+          return true
+        end
+
         # Nothing to remove from (the content was deleted, its report nullified) or
         # no way to remove it: refused like a removal that removed nothing.
         removable = report.reportable.present? && report.reportable.respond_to?(:remove_reported_field!)
@@ -172,6 +180,48 @@ module Moderate
 
         @content_removed = content_removed_payload(note)
         Moderate.audit(:content_removed, **content_removed_event)
+        true
+      end
+
+      def covered_note
+        prior = report.resolution_actions.to_h["content_already_removed_by"]
+        prior ? " (already removed by the decision on Report ##{prior})" : ""
+      end
+
+      # An actioned report on the same content and field whose decision removed it,
+      # while the content is gone NOW (read fresh, under the content's lock: a recorded
+      # removal only counts if nothing is there any more). A locking read, like every
+      # "already done" check (Moderate.with_row_lock).
+      def covering_removal
+        type, id = content_ids(report)
+        return if type.blank? || id.blank? || !content_gone?
+
+        # Deleting the content nullifies every report's pointer, the earlier one's too:
+        # then the candidates are the nullified ones, matched by their snapshots.
+        pointer = report.reportable_id ? { reportable_type: type, reportable_id: id } : { reportable_id: nil }
+        Moderate::Report.actioned.where(pointer).where(reported_field: report.reported_field)
+          .where.not(id: report.id).recent_first.lock
+          .find { |prior| content_ids(prior) == [type, id] && truthy?(prior.resolution_actions.to_h["remove_content"]) }
+      end
+
+      # A report's content type and id, from its snapshot when its own pointer was
+      # nullified (the content deleted).
+      def content_ids(of)
+        snapshot = of.snapshot.to_h.with_indifferent_access
+        [of.reportable_type.presence || snapshot[:reportable_type], (of.reportable_id || snapshot[:reportable_id])&.to_s]
+      end
+
+      def content_gone?
+        content = report.reportable&.reload(lock: true)
+        return true if content.nil?
+        return true if content.respond_to?(:deleted?) && content.deleted?
+
+        field = report.reported_field
+        return false if field.blank?
+
+        value = content.respond_to?(:moderation_field_value, true) ? content.send(:moderation_field_value, field) : content.try(field)
+        value.respond_to?(:attached?) ? !value.attached? : value.blank?
+      rescue ActiveRecord::RecordNotFound
         true
       end
 
@@ -275,7 +325,8 @@ module Moderate
           actor: moderator,
           recipients: [report.reporter].compact,
           payload: decision_payload.merge(
-            summary: "Decision on Report ##{report.id}: #{report.status}"
+            summary: "Decision on Report ##{report.id}: #{report.status}" \
+                     "#{covered_note}"
           )
         )
       end
@@ -286,6 +337,11 @@ module Moderate
       # ground, the automated-means disclosure, and the appeal entry point.
       def notify_affected_user
         return unless report.actioned?
+
+        # Its removal was already announced by the decision that made it; a second
+        # statement only when this one also bans.
+        actions = report.resolution_actions.to_h
+        return if actions["content_already_removed_by"] && !truthy?(actions["ban_user"])
 
         affected = report.reported_user
         return if affected.blank?
@@ -332,6 +388,8 @@ module Moderate
           # already participated.
           automated: automated_processing_used?,
           reason: report.resolution_note,
+          # "Already actioned by decision X": the content was gone when this was decided.
+          content_already_removed_by: report.resolution_actions.to_h["content_already_removed_by"],
           # A minimum ("at least until"): confirmed delivery (Moderate.delivered!)
           # can move it later (Art. 20(2)), never earlier.
           appeal_deadline_at: report.appeal_deadline_at

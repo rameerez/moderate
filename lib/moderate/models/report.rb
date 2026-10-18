@@ -206,7 +206,9 @@ module Moderate
     validate :reportable_field_must_be_allowed
     validate :reporter_must_be_allowed_to_report, on: :create
     validate :subject_url_must_be_http_url
-    validate :public_notice_requires_subject_url
+    # At intake only: a report whose content is deleted later has its pointer
+    # nullified, and must still be decidable.
+    validate :public_notice_requires_subject_url, on: :create
     validate :dsa_notice_must_be_substantiated
     validate :anonymous_notice_only_for_child_safety
 
