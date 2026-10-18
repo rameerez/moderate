@@ -173,9 +173,18 @@ Post.where.not(user_id: Moderate.blocked_ids_for(current_user))
 ```ruby
 current_user.report!(@message, category: :harassment, details: "Won't stop messaging me")
 current_user.report!(@user,    category: :impersonation)
+current_user.report!(@message, category: :spam, block: true)   # "Report and block"
 ```
 
-`moderate` snapshots the offending content at report time (so evidence survives edits/deletes), infers who's responsible, sends the reporter a receipt, and drops it in the queue.
+`moderate` snapshots the offending content at report time (so evidence survives edits/deletes), infers who's responsible, records what kind of content it is (`moderation_content_type`), sends the reporter a receipt, and drops it in the queue. A report is refused when the reporter may not report the content (the reportable's own `report_visible_to?`: never your own content, never a conversation you're not in), whether or not the link was hidden.
+
+Your report form's category select is one line, labeled in the reader's language (the gem ships English and Spanish for every value it defines, and your locale files win):
+
+```erb
+<%= f.select :category, Moderate::Report.category_options %>   <%# honors config.report_categories %>
+```
+
+`Moderate.taxonomy_label(kind, value)` labels the rest of the gem's vocabulary the same way in your queue: `Moderate.taxonomy_label(:flag_status, flag.status)`, `(:legal_reason, report.legal_reason)`, `(:decision, report.decision_visibility)`, and so on.
 
 ## 🚩 Reportable content
 
@@ -238,6 +247,14 @@ Drop a report link into any view with the helper (it renders nothing if the view
 ```erb
 <%= moderate_report_link(@listing, field: :description) %>
 ```
+
+For markup rendered once and shown to many viewers (a chat bubble broadcast to everyone in the thread, a cached fragment), where the per-viewer check can't run, use the viewer-agnostic path and hide it on the author's own content client-side; the server still refuses a report the viewer may not make:
+
+```erb
+<%= link_to "Report", moderate_report_target_path(message, field: :body) %>   <%# target: message.to_moderation_sgid, never expires %>
+```
+
+Using [`chats`](https://github.com/rameerez/chats) for messages? Its messages already speak this contract; the whole integration is in [`docs/chats.md`](docs/chats.md).
 
 Because `moderate` is UI-agnostic, it does not render a built-in "under review" badge. Use `flagged?` / `flagged?(:field)` to render copy that fits your product when `:flag` mode lets content through but queues it for review.
 
@@ -327,16 +344,22 @@ Moderate::Appeal.pending             # appeals awaiting a human
 
 report.resolve!(by: admin, remove_content: true, ban_user: false, note: "Removed: hate speech")
 report.dismiss!(by: admin, note: "No violation")
+flag.resolve!(by: admin, note: "Slur", remove_content: true)   # enforces through a report (below)
+flag.dismiss!(by: admin, note: "False positive")
 appeal.uphold!(by: admin, note: "...")   # overturns the decision
 appeal.reject!(by: admin, note: "...")
+
+Moderate::Flag.flag_for_review!(message, field: :body, by: admin)   # "Flag for review" from any browse screen
 ```
 
-Every action is atomic, requires a moderator + a note, runs your enforcement (content removal via the reportable's own `remove_reported_field!`, bans via your `ban_handler`), and writes to your audit log.
+Every action is atomic, requires a moderator + a note, runs your enforcement (content removal via the reportable's own `remove_reported_field!`, bans via your `ban_handler`), and writes to your audit log. A ban needs a `ban_handler`: without one, `ban_user: true` raises instead of telling someone their account was suspended when nothing suspended it.
+
+A flag has no reporter, statement of reasons or appeal window, but removing content or suspending an account is a restriction that needs all three. So `remove_content:` / `ban_user:` on a flag escalate it: the open report on the same content and field (if a person reported it too) or a system one is resolved under the flag's lock, and `flag.report` is that report afterwards. Without them, resolving a flag only triages it.
 
 ### Use it from a controller (BYOUI)
 
 ```ruby
-class Admin::ReportsController < ApplicationController
+class Admin::ReportsController < ApplicationController   # the same concern drives Admin::FlagsController
   include Moderate::Moderation   # resolve!/dismiss! actions, strong params, redirects
 
   before_action :require_admin

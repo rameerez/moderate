@@ -120,6 +120,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`moderate_report_target_path` (and `moderate_report_link`) find the host's report route
+  from inside another engine's views**, through `main_app`. Rendered in a chats slot, the
+  helper fell back to the hard-coded `/reports/new`.
 - **The transparency page labels its counters from the gem's own keys.** Two of its cards
   read `moderation.legal_reasons.*` / `moderation.resolution_bases.*`, a namespace from the
   app the gem was extracted from that no other part of the gem uses; the rest printed raw
@@ -150,6 +153,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   files — harmless while the directory was empty, but any shipped default would have silently
   beaten the host's translation of the same key. Rails already loads an engine's
   `config/locales` before the app's, so the initializer is gone.
+
+### Documentation
+
+- **`docs/chats.md`**: the whole chats integration from moderate's side (reportable and
+  filtered messages, blocks, Report on a broadcast bubble, Block in the thread menu, the
+  admin side, a launch checklist), the shape two production hosts converged on.
+- **`docs/madmin.md` runs as written.** It called `scope :resolved` (the scopes are
+  `actioned`), `attribute :kind` / `:details` (the columns are `intake_kind` / `message`),
+  `report.pending?` (now real), `Moderate.system_actor` (never existed; automated decisions
+  pass `by: nil`) and `flag.scores[:csam]` (scores are JSON with string keys, and the
+  canonical category is `sexual/minors`). The flag controller now shows enforcement, and a
+  new section covers "Flag for review" from a browse screen.
+
+### Upgrading from 1.0.0.beta2
+
+No migrations. Check these against your app:
+
+1. **Wire `config.ban_handler`** if any moderator can press "ban": without one, a ban now
+   raises instead of being a silent no-op.
+2. **Reports are visibility-checked.** If you file community reports with a `reporter:` who
+   couldn't see the content, they now fail validation. Use `Flag.flag_for_review!` for an
+   administrator's own concern.
+3. **Delete the workarounds this release makes unnecessary**, if you wrote them:
+   - a `reported_owner` override that returns nil for non-users;
+   - a find-or-create-report bridge for removing or banning from a flag (use
+     `flag.action!(remove_content:, ban_user:)`);
+   - a hand-assembled manual `Flag.flag!` (use `Flag.flag_for_review!`);
+   - a model-to-`content_type` map in your report controller;
+   - your own "report and block" (use `report!(…, block: true)`);
+   - `to_sgid_param(for: Moderate::Report::SIGNED_GLOBAL_ID_PURPOSE)` (use
+     `to_moderation_sgid` or `moderate_report_target_path`);
+   - en/es translations of the gem's taxonomies and field names (keep only the ones you
+     changed);
+   - a duplicated `config.filter` next to a `moderates` declaration for the same field.
+4. **`Flag#action!` re-closing** an already decided flag no longer overwrites the first
+   decision: it returns the flag as it was.
+5. **`Moderate.blocked_ids_for(nil)`** is an empty relation, not `[]`. Call `.ids` if you
+   need an Array.
 
 ## [1.0.0.beta2] - 2026-07-10
 

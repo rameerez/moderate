@@ -60,6 +60,15 @@ class ReportingTest < ActiveSupport::TestCase
     assert_includes first, "field=body"
   end
 
+  test "the report path is found through main_app from inside another engine's views" do
+    view = view_context(viewer: nil)
+    host_routes = Object.new
+    def host_routes.new_report_path(query) = "/host/reports/new?#{query.to_query}"
+    view.define_singleton_method(:main_app) { host_routes }
+
+    assert_match %r{\A/host/reports/new\?}, view.moderate_report_target_path(@comment, field: :body)
+  end
+
   test "moderate_report_link renders NOTHING for an anonymous viewer (no current_user)" do
     # nil viewer => the in-app button is hidden (anonymous users use the public DSA
     # notice form instead). This is one of the three documented "render nothing" cases.
