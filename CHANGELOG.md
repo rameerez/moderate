@@ -76,10 +76,21 @@ _Upgrading from 1.0.0.beta3_ below). No API change.
    the keys under the column's own collation, and if it would treat two as one (on MySQL,
    a legacy flag whose field ends in a space against one without) it stops with a message
    naming each key and its flags, rather than failing on an UPDATE or the index; close all
-   but one of each, or fix the field, and run it again. A no-op on a fresh install, whose
-   `moderate:install` migration already has the column (declared `utf8mb4_bin` on MySQL);
-   on MySQL it refuses a `pending_key` column that ignores case, giving the `ALTER TABLE` to
-   run. `down` drops the index and the column.
+   but one of each, or fix the field, and run it again. On MySQL it refuses an existing
+   `pending_key` column that ignores case, giving the `ALTER TABLE` to run. It is the only
+   migration that creates `pending_key`, in every app, so `down` drops the index and the
+   column and leaves the tables `create_moderate_tables` made as they were.
+
+### Changed (installing)
+
+- **`moderate:install` copies the gem's migrations too.** A fresh install gets
+  `create_moderate_tables` (the 1.0.0.beta3 table shape, no `pending_key`) and then, in
+  order, a copy of each of the gem's own migrations, named like
+  `bin/rails moderate:install:migrations` names them (`…_add_pending_key_to_moderate_flags.moderate.rb`).
+  An app holding such copies runs them, and the engine leaves the gem's `db/migrate` out of
+  its paths; from then on, after upgrading, run `bin/rails moderate:install:migrations` and
+  migrate. An app installed without copies (as with beta3) keeps getting the gem's
+  migrations through the engine.
 
 ## [1.0.0.beta3] - 2026-10-18
 

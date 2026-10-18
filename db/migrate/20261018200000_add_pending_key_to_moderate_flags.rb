@@ -7,9 +7,11 @@
 # and NULLs never collide (PostgreSQL, MySQL and SQLite alike). Flag.flag! and
 # Flag.flag_for_review! insert and, on the collision, return the flag already waiting.
 #
-# Ships with the gem and runs with `bin/rails db:migrate`: the engine adds the gem's
-# db/migrate to your app's migration paths. A no-op on a fresh install (the install
-# generator's table already has the column and index) and safe to run twice.
+# THE ONE MIGRATION THAT CREATES pending_key, in every app. A fresh install gets it
+# from `bin/rails generate moderate:install`, copied right after create_moderate_tables
+# (as "<number>_add_pending_key_to_moderate_flags.moderate.rb"); an app upgrading from
+# beta3 gets it through the engine, which adds the gem's db/migrate to the app's
+# migration paths unless the app holds copies. Safe to run twice.
 #
 # The key compares as bytes: on MySQL the column is utf8mb4_bin, because the default
 # collation ignores case and would make "Post/1/body" and "POST/1/body" one key
@@ -23,8 +25,8 @@
 # collation: keys it would treat as one though they differ as strings (legacy rows
 # whose field has trailing spaces, on MySQL) stop the migration, naming the flags.
 #
-# `down` drops the index and the column: this migration (or the install generator,
-# for a fresh install) is the only thing that creates them.
+# `down` drops the index and the column: this migration is the only thing that creates
+# them, so rolling it back leaves create_moderate_tables' schema exactly as it was.
 class AddPendingKeyToModerateFlags < ActiveRecord::Migration[7.1]
   INDEX = "index_moderate_flags_on_pending_key"
   BINARY_COLLATION = "utf8mb4_bin"
@@ -67,8 +69,8 @@ class AddPendingKeyToModerateFlags < ActiveRecord::Migration[7.1]
     mysql? ? { collation: BINARY_COLLATION } : {}
   end
 
-  # Only this migration and the install generator create the column, both binary. One
-  # that isn't was made some other way: say so, rather than altering it here.
+  # Only this migration creates the column, binary. One that isn't was made some other
+  # way: say so, rather than altering it here.
   def require_binary_comparison
     return unless mysql?
 
