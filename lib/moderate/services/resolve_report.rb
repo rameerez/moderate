@@ -176,10 +176,12 @@ module Moderate
         # Nothing to remove from (the content was deleted, its report nullified) or
         # no way to remove it: refused like a removal that removed nothing.
         removable = report.reportable.present? && report.reportable.respond_to?(:remove_reported_field!)
+        removed_text = text_about_to_be_removed if removable
         refuse_unremoved! unless removable && report.reportable.remove_reported_field!(report.reported_field)
 
+        actions[:removed_text_digest] = text_digest(removed_text) if removed_text.present?
         @content_removed = content_removed_payload(note)
-        stamp_covered_reports!
+        stamp_covered_reports!(removed_text)
         Moderate.audit(:content_removed, **content_removed_event)
         true
       end
@@ -191,27 +193,49 @@ module Moderate
 
       # The decision that removed this report's content while this report was pending:
       # the one that stamped it (covered_by_report_id, see #stamp_covered_reports!),
-      # provided it did remove the content and the content is gone now (read fresh,
-      # under the content's lock). No clocks are compared: a report that wasn't pending
-      # when the content was removed (a repost, a removal that didn't take, a late
-      # report) was never stamped, so it is never credited to that removal.
+      # provided it did remove the content, it still stands (no appeal against it was
+      # upheld: an overturned removal covers nothing, whatever the stamp says), and the
+      # content is gone now (read fresh, under the content's lock). No clocks are
+      # compared: a report that wasn't pending when the content was removed (a repost,
+      # a removal that didn't take, a late report) was never stamped.
       def covering_removal
         prior_id = report.covered_by_report_id
         return if prior_id.blank? || !content_gone?
 
-        # A locking read (see Moderate.with_row_lock), like every "already done" check.
+        # Locking reads (see Moderate.with_row_lock), like every "already done" check.
         prior = Moderate::Report.actioned.lock.find_by(id: prior_id)
-        prior if prior && truthy?(prior.resolution_actions.to_h["remove_content"])
+        return unless prior && truthy?(prior.resolution_actions.to_h["remove_content"])
+        return if Moderate::Appeal.upheld.where(report_id: prior.id).lock.exists?
+
+        prior
+      end
+
+      # The field's text right before this decision removes it, read under the
+      # content's lock with a locking read: what is actually being removed, which may
+      # differ from what this report saw at intake. nil when the content exposes no
+      # text (no moderation_snapshot) or reads blank.
+      def text_about_to_be_removed
+        content = report.reportable.reload(lock: true)
+        return unless content.respond_to?(:moderation_snapshot)
+
+        content.moderation_snapshot(report.reported_field).presence
+      rescue ActiveRecord::RecordNotFound
+        nil
+      end
+
+      def text_digest(text)
+        Digest::SHA256.hexdigest(text.to_s)
       end
 
       # Just removed this report's content, under its lock: stamp the OTHER reports
-      # pending on the same content and field whose intake snapshot holds the same text,
-      # so each can later be closed as "already removed by" this decision. A report
+      # pending on the same content and field whose intake snapshot holds the text that
+      # was ACTUALLY removed (`removed_text`, read right before the removal, not this
+      # report's own intake text), so each can later be closed as "already removed by"
+      # this decision. Nobody is stamped when that text is blank or unreadable. A report
       # filed concurrently either committed before this read (then its snapshot is the
-      # text it saw: this same text if it saw the content we removed) or after it (then
-      # it isn't stamped, and a removal on it is refused): never a false cover.
-      def stamp_covered_reports!
-        text = report.snapshot.to_h.with_indifferent_access[:content_text]
+      # text it saw: the removed text if it saw the content we removed) or after it
+      # (then it isn't stamped, and a removal on it is refused): never a false cover.
+      def stamp_covered_reports!(text)
         return if text.blank? || report.reportable_type.blank? || report.reportable_id.blank?
 
         pending = Moderate::Report.open

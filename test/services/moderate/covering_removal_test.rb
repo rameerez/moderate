@@ -134,4 +134,28 @@ class Moderate::CoveringRemovalTest < ActiveSupport::TestCase
     error = assert_raises(ActiveRecord::RecordInvalid) { late.resolve!(by: @moderator, note: "Late", remove_content: true) }
     assert_match "Nothing was removed", error.message
   end
+
+  test "an edit between intake and removal: a report on the old text isn't stamped by the removal of the new" do
+    @comment.update_column(:body, "new words") # both reports saw "vile words"
+    remove_through(@first)
+
+    assert_equal Digest::SHA256.hexdigest("new words"), @first.reload.resolution_actions["removed_text_digest"],
+      "the decision records what it actually removed"
+    assert_nil @second.reload.covered_by_report_id, "it reported other text than what was removed"
+    error = assert_raises(ActiveRecord::RecordInvalid) { @second.resolve!(by: @moderator, note: "x", remove_content: true) }
+    assert_match "Nothing was removed", error.message
+  end
+
+  test "a removal overturned on appeal covers nothing, though the stamp stays as history" do
+    remove_through(@first)
+    appeal = Moderate::Appeal.create!(report: @first, appellant: @author, reason: "It was satire", source: "affected_user")
+    appeal.uphold!(by: @moderator, note: "Satire; the removal was wrong")
+
+    assert_equal @first.id, @second.reload.covered_by_report_id
+    error = assert_raises(ActiveRecord::RecordInvalid) do
+      @second.resolve!(by: @moderator, note: "Same content", remove_content: true)
+    end
+    assert_match "Nothing was removed", error.message
+    assert_predicate @second.reload, :open?
+  end
 end

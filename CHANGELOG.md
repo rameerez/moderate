@@ -123,16 +123,21 @@ this entry.
   `.pending`, `.actioned`, `.dismissed` and `.recent_first`.
 - **A second report on content an earlier decision already removed closes against it.**
   Flags had "already dealt with"; reports had no truthful way to close: removing again
-  removed nothing and was refused. A decision that removes content now stamps, under the
-  content's lock, the OTHER reports pending on that content and field whose intake
-  snapshot holds the same text (`covered_by_report_id`, readable as `Report#covered_by`).
-  A stamped report resolved with `remove_content: true` closes against that decision while
-  the content is gone now (read fresh under the lock; deleted content counts) and records
+  removed nothing and was refused. A decision that removes content now reads, under the
+  content's lock and right before removing, the text it is about to remove (recorded as
+  `resolution_actions["removed_text_digest"]`), and stamps the OTHER reports pending on
+  that content and field whose intake snapshot holds exactly that text
+  (`covered_by_report_id`, readable as `Report#covered_by`); with no readable text it
+  stamps nobody. A stamped report resolved with `remove_content: true` closes against that
+  decision while the decision stands (no appeal against it upheld: an overturned removal
+  covers nothing, though the stamp stays as history) and the content is gone now (read
+  fresh under the lock; deleted content counts), and records
   `resolution_actions["content_already_removed_by"]`. No clocks are compared: a report that
   wasn't pending when the content was removed (a repost, a removal that didn't take, a late
   or backdated report) was never stamped, so a report filed after a removal is never
   credited to it; the normal removal or refusal ("Nothing was removed") applies. A report
-  filed during the removal is stamped only if its snapshot holds the removed text. Nothing is removed, audited or
+  filed during the removal, or one whose snapshot holds older text than what was removed,
+  is stamped only if its snapshot holds the removed text. Nothing is removed, audited or
   announced a second time, the author gets no second statement of
   reasons (unless this decision also bans), and the reporter's `report_decision` carries
   `content_already_removed_by` and says "already removed by the decision on Report #X".
