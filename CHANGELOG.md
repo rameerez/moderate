@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrading
+
+- **One migration, shipped with the gem: run `bin/rails db:migrate`.**
+  `db/migrate/20261018210000_add_retention_columns_to_moderate_tables.rb` adds
+  `redacted_at` to `moderate_reports`, `moderate_flags` and `moderate_appeals`, and
+  `held_until` (indexed) to `moderate_reports`. The engine adds the gem's `db/migrate` to
+  your app's migration paths, so there is nothing to copy (if you prefer copies,
+  `bin/rails moderate:install:migrations`, and the gem's own path is then skipped). It is
+  guarded both ways, so a fresh install (whose generated create migration already has the
+  columns) and a second run are no-ops, and it needs no backfill. It sorts after beta4's
+  `pending_key` migration.
+
 ### Added
 
 - **The public API is frozen and listed.** The README's new "What is public" section names

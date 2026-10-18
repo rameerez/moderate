@@ -192,6 +192,14 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
     add_index :moderate_appeals, [:status, :created_at], name: "index_moderate_appeals_on_status_and_created_at"
     add_index :moderate_appeals, :appellant_email, name: "index_moderate_appeals_on_appellant_email"
 
+    # Retention (Moderate.purge): when a record's personal data was removed, and a
+    # report's legal hold (Moderate.hold), which keeps the purge away from it.
+    add_column :moderate_reports, :redacted_at, :datetime
+    add_column :moderate_reports, :held_until, :datetime
+    add_index :moderate_reports, :held_until, name: "index_moderate_reports_on_held_until"
+    add_column :moderate_flags, :redacted_at, :datetime
+    add_column :moderate_appeals, :redacted_at, :datetime
+
     # Appeal's source/status vocabularies are validated in Moderate::Appeal
     # (constants + inclusion validations), not by DB CHECK constraints — same
     # migration-free-taxonomy rationale as moderate_reports above.
