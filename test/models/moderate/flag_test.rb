@@ -65,7 +65,7 @@ module Moderate
         excerpt: "x", categories: [], scores: {}, context: {}
       )
       closed = Moderate::Flag.flag!(
-        flaggable: @user, field: "name", owner: @user, source: "manual", mode: "flag",
+        flaggable: @user, field: "display_name", owner: @user, source: "manual", mode: "flag",
         excerpt: "x", categories: [], scores: {}, context: {}
       )
       # Closing requires a note (validates resolution_note when closed?).
@@ -74,6 +74,51 @@ module Moderate
       pending_ids = Moderate::Flag.pending.pluck(:id)
       assert_includes pending_ids, pending.id
       refute_includes pending_ids, closed.id
+    end
+
+    # --- One pending flag per content + field (the unique pending_key) -------------
+
+    test "the database refuses a second pending flag on the same content and field" do
+      first = pending_flag_on(@user, "name")
+
+      assert_equal "User/#{@user.id}/name", first.pending_key
+      assert_raises(ActiveRecord::RecordNotUnique) do
+        Moderate::Flag.transaction(requires_new: true) do
+          Moderate::Flag.create!(flaggable: @user, field: "name", source: "manual", mode: "flag")
+        end
+      end
+      assert_equal 1, Moderate::Flag.where(flaggable: @user, field: "name").count
+    end
+
+    test "closing a flag frees its content and field for a new pending one" do
+      first = pending_flag_on(@user, "name")
+      first.dismiss!(note: "Fine.")
+
+      assert_nil first.reload.pending_key
+      second = pending_flag_on(@user, "name")
+      assert_predicate second, :previously_new_record?
+      assert_not_equal first, second
+    end
+
+    test "a flag on another field, or other content, is independent" do
+      first = pending_flag_on(@user, "name")
+      other_field = pending_flag_on(@user, "display_name")
+      other_content = pending_flag_on(create_user, "name")
+
+      assert_equal 3, [first, other_field, other_content].map(&:id).uniq.size
+    end
+
+    test "reopening a closed flag takes the key back, and refuses if another flag is pending there" do
+      first = pending_flag_on(@user, "name")
+      first.dismiss!(note: "Fine.")
+      first.update!(status: "pending", resolution_note: nil)
+      assert_equal "User/#{@user.id}/name", first.reload.pending_key
+
+      first.dismiss!(note: "Fine again.")
+      pending_flag_on(@user, "name")
+      assert_raises(ActiveRecord::RecordNotUnique) do
+        Moderate::Flag.transaction(requires_new: true) { first.update!(status: "pending", resolution_note: nil) }
+      end
     end
 
     test "closing a flag without a resolution note is rejected" do
@@ -244,6 +289,13 @@ module Moderate
     end
 
     private
+
+    def pending_flag_on(flaggable, field)
+      Moderate::Flag.flag!(
+        flaggable: flaggable, field: field, owner: nil, source: "manual", mode: "flag",
+        excerpt: nil, categories: [], scores: {}, context: {}
+      )
+    end
 
     def build_pending_flag
       Moderate::Flag.flag!(

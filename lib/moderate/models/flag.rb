@@ -49,6 +49,7 @@ module Moderate
     # NotNullViolation on MySQL. (SQLite/PostgreSQL get the defaults from the
     # migration; coalescing is harmless there.)
     before_save :default_json_columns
+    before_save :sync_pending_key
 
     # Announce a new flag through the host's notify hook so admins get pinged (e.g.
     # a Telegram alert) the moment content is flagged. after_create_COMMIT, not
@@ -75,8 +76,16 @@ module Moderate
     #
     # `owner` is kept only if it is a person (the configured user class): hosts
     # commonly pass `record.reported_owner`, which can be a desk or a bot.
+    #
+    # AT MOST ONE PENDING FLAG PER CONTENT + FIELD, enforced by the database (the
+    # unique `pending_key`, see #sync_pending_key). If a flag already waits on this
+    # field, the insert collides and that waiting flag is returned instead: the
+    # content is already in the queue (`flag.previously_new_record?` is false). This
+    # holds whatever the isolation level or snapshot, because uniqueness is checked
+    # against what is committed, and the waiting flag is then read with a LOCKING
+    # read (the latest committed row, also under MySQL's REPEATABLE READ).
     def self.flag!(flaggable:, field:, owner:, source:, mode:, excerpt:, categories:, scores:, context:)
-      create!(
+      attributes = {
         flaggable: flaggable,
         field: field,
         owner: (owner if owner.is_a?(Moderate.user_class)),
@@ -86,8 +95,34 @@ module Moderate
         categories: Array(categories),
         scores: scores.to_h,
         context: context.to_h
-      )
+      }
+
+      COLLISION_ATTEMPTS.times do
+        # A savepoint, so a collision doesn't poison a surrounding transaction.
+        return transaction(requires_new: true) { create!(attributes) }
+      rescue ActiveRecord::RecordNotUnique
+        waiting = waiting_flag(pending_key_for(flaggable.class.polymorphic_name, flaggable.id, field))
+        return waiting if waiting&.pending?
+        # The waiting flag was decided while we looked: its key is free, insert again.
+      end
+
+      raise ActiveRecord::RecordNotUnique,
+            "a pending flag on #{flaggable.class.name} #{flaggable.id}##{field} kept appearing and closing"
     end
+
+    COLLISION_ATTEMPTS = 3
+
+    # The pending_key a pending flag on that content and field carries.
+    def self.pending_key_for(flaggable_type, flaggable_id, field)
+      "#{flaggable_type}/#{flaggable_id}/#{field}"
+    end
+
+    # The flag waiting under `key`, by a locking read: on MySQL a plain read could
+    # return the transaction's older snapshot, without the flag the insert collided with.
+    def self.waiting_flag(key)
+      where(pending_key: key).lock.first
+    end
+    private_class_method :waiting_flag
 
     # An administrator filing `record`'s `field` for review by hand — the "Flag for
     # review" button on a transcript line or a profile page. It lands in the same
@@ -114,14 +149,12 @@ module Moderate
       end
 
       note = note.to_s.strip.presence
-      # The content's lock only, and a plain read of the waiting flag under it: see the
-      # lock order in Moderate.with_row_lock. Any other review of this content waits on
-      # the same lock, so the read can't race one; no flag row is locked, so this never
-      # waits on a moderator deciding that flag (who holds it, then the content).
-      flag = Moderate.with_row_lock(record) do
-        where(flaggable: record, field: field_s).pending.recent_first.first ||
-          file_for_review!(record, field_s, by: by, note: note)
-      end
+      # No lock taken first and no plain read deciding anything: the insert either
+      # files the flag or collides with the one already waiting (the unique
+      # pending_key), which Flag.flag! then returns. Only on that collision does it
+      # lock a row, the waiting flag's, so the lock order (Moderate.with_row_lock)
+      # holds: it never holds content while waiting on a flag.
+      flag = file_for_review!(record, field_s, by: by, note: note)
       audit_filed_for_review(flag, by: by, note: note) if flag.previously_new_record?
       flag
     end
@@ -224,6 +257,15 @@ module Moderate
     end
 
     private
+
+    # A pending flag carries its content + field's pending_key; any other status
+    # carries NULL, so closing a flag (ResolveFlag, or any save that changes its
+    # status) frees the key in the same transaction, and reopening one takes it back
+    # (raising RecordNotUnique if another flag is pending there by then). Writes that
+    # skip callbacks (update_column/update_all on status) must set it themselves.
+    def sync_pending_key
+      self.pending_key = (Flag.pending_key_for(flaggable_type, flaggable_id, field) if pending?)
+    end
 
     # See the before_save comment: keep the NOT-NULL JSON columns non-null on MySQL.
     def default_json_columns

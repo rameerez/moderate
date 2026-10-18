@@ -151,6 +151,12 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
     add_index :moderate_flags, [:owner_id, :status], name: "index_moderate_flags_on_owner_id_and_status"
     add_index :moderate_flags, [:status, :created_at], name: "index_moderate_flags_on_status_and_created_at"
 
+    # At most one PENDING flag per content + field: `pending_key` is set while a flag
+    # is pending ("<flaggable_type>/<flaggable_id>/<field>") and NULL once it is closed
+    # (Moderate::Flag keeps it in sync); NULLs never collide in a unique index.
+    add_column :moderate_flags, :pending_key, :string
+    add_index :moderate_flags, :pending_key, unique: true, name: "index_moderate_flags_on_pending_key"
+
     # Flag's mode/source/status vocabularies are validated in Moderate::Flag
     # (constants + inclusion validations), not by DB CHECK constraints — same
     # migration-free-taxonomy rationale as moderate_reports above.

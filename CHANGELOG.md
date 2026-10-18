@@ -6,13 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0.beta4] - 2026-10-18
 
-A fix-only beta: no API change, no migration.
+Concurrency fixes, and **one migration**: run `bin/rails db:migrate` after upgrading (see
+_Upgrading from 1.0.0.beta3_ below). No API change.
 
 ### Fixed
 
-- **MySQL double enforcement under REPEATABLE READ.** Two moderators enforcing two flags on
-  the same content, or banning the same person from two flags at once, could remove the
-  content twice or call the `ban_handler` twice on MySQL. A plain `SELECT` there returns the
+- **MySQL double enforcement under REPEATABLE READ.** Two moderators enforcing flags on the
+  same content, or banning the same person from two flags at once, could remove the content
+  twice or call the `ban_handler` twice on MySQL. A plain `SELECT` there returns the
   transaction's consistent snapshot, which may predate the content's or the person's row
   lock, so the second worker never saw the decision it had waited for. Every check that
   decides "already done" under a lock (the covering decision and the open report a flag
@@ -25,12 +26,40 @@ A fix-only beta: no API change, no migration.
 - **One lock order everywhere: flag, then content, then person, then report.**
   `Flag.flag_for_review!` locked the content and then the waiting flag, the reverse of a
   flag decision (the flag, then the content), so a review and an enforcement of the same
-  content could deadlock on any database. It now locks the content only and reads the
-  waiting flag with a plain read under that lock, which already serializes reviews of that
-  content. The order is documented once, on `Moderate.with_row_lock`.
+  content could deadlock on any database. It now takes no content lock at all (see the next
+  entry); the order is documented once, on `Moderate.with_row_lock`.
+- **At most one pending flag per content and field, enforced by the database.** Two
+  "Flag for review" filings at once could create two pending flags for the same field: a
+  plain "is one already waiting?" read can't see another transaction's flag under MySQL's
+  REPEATABLE READ once the caller's transaction has read anything. `moderate_flags` gets a
+  `pending_key` (`"<flaggable_type>/<flaggable_id>/<field>"` while pending, NULL once closed;
+  the model keeps it in sync on every save, so closing frees it and reopening takes it back)
+  with a unique index. `Flag.flag!` and `Flag.flag_for_review!` insert and, on the collision,
+  return the flag already waiting, read with a locking read (the latest committed row on
+  every database); no plain read decides anything, and `flag_for_review!` locks only the
+  waiting flag, only on a collision.
 - **Removal-only enforcement no longer locks the person's row.** Only a decision that can
   ban takes the account's lock, so removing one message never waits on (or holds up) other
   work on the author's account.
+
+### Changed
+
+- **While a flag waits on a field, another flag on that field joins it.** `Flag.flag!` (the
+  filters' and `ClassifyJob`'s builder too) returns the waiting flag instead of filing a
+  second one (`flag.previously_new_record?` is false; no second `content_flagged`). A field
+  has one item in the queue; once it's decided, the next flag files anew. Code that relied on
+  several pending flags per field, or that closes flags with `update_column` / `update_all`,
+  must set `pending_key` itself (NULL when not pending).
+
+### Upgrading from 1.0.0.beta3
+
+1. `bin/rails db:migrate`. The engine adds the gem's `db/migrate` to your app's migration
+   paths, so `AddPendingKeyToModerateFlags` runs with your own migrations (don't also copy it
+   with `moderate:install:migrations`; if you already did, the copy runs instead). It adds the
+   column and the unique index, and backfills: on each content and field, the newest pending
+   flag takes the key; older duplicate pending flags from before this release stay pending
+   without one (close them when you can). Reversible; a no-op on a fresh install, whose
+   `moderate:install` migration already has the column.
 
 ## [1.0.0.beta3] - 2026-10-18
 

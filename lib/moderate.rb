@@ -381,20 +381,21 @@ module Moderate
     #     to ban, the person; then the report it resolves.
     #   - Report#resolve!/#dismiss! (ResolveReport): the content; to ban, the person;
     #     then the report.
-    #   - Flag.flag_for_review!: the content only. It never locks a flag row: it reads
-    #     "is a flag already waiting?" with a plain read under the content's lock,
-    #     which already serializes it against any other review of that content (a
-    #     locking read of the flags would invert the order against ResolveFlag, and take
-    #     gap locks on MySQL that two reviews inserting flags deadlock on).
+    #   - Flag.flag! / Flag.flag_for_review!: no lock first. The database allows one
+    #     pending flag per content + field (the unique pending_key), so they insert,
+    #     and only on the collision lock a row: the waiting flag's. Holding no content
+    #     lock, they never hold content while waiting on a flag (the inversion against
+    #     ResolveFlag); the read of the waiting flag is an equality match on a unique
+    #     index, a lock on that one row while it exists.
     #   - The person's lock is taken only when a decision can ban: removal-only
     #     enforcement never waits on, or holds, an account's row.
     #
     # Under the lock, every check that decides "already done" (a covering decision, a
-    # prior ban, whether content is gone) is itself a LOCKING read (`.lock`,
-    # `reload(lock: true)`). Under MySQL's REPEATABLE READ a plain read returns the
-    # transaction's snapshot, which may predate the lock, and would miss what the
-    # decision we waited for committed; a locking read returns the latest committed
-    # row on every database. Those reads come after the locks that serialize them
+    # prior ban, whether content is gone, the flag waiting after a collision) is
+    # itself a LOCKING read (`.lock`, `reload(lock: true)`). Under MySQL's REPEATABLE
+    # READ a plain read returns the transaction's snapshot, which may predate the lock,
+    # and would miss what the decision we waited for committed; a locking read returns
+    # the latest committed row on every database. Those reads come after the locks that serialize them
     # (content, and person for a ban), so two decisions never hold gap locks on the
     # reports table at once.
     def with_row_lock(record)

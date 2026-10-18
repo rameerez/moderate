@@ -445,7 +445,7 @@ def flag
 end
 ```
 
-`flag_for_review!` files a `source: "manual"` flag owned by the content's person, or returns the one already waiting on that field. The check and the insert run under the record's row lock, so two moderators pressing it at once file one flag.
+`flag_for_review!` files a `source: "manual"` flag owned by the content's person, or returns the one already waiting on that field. At most one flag is pending per content and field, and the database enforces it (a unique index), so two moderators pressing it at once file one flag: the second gets the first's.
 
 ---
 

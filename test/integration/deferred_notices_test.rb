@@ -210,9 +210,10 @@ module Moderate
     test "two rows queued in one transaction each send" do
       first = file_flag
       second = Moderate::Flag.flag!(
-        flaggable: @comment, field: "body", owner: @author, source: "manual", mode: "flag",
+        flaggable: @comment, field: "image", owner: @author, source: "manual", mode: "flag",
         excerpt: "x", categories: [], scores: {}, context: {}
       )
+      assert_not_equal first, second
       calls = []
 
       ActiveRecord::Base.transaction do

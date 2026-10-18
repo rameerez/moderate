@@ -98,16 +98,26 @@ module Moderate
     # autoloadable; adding it to eager_load_paths makes the boot-time pass cover it.
     config.eager_load_paths << MODERATE_LIB
 
-    # Make the host's migrations:install task pick up the gem's migration template
-    # location, and ensure the gem's own migration directory is on the path. The
-    # primary install path is still `rails generate moderate:install` (which copies
-    # the adaptive migration into the host's db/migrate); appending the path here is
-    # belt-and-suspenders so engine-style `moderate:install:migrations` also works.
+    # The gem's own upgrade migrations (db/migrate, e.g. beta4's pending_key) run with
+    # the host's `bin/rails db:migrate`: this appends the gem's db/migrate to the
+    # app's migration paths. The tables themselves still come from
+    # `rails generate moderate:install`, which copies the adaptive create migration.
+    #
+    # Not appended when the same migrations would then be found twice (Active Record
+    # raises DuplicateMigrationNameError):
+    #   - under the gem's own Rakefile (ENGINE_ROOT is this engine), where Rails' engine
+    #     tasks already add the engine's db/migrate;
+    #   - when the host copied them with `bin/rails moderate:install:migrations`
+    #     (files named *.moderate.rb in its db/migrate): the copies run instead.
     initializer "moderate.migrations" do |app|
-      unless app.root.to_s == root.to_s
-        config.paths["db/migrate"].expanded.each do |path|
-          app.config.paths["db/migrate"] << path
-        end
+      next if app.root.to_s == root.to_s
+      next if defined?(ENGINE_ROOT) && ENGINE_ROOT.to_s == root.to_s
+
+      host_dirs = app.config.paths["db/migrate"].expanded
+      next if host_dirs.any? { |dir| Dir.glob(File.join(dir, "*.moderate.rb")).any? }
+
+      config.paths["db/migrate"].expanded.each do |path|
+        app.config.paths["db/migrate"] << path unless host_dirs.include?(path)
       end
     end
 

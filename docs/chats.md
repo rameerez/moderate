@@ -126,7 +126,7 @@ Reports and flags about messages land in moderate's queues (`Moderate::Report.pe
   flag.previously_new_record? # => false when one was already waiting
   ```
 
-  It's idempotent under the message's row lock: two moderators pressing it at once file one flag. Skip deleted or system messages yourself; there's nothing left to review.
+  At most one flag is pending per message and field, and the database enforces it, so two moderators pressing it at once file one flag: the second gets the first's. Skip deleted or system messages yourself; there's nothing left to review.
 
 ## Launch checklist
 

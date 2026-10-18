@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require_relative "../../support/lock_waits"
 
 module Moderate
   # A comment a moderator can remove (its own base class, so a flag loads it back as itself).
@@ -30,14 +31,13 @@ module Moderate
       end
     end
 
-    # Holding a lock taken by Moderate.with_row_lock on a LockOrderComment, before
-    # the work inside it (flag_for_review!: before it looks for a waiting flag).
-    module InsideContentLock
-      def with_row_lock(record, &block)
-        super(record) do
-          LockOrderGates.pause(:inside_content_lock) if record.is_a?(LockOrderComment)
-          block.call
-        end
+    # Inside Flag.flag! after a collision, holding the waiting flag's lock (it was
+    # just read FOR UPDATE), before returning it.
+    module AfterWaitingFlagRead
+      private
+
+      def waiting_flag(key)
+        super.tap { LockOrderGates.pause(:after_waiting_flag_read) }
       end
     end
 
@@ -51,12 +51,17 @@ module Moderate
     end
   end
   Services::ResolveFlag.prepend(LockOrderGates::BeforeEnforce)
-  Moderate.singleton_class.prepend(LockOrderGates::InsideContentLock)
+  Flag.singleton_class.prepend(LockOrderGates::AfterWaitingFlagRead)
 
   # The lock order (Moderate.with_row_lock): flag → content → person → report, on every
-  # path. Real threads on real connections, so this test commits and cleans up after
-  # itself. PostgreSQL and MySQL only: SQLite has no row locks.
+  # path, so a review and an enforcement of the same content never deadlock, and
+  # removal-only enforcement never touches the person. Real threads on real
+  # connections, each step released only once the database shows the other side
+  # waiting on a lock (LockWaits), so this test commits and cleans up after itself.
+  # PostgreSQL and MySQL only: SQLite has no row locks.
   class LockOrderRaceTest < ActiveSupport::TestCase
+    include LockWaits
+
     self.use_transactional_tests = false
 
     setup do
@@ -82,54 +87,57 @@ module Moderate
       [@moderator, @admin, @author].each(&:destroy)
     end
 
-    test "enforcement holds the flag, then a review of the same content arrives: no deadlock" do
+    test "enforcement holds the flag when a review of the same content arrives: the review waits, then files anew" do
       enforcing = gated(:before_enforce) do
         Moderate::Flag.find(@flag.id).action!(by: @moderator, note: "Slur.", remove_content: true)
       end
       enforcing[:arrived].pop # holds the flag, hasn't asked for the content yet
 
-      reviewing = in_thread { Moderate::Flag.flag_for_review!(LockOrderComment.find(@comment.id), field: :body, by: @admin) }
-      sleep 0.2 # the review takes the content lock and reads, while enforcement holds the flag
+      reviewing = gated(nil) { Moderate::Flag.flag_for_review!(LockOrderComment.find(@comment.id), field: :body, by: @admin) }
+      wait_until_blocked(reviewing[:backend].pop) # its insert collided; it waits on the flag
       enforcing[:go] << :go
 
-      assert_nothing_raised { [enforcing[:thread], reviewing].each(&:join) }
+      assert_nothing_raised { [enforcing, reviewing].each { |side| side[:thread].join } }
       assert_equal "actioned", @flag.reload.status
       assert_nil @comment.reload.body, "removed"
+      filed = reviewing[:thread].value
+      assert_not_equal @flag, filed, "the decided flag freed the field: the review filed a new one"
+      assert_predicate filed, :pending?
     end
 
-    test "a review holds the content, then enforcement of the same content's flag arrives: no deadlock" do
-      reviewing = gated(:inside_content_lock) do
-        Moderate::Flag.flag_for_review!(LockOrderComment.find(@comment.id), field: :body, by: @admin)
+    test "a review holds the waiting flag when enforcement of it arrives: enforcement waits, then decides" do
+      reviewing = gated(:after_waiting_flag_read) do
+        Moderate::Flag.transaction do # holds the waiting flag's lock until its transaction ends
+          Moderate::Flag.flag_for_review!(LockOrderComment.find(@comment.id), field: :body, by: @admin)
+        end
       end
-      reviewing[:arrived].pop # holds the content, hasn't looked for a waiting flag yet
+      reviewing[:arrived].pop
 
-      enforcing = in_thread do
-        Moderate::Flag.find(@flag.id).action!(by: @moderator, note: "Slur.", remove_content: true)
-      end
-      sleep 0.2 # enforcement takes the flag and waits for the content
+      enforcing = gated(nil) { Moderate::Flag.find(@flag.id).action!(by: @moderator, note: "Slur.", remove_content: true) }
+      wait_until_blocked(enforcing[:backend].pop) # on the flag the review holds
       reviewing[:go] << :go
 
-      assert_nothing_raised { [reviewing[:thread], enforcing].each(&:join) }
-      assert_equal "actioned", @flag.reload.status
+      assert_nothing_raised { [reviewing, enforcing].each { |side| side[:thread].join } }
       assert_equal @flag, reviewing[:thread].value, "the review found the flag already waiting"
+      assert_equal "actioned", @flag.reload.status
     end
 
     test "removal-only enforcement never waits on the person's row" do
       holding = Queue.new
       release = Queue.new
-      holder = in_thread do
-        User.transaction do
-          User.lock.find(@author.id) # someone else holds the account's row
-          holding << true
-          release.pop
+      holder = Thread.new do
+        ActiveRecord::Base.connection_pool.with_connection do
+          User.transaction do
+            User.lock.find(@author.id) # someone else holds the account's row
+            holding << true
+            release.pop
+          end
         end
       end
       holding.pop
 
-      enforcing = in_thread do
-        Moderate::Flag.find(@flag.id).action!(by: @moderator, note: "Slur.", remove_content: true)
-      end
-      finished = enforcing.join(5)
+      enforcing = gated(nil) { Moderate::Flag.find(@flag.id).action!(by: @moderator, note: "Slur.", remove_content: true) }
+      finished = enforcing[:thread].join(5)
       release << :go
       holder.join
 
@@ -139,16 +147,16 @@ module Moderate
 
     private
 
-    def in_thread(&block)
-      Thread.new { ActiveRecord::Base.connection_pool.with_connection(&block) }
-    end
-
-    # Run `block` on its own thread and connection, pausing it at `point`.
+    # Run `block` on its own thread and connection, reporting its backend id, and
+    # pausing it at `point` (nil: no pause).
     def gated(point, &block)
-      gate = { at: point, arrived: Queue.new, go: Queue.new }
+      gate = { at: point, arrived: Queue.new, go: Queue.new, backend: Queue.new }
       gate[:thread] = Thread.new do
-        Thread.current[:moderate_lock_order_gate] = gate
-        ActiveRecord::Base.connection_pool.with_connection(&block)
+        Thread.current[:moderate_lock_order_gate] = gate if point
+        ActiveRecord::Base.connection_pool.with_connection do
+          gate[:backend] << backend_id
+          block.call
+        end
       end
       gate
     end
