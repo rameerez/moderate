@@ -155,7 +155,8 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
     # is pending ("<flaggable_type>/<flaggable_id>/<field>") and NULL once it is closed
     # (Moderate::Flag keeps it in sync); NULLs never collide in a unique index. The key
     # compares as bytes: on MySQL, whose default collation ignores case, the column is
-    # utf8mb4_bin, so "Post/1/body" and "POST/1/body" stay two keys.
+    # utf8mb4_bin, so "Post/1/body" and "POST/1/body" stay two keys (it still ignores
+    # trailing spaces, PAD SPACE: Moderate::Flag strips `field`, so keys never have them).
     add_column :moderate_flags, :pending_key, :string, **pending_key_options
     add_index :moderate_flags, :pending_key, unique: true, name: "index_moderate_flags_on_pending_key"
 

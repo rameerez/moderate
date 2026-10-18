@@ -36,8 +36,10 @@ _Upgrading from 1.0.0.beta3_ below). No API change.
   the model keeps it in sync on every save, so closing frees it and reopening takes it back)
   with a unique index. The key compares as bytes everywhere: on MySQL the column is
   `utf8mb4_bin`, since the default collation ignores case and would make content types that
-  differ only by case (`Post`, `POST`) share one key. `Flag.flag!` and `Flag.flag_for_review!` insert and, on the collision,
-  return the flag already waiting, read with a locking read (the latest committed row on
+  differ only by case (`Post`, `POST`) share one key. `utf8mb4_bin` still ignores trailing
+  spaces (MySQL's PAD SPACE), so `Flag#field` is now stripped wherever it is assigned: a key
+  never differs by them. `Flag.flag!` and `Flag.flag_for_review!` insert and, on the
+  collision, return the flag already waiting, read with a locking read (the latest committed row on
   every database); no plain read decides anything, and `flag_for_review!` locks only the
   waiting flag, only on a collision. On MySQL, locking a pending flag (`with_lock`, `lock!`)
   takes its `pending_key` index entry before its row, the order a colliding insert takes
@@ -70,11 +72,14 @@ _Upgrading from 1.0.0.beta3_ below). No API change.
    with `moderate:install:migrations`; if you already did, the copy runs instead). It adds the
    column and the unique index, and backfills: on each content and field, the newest pending
    flag takes the key; older duplicate pending flags from before this release stay pending
-   without one (close them when you can). Before adding the index it asks the database
-   itself for keys it would treat as one, and if there are any it stops with a message
-   naming each key and its flags, rather than failing on the index; close all but one of
-   each and run it again. Reversible; a no-op on a fresh install, whose `moderate:install`
-   migration already has the column (declared `utf8mb4_bin` on MySQL).
+   without one (close them when you can). Before writing any key it has the database group
+   the keys under the column's own collation, and if it would treat two as one (on MySQL,
+   a legacy flag whose field ends in a space against one without) it stops with a message
+   naming each key and its flags, rather than failing on an UPDATE or the index; close all
+   but one of each, or fix the field, and run it again. A no-op on a fresh install, whose
+   `moderate:install` migration already has the column (declared `utf8mb4_bin` on MySQL);
+   on MySQL it refuses a `pending_key` column that ignores case, giving the `ALTER TABLE` to
+   run. `down` drops the index and the column.
 
 ## [1.0.0.beta3] - 2026-10-18
 

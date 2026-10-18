@@ -8,21 +8,29 @@
 # Flag.flag_for_review! insert and, on the collision, return the flag already waiting.
 #
 # Ships with the gem and runs with `bin/rails db:migrate`: the engine adds the gem's
-# db/migrate to your app's migration paths. Guarded both ways, so it is a no-op on a
-# fresh install (the install generator's table already has the column) and safe to
-# run twice. Backfill: each content + field's NEWEST pending flag takes the key; older
-# duplicate pending flags (possible before this release) stay pending without one.
+# db/migrate to your app's migration paths. A no-op on a fresh install (the install
+# generator's table already has the column and index) and safe to run twice.
 #
-# The key compares as BYTES on every database: on MySQL the column is declared
-# utf8mb4_bin, because the default collation is case-insensitive and would make
-# "Post/1/body" and "POST/1/body" one key (PostgreSQL and SQLite compare strings
-# byte-wise already). Before adding the index, keys the database would still treat as
-# one (grouped by the database itself, under the column's collation) stop the
-# migration with a message naming them, instead of an index error.
+# The key compares as bytes: on MySQL the column is utf8mb4_bin, because the default
+# collation ignores case and would make "Post/1/body" and "POST/1/body" one key
+# (PostgreSQL and SQLite compare bytes already). utf8mb4_bin still ignores TRAILING
+# spaces (PAD SPACE); Moderate::Flag strips `field`, so keys it builds never differ by
+# them.
+#
+# Backfill: each content + field's NEWEST pending flag takes the key; older duplicate
+# pending flags (possible before this release) stay pending without one. The keys are
+# checked by the database before any is written, grouped under the column's own
+# collation: keys it would treat as one though they differ as strings (legacy rows
+# whose field has trailing spaces, on MySQL) stop the migration, naming the flags.
+#
+# `down` drops the index and the column: this migration (or the install generator,
+# for a fresh install) is the only thing that creates them.
 class AddPendingKeyToModerateFlags < ActiveRecord::Migration[7.1]
   INDEX = "index_moderate_flags_on_pending_key"
+  BINARY_COLLATION = "utf8mb4_bin"
+  CHECK_TABLE = "moderate_pending_key_check"
 
-  # The table as it is, not the app's model: a migration must not depend on code.
+  # The tables as they are, not the app's model: a migration must not depend on code.
   class Flag < ActiveRecord::Base
     self.table_name = "moderate_flags"
   end
@@ -31,12 +39,11 @@ class AddPendingKeyToModerateFlags < ActiveRecord::Migration[7.1]
     return unless table_exists?(:moderate_flags)
 
     if column_exists?(:moderate_flags, :pending_key)
-      compare_pending_keys_as_bytes
+      require_binary_comparison
     else
       add_column :moderate_flags, :pending_key, :string, **pending_key_options
     end
     backfill_pending_keys
-    refuse_duplicate_pending_keys
     return if index_exists?(:moderate_flags, :pending_key, name: INDEX)
 
     add_index :moderate_flags, :pending_key, unique: true, name: INDEX
@@ -51,8 +58,6 @@ class AddPendingKeyToModerateFlags < ActiveRecord::Migration[7.1]
 
   private
 
-  BINARY_COLLATION = "utf8mb4_bin"
-
   # MySQL under either of Rails' adapters: mysql2, or Trilogy.
   def mysql?
     connection.adapter_name.downcase.match?(/mysql|trilogy/)
@@ -62,41 +67,71 @@ class AddPendingKeyToModerateFlags < ActiveRecord::Migration[7.1]
     mysql? ? { collation: BINARY_COLLATION } : {}
   end
 
-  # A column added without the collation (by hand, or by an earlier draft of this
-  # migration): give it byte comparison. Relaxing a collation never makes two
-  # distinct keys equal, so an existing unique index stays valid.
-  def compare_pending_keys_as_bytes
+  # Only this migration and the install generator create the column, both binary. One
+  # that isn't was made some other way: say so, rather than altering it here.
+  def require_binary_comparison
     return unless mysql?
 
-    column = connection.columns(:moderate_flags).find { |c| c.name == "pending_key" }
-    return if column.collation == BINARY_COLLATION
+    collation = connection.columns(:moderate_flags).find { |c| c.name == "pending_key" }.collation
+    return if collation == BINARY_COLLATION
 
-    change_column :moderate_flags, :pending_key, :string, collation: BINARY_COLLATION
-  end
-
-  def refuse_duplicate_pending_keys
-    duplicates = Flag.where.not(pending_key: nil).group(:pending_key).having("COUNT(*) > 1").count.keys
-    return if duplicates.empty?
-
-    listed = duplicates.map { |key| "#{key.inspect} (flags #{Flag.where(pending_key: key).order(:id).ids.join(", ")})" }
     raise ActiveRecord::MigrationError, <<~MESSAGE.squish
-      moderate_flags has pending flags whose pending_key the unique index would treat as
-      one: #{listed.join("; ")}. Close all but one of each (dismiss them, or set
-      pending_key to NULL on the older ones), then run the migration again.
+      moderate_flags.pending_key compares with #{collation.inspect}, which ignores case, so
+      flags on content types that differ only by case would share one key. Make it
+      binary, then run the migration again: ALTER TABLE moderate_flags MODIFY pending_key
+      VARCHAR(255) COLLATE #{BINARY_COLLATION} NULL
     MESSAGE
   end
 
   def backfill_pending_keys
     Flag.reset_column_information
+    chosen = newest_pending_without_key
+    refuse_keys_the_database_would_merge(chosen)
+    chosen.each { |id, key| Flag.where(id: id).update_all(pending_key: key) }
+  end
+
+  # { flag id => key } for each content + field's newest pending flag without a key,
+  # unless a flag already holds that exact key.
+  def newest_pending_without_key
     newest = {}
     Flag.where(status: "pending", pending_key: nil).select(:id, :flaggable_type, :flaggable_id, :field, :created_at)
         .find_each do |flag|
       key = "#{flag.flaggable_type}/#{flag.flaggable_id}/#{flag.field}"
       newest[key] = flag if newest[key].nil? || flag.created_at > newest[key].created_at
     end
-    taken = Flag.where(pending_key: newest.keys).pluck(:pending_key).to_set
-    newest.each do |key, flag|
-      Flag.where(id: flag.id).update_all(pending_key: key) unless taken.include?(key)
+    taken = Flag.where.not(pending_key: nil).pluck(:pending_key).to_set
+    newest.reject { |key, _| taken.include?(key) }.to_h { |key, flag| [flag.id, key] }
+  end
+
+  # The keys to write and the keys already written, in a temporary table whose key
+  # column compares exactly as pending_key does; any key the database groups twice
+  # would make the index (or a backfill UPDATE) fail, so stop first and name them.
+  # Plain SQL: Rails' schema lookups don't all see temporary tables (PostgreSQL's pg_temp).
+  def refuse_keys_the_database_would_merge(chosen)
+    create_table CHECK_TABLE, temporary: true, id: false do |t|
+      t.bigint :flag_id, null: false
+      t.string :pending_key, null: false, **pending_key_options
     end
+    table = quote_table_name(CHECK_TABLE)
+    rows = chosen.to_a + Flag.where.not(pending_key: nil).pluck(:id, :pending_key)
+    rows.each_slice(500) do |slice|
+      values = slice.map { |id, key| "(#{Integer(id)}, #{quote(key)})" }.join(", ")
+      execute "INSERT INTO #{table} (flag_id, pending_key) VALUES #{values}"
+    end
+
+    merged = select_values("SELECT pending_key FROM #{table} GROUP BY pending_key HAVING COUNT(*) > 1")
+    return if merged.empty?
+
+    listed = merged.map do |key|
+      ids = select_values("SELECT flag_id FROM #{table} WHERE pending_key = #{quote(key)} ORDER BY flag_id")
+      "#{key.inspect} (flags #{ids.map { |id| Integer(id) }.join(", ")})"
+    end
+    raise ActiveRecord::MigrationError, <<~MESSAGE.squish
+      moderate_flags has pending flags whose pending_key the unique index would treat as
+      one: #{listed.join("; ")}. Close all but one of each (dismiss them, or fix a field
+      with stray spaces), then run the migration again.
+    MESSAGE
+  ensure
+    drop_table CHECK_TABLE, temporary: true, if_exists: true
   end
 end

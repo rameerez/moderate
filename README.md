@@ -452,7 +452,7 @@ Reportable classes are auto-discovered from the `has_reportable_content` macro (
 
 ## Upgrading between 1.0 betas
 
-**1.0.0.beta4 adds a migration.** After upgrading, run `bin/rails db:migrate`: the engine adds the gem's own `db/migrate` to your app's migration paths, so it runs with yours. (Don't also copy it with `bin/rails moderate:install:migrations`; if you already copied it, the copy runs instead.) It gives `moderate_flags` a `pending_key` with a unique index, so at most one flag is pending per content and field. If flags filed before the upgrade would break that index, the migration stops and lists them; close all but one of each and run it again. See [`CHANGELOG.md`](CHANGELOG.md) for what each beta changes.
+**1.0.0.beta4 adds a migration.** After upgrading, run `bin/rails db:migrate`: the engine adds the gem's own `db/migrate` to your app's migration paths, so it runs with yours. (Don't also copy it with `bin/rails moderate:install:migrations`; if you already copied it, the copy runs instead.) It gives `moderate_flags` a `pending_key` with a unique index, so at most one flag is pending per content and field. If flags filed before the upgrade would break that index, the migration stops and lists them; close all but one of each and run it again. On MySQL the key column is `utf8mb4_bin`, so keys compare by case; that collation still ignores trailing spaces (PAD SPACE), which is why `moderate` strips a flag's `field`, and why a legacy flag whose field ends in a space can be one of those the migration lists. See [`CHANGELOG.md`](CHANGELOG.md) for what each beta changes.
 
 ## Upgrading from 0.x
 
