@@ -161,7 +161,8 @@ class ModerationMailer < ApplicationMailer
       info_row "Automated means", event.payload[:automated] ? "Yes" : "No"
       space
       text "If you believe this was a mistake, you can appeal — it's free and reviewed by a person."
-      button "Appeal this decision", event.payload[:appeal_url] # moderate mints a signed link for you
+      button "Appeal this decision",                    # the engine's appeal form, behind a signed link
+             moderate.new_appeal_url(token: event.subject.signed_appeal_gid, source: "affected_user")
       sign
     end
   end
@@ -184,7 +185,7 @@ Why this shape:
 - **`.with(event:, recipient:)`** is the standard Action Mailer params path, so the same arguments survive `deliver_later` serialization (the event's records are GlobalID-serializable AR objects).
 - **`public_send(event.name)`** lets the *event name* select the mailer action — `report_received` → `#report_received` — so adding a new email is "add a method," not "add a branch."
 - **`goodmail_mail`** is goodmail's mailer helper: it renders the DSL block, wires `List-Unsubscribe`, and hands a normal multipart message to Action Mailer. Use its DSL (`h1`, `text`, `info_row`, `button`, `sign`, …) instead of ERB templates. `info_row`/`price_row` are perfect for the reference/date/action rows a decision email needs.
-- **The appeal link** in a decision email is the signed link `moderate` mints for you (`config.signed_gid_purposes` includes `:appeal`); read it from `event.payload[:appeal_url]` rather than building your own route.
+- **The appeal link** in a decision email points at the engine's appeal form with the report's signed token: `moderate.new_appeal_url(token: event.subject.signed_appeal_gid, source: "affected_user")` (`source: "notifier"` in the reporter's `report_decision` email). The token names only that report and can't be replayed to find anything else; `event.payload[:appeal_deadline_at]` is the last day it works.
 
 > [!TIP]
 > Per-product or per-tenant branding? `goodmail_mail` accepts `config: { company_name:, brand_color:, logo_url: }` for a scoped, thread-local override — handy if your app is white-labeled. See goodmail's "Per-message branding."

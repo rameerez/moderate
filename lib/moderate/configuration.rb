@@ -78,8 +78,7 @@ module Moderate
                   :notice_captcha_verifier, :notice_guard, :notice_human_verification_skip_if,
                   :appeal_form_enabled, :appeal_rate_limit, :appeal_guard,
                   :appeal_human_verification_skip_if, :appeal_return_path,
-                  :transparency_report_enabled,
-                  :signed_gid_purposes
+                  :transparency_report_enabled
 
     def initialize
       # Identity. "User" is the overwhelmingly common case; the host overrides it
@@ -161,8 +160,6 @@ module Moderate
       # off, the mounted `/transparency` route 404s; the aggregation stays queryable in
       # code so a host can still build/publish its own report.
       @transparency_report_enabled = false
-
-      @signed_gid_purposes = %i[appeal confirm_notice unsubscribe]
     end
 
     # How a "ban" is applied in the host. Unlike the other hooks, leaving it unset is

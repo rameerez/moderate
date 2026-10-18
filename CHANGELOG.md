@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **docs/notifications.md's statement-of-reasons mailer had no working appeal link.** It
+  read `event.payload[:appeal_url]`, which the gem has never set, so a copied mailer
+  rendered an "Appeal this decision" button to nowhere (Art. 17(3)(f) requires the redress
+  path). It now builds the link the way a working host does:
+  `moderate.new_appeal_url(token: event.subject.signed_appeal_gid, source: "affected_user")`.
 - **An attachment is classified once its file is uploaded, never before.** Active Storage
   uploads a new attachment in its own `after_commit`, and commit callbacks run in the order
   they were defined, so on a model that calls `moderates` above `has_one_attached` the
@@ -50,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **`config.signed_gid_purposes`.** Nothing ever read it: each signed token's purpose is
+  fixed by the flow that mints it. A host initializer that sets it now raises
+  `NoMethodError` at boot; delete the line (the generated initializer only had it
+  commented out).
 - **Rails 7.1 and Ruby 3.2 are no longer supported** (both are end of life upstream). The
   gemspec now requires Ruby 3.3+ and `activerecord` / `activesupport` / `railties`
   `>= 7.2.3.1, < 9.0` (7.2.3.1 is the first 7.2 release with the current Rails security

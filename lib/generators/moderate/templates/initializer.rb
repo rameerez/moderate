@@ -176,19 +176,6 @@ Moderate.configure do |config|
   # config.transparency_report_enabled = true
 
   # ==========================================================================
-  # SIGNED LINKS — purposes for the signed Global IDs in emails & notices
-  # ==========================================================================
-  #
-  # `moderate` mints signed, single-purpose links (e.g. an appeal link in a
-  # decision email, a confirm-receipt link in a DSA notice). These purposes
-  # scope each signature so a link minted for one action can't be replayed for
-  # another. The defaults cover the built-in flows; add your own if you mint
-  # custom signed links against moderate records.
-  #
-  # Default: [:appeal, :confirm_notice, :unsubscribe]
-  # config.signed_gid_purposes = [:appeal, :confirm_notice, :unsubscribe]
-
-  # ==========================================================================
   # LOCALE
   # ==========================================================================
   #
