@@ -1,6 +1,9 @@
 # moderate's default Spanish copy. See en.yml for how these keys resolve and
 # how to override them from your app.
 es:
+  errors:
+    messages:
+      objectionable_content: "contiene lenguaje no permitido"
   moderate:
     appeals:
       reported_field: "Contenido"

@@ -2,6 +2,12 @@
 # config/locales: Rails loads an engine's locale files BEFORE the host's, so
 # your translation always wins.
 en:
+  # The error `moderates :field, mode: :block` (and `validates :field, moderate: true`)
+  # adds to a rejected field. Override it per model and attribute the usual
+  # Active Record way (activerecord.errors.models.<model>.attributes.<field>.objectionable_content).
+  errors:
+    messages:
+      objectionable_content: "contains language that isn't allowed"
   moderate:
     appeals:
       reported_field: "Content"

@@ -58,6 +58,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`validates :field, moderate: true` works again.** The README promised the 0.x one-liner
+  still worked; it raised `Unknown validator: 'ModerateValidator'`, because its file was
+  never loaded (and had it been, it downloaded a word list over HTTP and read a
+  configuration key 1.0 doesn't have). It is now what the README says: the built-in
+  `:wordlist` in `:block` mode, adding the same `:objectionable_content` error (or your
+  `message:`). The unreachable 0.x `Moderate::Text` and `Moderate::WordList` are deleted.
+- **A field rejected by `:block` reads as copy.** `errors.add(field, :objectionable_content)`
+  had no translation, so a person saw "Body Translation missing. Options considered
+  were: …". The gem ships `errors.messages.objectionable_content` in English ("contains
+  language that isn't allowed") and Spanish; override it per model and attribute the usual
+  Active Record way.
 - **docs/notifications.md's statement-of-reasons mailer had no working appeal link.** It
   read `event.payload[:appeal_url]`, which the gem has never set, so a copied mailer
   rendered an "Appeal this decision" button to nowhere (Art. 17(3)(f) requires the redress

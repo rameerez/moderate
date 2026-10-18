@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "rails/engine"
+require_relative "text_validator" # `validates :field, moderate: true` (0.x)
 
 module Moderate
   # The Rails engine that wires `moderate` into a host app.
@@ -48,11 +49,9 @@ module Moderate
     #      `event`, `configuration`, `engine`, `macros`) is `require_relative`'d from
     #      `lib/moderate.rb` so the value objects work in a plain-Ruby context with
     #      no Rails — those files MUST NOT also be managed by Zeitwerk (a constant
-    #      can't be both manually required and autoloaded). The 0.x compatibility
-    #      shims (`text`, `text_validator`, `word_list`) are ignored too: they either
-    #      define non-conventional constants (`text_validator.rb` reopens
-    #      `ActiveModel::Validations`, not a `Moderate::*` constant) or are legacy and
-    #      loaded only on demand.
+    #      can't be both manually required and autoloaded). The 0.x validator
+    #      (`text_validator`) is ignored too: it reopens `ActiveModel::Validations`,
+    #      not a `Moderate::*` constant, and this file requires it.
     #
     # We do this on the host's MAIN autoloader (`Rails.autoloaders.main`) inside an
     # initializer scheduled BEFORE `:set_autoload_paths`, the same point Rails wires
@@ -61,12 +60,11 @@ module Moderate
     LIB_ROOT = File.expand_path("..", __dir__) # => .../lib
     MODERATE_LIB = File.expand_path("moderate", LIB_ROOT) # => .../lib/moderate
 
-    # Spine + 0.x-compat files Zeitwerk must NOT manage (they're require_relative'd
-    # from the spine or define non-conventional constants).
+    # Spine files and the 0.x validator: Zeitwerk must NOT manage them (they're
+    # require_relative'd, and the validator defines a non-Moderate constant).
     ZEITWERK_IGNORED = %w[
       version.rb errors.rb label.rb result.rb event.rb
-      configuration.rb engine.rb macros.rb
-      text.rb text_validator.rb word_list.rb
+      configuration.rb engine.rb macros.rb text_validator.rb
     ].freeze
     private_constant :LIB_ROOT, :MODERATE_LIB, :ZEITWERK_IGNORED
 

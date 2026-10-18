@@ -535,7 +535,7 @@ Every hook receives one `Moderate::Event`: `#name` · `#subject` · `#actor` · 
 `moderate` 1.0 is a ground-up rewrite: the old gem was a profanity validator; 1.0 is a full Trust & Safety system. The one piece of the old API that remains is the validator, now backed by the `:wordlist` adapter:
 
 ```ruby
-validates :body, moderate: true     # still works — equivalent to `moderates :body, mode: :block`
+validates :body, moderate: true     # still works — the same check as `moderates :body, with: :wordlist, mode: :block`
 ```
 
 Everything else is new. There's no automated data migration (0.x stored nothing). See [`CHANGELOG.md`](CHANGELOG.md).
