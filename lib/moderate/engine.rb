@@ -127,6 +127,48 @@ module Moderate
       config.paths["db/migrate"].expanded - host_dirs
     end
 
+    # An app that holds copies of the gem's migrations runs only those (see above), so
+    # a copy missed after an upgrade would never run, silently. At boot, compare the
+    # copies with the gem's migrations by name; when one is missing, raise (or log,
+    # per `config.migration_copies_check`), naming it and the command that copies it.
+    config.after_initialize do |app|
+      next if app.root.to_s == Engine.root.to_s
+
+      Engine.check_migration_copies!(app.config.paths["db/migrate"].expanded)
+    end
+
+    # The gem's migrations (by name) an app holding copies has no copy of; [] for an
+    # app without copies, which gets the gem's own path instead.
+    def self.missing_migration_copies(host_dirs)
+      copies = host_dirs.flat_map { |dir| Dir.glob(File.join(dir, "*.moderate.rb")) }
+      return [] if copies.empty?
+
+      copied = copies.map { |file| File.basename(file, ".moderate.rb").split("_", 2).last }
+      gem_migrations = Dir[root.join("db/migrate/[0-9]*_*.rb").to_s].map { |file| File.basename(file, ".rb").split("_", 2).last }
+      gem_migrations - copied
+    end
+
+    def self.check_migration_copies!(host_dirs, mode: Moderate.config.migration_copies_check)
+      return if mode == :off
+
+      missing = missing_migration_copies(host_dirs)
+      return if missing.empty?
+
+      message = "moderate: your app holds copies of moderate's migrations (*.moderate.rb) but none of " \
+                "#{missing.join(", ")}, which this version of moderate needs. Run `bin/rails " \
+                "moderate:install:migrations`, then `bin/rails db:migrate`."
+      # Under a rake task (the very command that copies them, or db:migrate) log
+      # instead: raising there would make the fix impossible to run.
+      raise Moderate::ConfigurationError, message if mode == :raise && !running_rake_task?
+
+      Rails.logger&.error(message)
+      warn(message)
+    end
+
+    def self.running_rake_task?
+      defined?(::Rake.application) && ::Rake.application.top_level_tasks.any?
+    end
+
     # Register the model macros on ActiveRecord, the canonical Rails way.
     #
     # `ActiveSupport.on_load(:active_record)` defers until ActiveRecord::Base is

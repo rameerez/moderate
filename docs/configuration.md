@@ -296,6 +296,14 @@ config.locale = :en   # default: your app's I18n.default_locale
 
 The locale for copy `moderate` generates on its own — filter validation messages, the DSA statement-of-reasons taxonomy labels, the notice-form strings. Leave it unset to follow `I18n.default_locale`.
 
+### `migration_copies_check`
+
+```ruby
+config.migration_copies_check = :raise   # default; or :log, or :off
+```
+
+An app that holds copies of the gem's migrations (`*.moderate.rb`, from `rails generate moderate:install` or `bin/rails moderate:install:migrations`) runs only those copies, so a release whose new migration you didn't copy would never run it. At boot `moderate` compares your copies with its migrations by name: if one is missing it raises `Moderate::ConfigurationError` naming it and the command that copies it (`bin/rails moderate:install:migrations`, then `bin/rails db:migrate`). Under a rake task it logs instead, so that command can run. `:log` always logs (to `Rails.logger` and stderr); `:off` skips the check. An app without copies is never checked: it gets the gem's migrations through the engine.
+
 ### `classification_claim_ttl`
 
 ```ruby

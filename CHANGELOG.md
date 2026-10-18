@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **One migration: run `bin/rails db:migrate`** (after `bin/rails moderate:install:migrations`
   if your app holds copies of the gem's migrations, `*.moderate.rb`, as every app installed
-  from 1.0.0.beta4 on does). `db/migrate/20261018210000_add_retention_and_classifications_to_moderate_tables.rb`
+  from 1.0.0.beta4 on does; boot now fails, naming it, if you forget). `db/migrate/20261018210000_add_retention_and_classifications_to_moderate_tables.rb`
   adds `redacted_at` to `moderate_reports`, `moderate_flags` and `moderate_appeals`,
   `held_until` (indexed) to `moderate_reports`, and creates `moderate_classifications`. It
   sorts after beta4's `pending_key` migration and needs no backfill. Like that one it is the
@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A missed migration copy fails at boot.** An app holding copies of the gem's migrations
+  (`*.moderate.rb`) runs only those, so a release migration it didn't copy would never
+  run, silently. At boot (`after_initialize`) the engine compares the copies with its own
+  migrations by name and, when one is missing, raises `Moderate::ConfigurationError`
+  naming it and `bin/rails moderate:install:migrations`; under a rake task (that command,
+  `db:migrate`) it logs instead. **`config.migration_copies_check`** (`:raise`, `:log`,
+  `:off`) changes it. Apps without copies aren't checked.
 - **The public API is frozen and listed.** The README's new "What is public" section names
   everything that keeps its name, arguments and meaning until 2.0: the macros, `report!` /
   `block!`, the reportable contract, the decision methods (`resolve!` / `dismiss!` /

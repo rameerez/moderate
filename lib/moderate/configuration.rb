@@ -73,6 +73,22 @@ module Moderate
     # purge — which keeps rows with a live claim — can't be held off forever.
     attr_reader :classification_claim_ttl
 
+    # What the boot check does when the app holds copies of the gem's migrations
+    # (*.moderate.rb) but not every one this version ships: :raise (the default; under
+    # a rake task it logs instead, so `bin/rails moderate:install:migrations` can run),
+    # :log, or :off. See Moderate::Engine.check_migration_copies!.
+    MIGRATION_COPIES_CHECKS = %i[raise log off].freeze
+    attr_reader :migration_copies_check
+
+    def migration_copies_check=(mode)
+      mode = mode.to_s.strip.downcase.to_sym
+      unless MIGRATION_COPIES_CHECKS.include?(mode)
+        raise ArgumentError, "migration_copies_check must be one of: #{MIGRATION_COPIES_CHECKS.join(", ")}"
+      end
+
+      @migration_copies_check = mode
+    end
+
     MAX_CLASSIFICATION_CLAIM_TTL = 24 * 60 * 60 # 1 day, in seconds
 
     def classification_claim_ttl=(value)
@@ -148,6 +164,7 @@ module Moderate
       @locale = nil
 
       @classification_claim_ttl = 600 # 10 minutes, in seconds
+      @migration_copies_check = :raise
 
       # Engine controller defaults. The parent controller defaults to a stock base so
       # the engine works even on API-only apps — the same `parent_controller`
