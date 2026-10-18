@@ -69,8 +69,9 @@ module Moderate
       due = { reports: reports_due(cutoff, now), flags: flags_due(cutoff), appeals: appeals_due(cutoff) }
       held = due.to_h { |kind, scope| [kind, scope.where(hold_condition(kind, now, held: true)).count] }
       free = due.to_h { |kind, scope| [kind, scope.where(hold_condition(kind, now, held: false))] }
-      classifications = classifications_due(cutoff)
-      return free.transform_values(&:count).merge(classifications: classifications.count, held: held) if dry_run
+      classifications = classifications_due(cutoff, now)
+      kept = { claims_kept: live_claims(cutoff, now).count, held: held }
+      return free.transform_values(&:count).merge(classifications: classifications.count, **kept) if dry_run
 
       counts = {
         reports: redact(free[:reports], report_redaction(now)),
@@ -79,7 +80,7 @@ module Moderate
         classifications: delete(classifications)
       }
       audit(counts, held, cutoff: cutoff, older_than: age) if counts.values.sum.positive?
-      counts.merge(held: held)
+      counts.merge(kept)
     end
 
     # Put `report` under a legal hold until `until:` (a future time): the purge leaves
@@ -127,9 +128,18 @@ module Moderate
 
     # Attachment classification bookkeeping (Moderate::Classification: ids, a digest,
     # timestamps) last touched before `cutoff`: classified then, or a claim nobody
-    # completed. Deleted, not redacted: nothing in them is evidence.
-    def self.classifications_due(cutoff)
+    # completed. Deleted, not redacted: nothing in them is evidence. Never a row with
+    # a LIVE claim (younger than config.classification_claim_ttl), whatever its age:
+    # a worker is classifying those files right now, and would discard its result.
+    def self.classifications_due(cutoff, now)
+      rows = Moderate::Classification.arel_table
       Moderate::Classification.where(updated_at: ..cutoff)
+        .where(rows[:claimed_at].eq(nil).or(rows[:claimed_at].lteq(now - Moderate::Attachments.claim_ttl)))
+    end
+
+    # Rows the age cutoff would take but a live claim keeps (`:claims_kept`).
+    def self.live_claims(cutoff, now)
+      Moderate::Classification.where(updated_at: ..cutoff).where(claimed_at: (now - Moderate::Attachments.claim_ttl)..)
     end
 
     def self.delete(scope)
@@ -225,7 +235,7 @@ module Moderate
       }
     end
 
-    private_class_method :reports_due, :flags_due, :appeals_due, :classifications_due, :delete, :hold_condition, :report_redaction,
-      :flag_redaction, :appeal_redaction, :redact, :audit, :hold_event
+    private_class_method :reports_due, :flags_due, :appeals_due, :classifications_due, :live_claims, :delete,
+      :hold_condition, :report_redaction, :flag_redaction, :appeal_redaction, :redact, :audit, :hold_event
   end
 end

@@ -294,7 +294,9 @@ The locale for copy `moderate` generates on its own — filter validation messag
 config.classification_claim_ttl = 10.minutes   # default (600 seconds)
 ```
 
-How long one worker's claim on a set of attached files lasts. An attachment is classified by whoever claims it first (the inline path, the immediate `ClassifyJob` or the after-upload guard); the others see the live claim and stop, and the adapter runs outside any lock. Make it longer than your slowest adapter call: a claim that expires mid-call lets another worker classify the same files, and the first result is then discarded. When a worker dies mid-call, the files wait this long before a job takes them over.
+How long one worker's claim on a set of attached files lasts. An attachment is classified by whoever claims it first (the inline path, the immediate `ClassifyJob` or the after-upload guard); the others see the live claim and stop, and the adapter runs outside any lock. Make it longer than your slowest adapter call: a claim that expires mid-call lets another worker classify the same files, and the first result is then discarded. When a worker dies mid-call, the files wait this long before a job takes them over. It must be more than 0 and at most a day; anything else raises at boot.
+
+An adapter that **raises** leaves its claim in place until it expires, and the failure doesn't schedule a retry by itself. A later attempt takes the files over: the after-upload guard job, a job's single recheck at the claim's expiry, the next save of that field, or your job backend retrying the same job (it keeps its job id, so the claim is still its own). `Moderate.purge` never deletes a row whose claim is live, whatever its age (`:claims_kept` in its counts).
 
 ---
 

@@ -69,7 +69,23 @@ module Moderate
     # ActiveSupport::Duration) before another worker may take it over: longer than
     # your slowest adapter call, short enough that a worker that died mid-call doesn't
     # leave the files unclassified for long. See Moderate::Attachments.
-    attr_accessor :classification_claim_ttl
+    # Capped at a day (MAX_CLASSIFICATION_CLAIM_TTL) so a claim always ends, and a
+    # purge — which keeps rows with a live claim — can't be held off forever.
+    attr_reader :classification_claim_ttl
+
+    MAX_CLASSIFICATION_CLAIM_TTL = 24 * 60 * 60 # 1 day, in seconds
+
+    def classification_claim_ttl=(value)
+      seconds = value.respond_to?(:to_i) ? value.to_i : 0
+      unless seconds.positive? && seconds <= MAX_CLASSIFICATION_CLAIM_TTL
+        raise ArgumentError,
+          "classification_claim_ttl must be more than 0 and at most a day (#{MAX_CLASSIFICATION_CLAIM_TTL} seconds), " \
+          "got #{value.inspect}: longer than your slowest adapter call, short enough that files a dead worker " \
+          "claimed are taken over"
+      end
+
+      @classification_claim_ttl = value
+    end
 
     # --- DSA notice form ------------------------------------------------------
     # Documented in docs/dsa-notice-form.md. Held here so the engine/controller

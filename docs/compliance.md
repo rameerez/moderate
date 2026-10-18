@@ -203,7 +203,8 @@ So: content copies and contact details get a short life, decisions and counts a 
 
 ```ruby
 Moderate.purge(older_than: 1.year)
-# => { reports: 12, flags: 40, appeals: 1, classifications: 300, held: { reports: 1, flags: 2, appeals: 0 } }
+# => { reports: 12, flags: 40, appeals: 1, classifications: 300, claims_kept: 0,
+#      held: { reports: 1, flags: 2, appeals: 0 } }
 Moderate.purge(older_than: 18.months, dry_run: true) # the same counts, changes nothing
 ```
 
@@ -231,7 +232,7 @@ Holding again moves the date; a hold that expires lifts itself. Both are audited
 | **Reports and notices**: the message (→ `"[redacted]"`), the evidence snapshot, the reported URLs and account identifier, the notifier's name and email, the reporter. | The report is closed, was decided more than `older_than` ago, its appeal window has closed, no appeal on it is open, and it isn't held. | Every row; category, legal ground, member state, content type, status, timestamps; the whole decision (basis, actions, note, visibility, automated-means disclosure); the reported user. |
 | **Flags**: the excerpt (→ `"[redacted]"`) and the context. | The flag was decided more than `older_than` ago, and no held report is about its content and field. | Every row; source, mode, categories, scores, status, the owner, the review. |
 | **Appeals**: the reason (→ `"[redacted]"`) and the appellant's name and email. | The appeal was decided more than `older_than` ago, and its report isn't held. | Every row; status, outcome note, timestamps, the appellant's account. |
-| **Classification rows** (`moderate_classifications`): deleted, not redacted (nothing in them is evidence). | Last touched more than `older_than` ago. | — |
+| **Classification rows** (`moderate_classifications`): deleted, not redacted (nothing in them is evidence). | Last touched more than `older_than` ago, and not under a live claim (a worker classifying those files right now; counted under `:claims_kept`). | — |
 
 Guarantees, each with a test in `test/models/moderate/retention_test.rb`:
 

@@ -56,8 +56,12 @@ module Moderate
   #      id, whose `upload` is a no-op) may not be there yet; then the job from step
   #      1 takes it.
   #
-  # Whichever classifies first marks the blobs (Moderate::Attachments); the rest
-  # find the mark and stop, so a field is classified once per set of files.
+  # Whichever classifies first claims the files (a moderate_classifications row,
+  # Moderate::Attachments), calls the adapter outside any lock and records the
+  # result; the rest find the claim or the record and stop, so a field is classified
+  # once per set of files. An adapter that raises leaves its claim until
+  # `config.classification_claim_ttl` runs out and schedules no retry itself: the
+  # guard job, a job's recheck at the claim's expiry, or a new save takes it over.
   module ContentFilterable
     extend ActiveSupport::Concern
 

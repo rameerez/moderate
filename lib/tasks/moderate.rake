@@ -16,7 +16,8 @@ namespace :moderate do
     held = counts[:held]
     puts "moderate:purge #{verb} #{counts[:reports]} reports, #{counts[:flags]} flags, " \
          "#{counts[:appeals]} appeals decided more than #{days} days ago, " \
-         "#{dry_run ? "would delete" : "deleted"} #{counts[:classifications]} classification rows; kept for a legal hold: " \
+         "#{dry_run ? "would delete" : "deleted"} #{counts[:classifications]} classification rows " \
+         "(#{counts[:claims_kept]} kept for a live claim); kept for a legal hold: " \
          "#{held[:reports]} reports, #{held[:flags]} flags, #{held[:appeals]} appeals"
   end
 end

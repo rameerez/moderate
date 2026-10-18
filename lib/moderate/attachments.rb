@@ -19,9 +19,13 @@ module Moderate
   #      claim; otherwise discard the result (the files changed — the new set has
   #      its own classification — or our claim expired and another worker took it).
   #
-  # A claim expires after `config.classification_claim_ttl` (10 minutes by default),
-  # so a worker that died mid-call doesn't block the files forever: the next look
-  # after expiry overrides it.
+  # A claim expires after `config.classification_claim_ttl` (10 minutes by default,
+  # at most a day), so a worker that died mid-call doesn't block the files forever:
+  # the next look after expiry overrides it. An adapter that RAISES also leaves its
+  # claim until expiry, and nothing here schedules a retry for it: a later attempt
+  # takes it over — the after-upload guard job, a job's one recheck at the claim's
+  # expiry, a new save of the field, or your job backend retrying the same job (same
+  # job id, so the claim is still its own).
   #
   # ── Where the claims live ──────────────────────────────────────────────────────
   # In the gem's own table, `moderate_classifications` (Moderate::Classification):

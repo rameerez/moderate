@@ -236,6 +236,21 @@ class Moderate::RetentionTest < ActiveSupport::TestCase
     assert Moderate::Classification.exists?(recent.id)
   end
 
+  test "a row with a live claim is never purged, however old; an expired one is" do
+    Moderate.config.classification_claim_ttl = 1.day
+    live = travel_to(2.years.ago) { Moderate::Classification.create!(record: @comment, field: "photo", digest: "c" * 16) }
+    live.update_columns(claimed_by: "worker-1", claimed_at: 1.hour.ago) # still claimed, row last touched 2 years ago
+    expired = travel_to(2.years.ago) do
+      Moderate::Classification.create!(record: @comment, field: "photo", digest: "d" * 16, claimed_by: "dead", claimed_at: Time.current)
+    end
+
+    assert_equal(counts_of(classifications: 1, claims_kept: 1), Moderate.purge(dry_run: true))
+    assert_equal(counts_of(classifications: 1, claims_kept: 1), Moderate.purge)
+
+    assert Moderate::Classification.exists?(live.id), "a worker is classifying those files right now"
+    assert_not Moderate::Classification.exists?(expired.id)
+  end
+
   test "older_than may not be shorter than the appeal window" do
     error = assert_raises(ArgumentError) { Moderate.purge(older_than: 3.months) }
     assert_match "appeal window", error.message
@@ -265,8 +280,8 @@ class Moderate::RetentionTest < ActiveSupport::TestCase
 
   private
 
-  def counts_of(reports: 0, flags: 0, appeals: 0, classifications: 0, held: {})
-    { reports: reports, flags: flags, appeals: appeals, classifications: classifications,
+  def counts_of(reports: 0, flags: 0, appeals: 0, classifications: 0, claims_kept: 0, held: {})
+    { reports: reports, flags: flags, appeals: appeals, classifications: classifications, claims_kept: claims_kept,
       held: { reports: 0, flags: 0, appeals: 0 }.merge(held) }
   end
 

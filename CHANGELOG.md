@@ -132,7 +132,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   added or removed) or the same blob on another record is another row, classified again;
   nothing of ours is written to `blob.metadata`, so other records sharing a blob and Active
   Storage's analyzer can't overwrite a claim. `Moderate.purge` deletes rows last touched
-  before its cutoff (`:classifications` in its counts). Under **`mode: :block`**, an
+  before its cutoff (`:classifications` in its counts), never one under a live claim
+  (`:claims_kept`). `classification_claim_ttl` must be more than 0 and at most a day, or
+  boot raises. An adapter that raises leaves its claim until it expires and schedules no
+  retry itself; the guard job, a job's recheck at expiry, a new save or the job backend's
+  own retry takes it over. Under **`mode: :block`**, an
   attachment whose stored blob isn't on the service yet (a direct upload in flight) fails validation with
   `errors.messages.upload_not_finished` ("hasn't finished uploading yet", en/es) instead of
   being classified without its file.
