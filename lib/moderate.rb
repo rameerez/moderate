@@ -265,6 +265,32 @@ module Moderate
       result
     end
 
+    # --- Responsibility -------------------------------------------------------
+
+    # The PERSON responsible for `record` — the account a decision notifies and a
+    # ban reaches — or nil when nobody is. It asks the record's `reported_owner`
+    # (the Reportable contract) and keeps the answer only if it is an instance of
+    # the configured `user_class`.
+    #
+    # Why the type check lives here: content is often spoken by something that
+    # isn't a person — a support desk, a bot, an organization. `chats` answers
+    # `author || sender` for a message, which is a desk for an unsigned support
+    # reply. Every place moderate stores an owner is a `user_class` association
+    # (Report#reported_user, Flag#owner), so a desk there would raise
+    # ActiveRecord::AssociationTypeMismatch and take the report down with it.
+    # "Nobody to reach" is the honest answer: the report still files, the evidence
+    # is still kept, content can still be removed; only a decision notice or a ban
+    # has no addressee.
+    #
+    # A reportable that doesn't define `reported_owner` still raises (loudly, at
+    # the first report) — that omission is a bug in the host, not "nobody".
+    def responsible_user(record)
+      return if record.nil? || !record.respond_to?(:reported_owner)
+
+      owner = record.reported_owner
+      owner if owner.is_a?(user_class)
+    end
+
     # --- Blocking SSOT --------------------------------------------------------
 
     # The single source-of-truth list of user ids "related to" `user` via a block

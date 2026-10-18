@@ -29,6 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Content spoken by something that isn't a person no longer breaks reports and flags.**
+  moderate stored `reportable.reported_owner` straight into `Report#reported_user` and
+  `Flag#owner`, both associations to `config.user_class`. A support desk or a bot behind the
+  content (chats answers `author || sender`, which is a desk for an unsigned support reply)
+  raised `ActiveRecord::AssociationTypeMismatch` and the report never filed. The new
+  `Moderate.responsible_user(record)` keeps the owner only if it is a person; anything else
+  means "nobody to reach": the report files, the evidence is kept, content can still be
+  removed, and only a decision notice or a ban has no addressee. Report intake, `Flag.flag!`,
+  the `:flag` after_commit and `ClassifyJob` all go through it. A reportable that never
+  defined `reported_owner` still raises at the first report. Hosts that overrode
+  `Chats::Message#reported_owner` to return nil for non-users can delete the override.
 - **The gem's locale files can no longer override the host's.** The engine appended its
   `config/locales` to `config.i18n.load_path`, which Rails loads AFTER the app's own locale
   files — harmless while the directory was empty, but any shipped default would have silently

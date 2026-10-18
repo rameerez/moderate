@@ -455,11 +455,12 @@ module Moderate
     # (its `reported_owner`, per the Moderate::Reportable interface). This is how a
     # report against a piece of content becomes a report "about" the user who posted
     # it — without this model knowing anything about the host's ownership model.
+    # Only a person is stored: an owner that isn't the configured user class (a
+    # support desk, a bot) means "nobody to reach" — see Moderate.responsible_user.
     def infer_reported_user
       return if reported_user.present?
-      return unless reportable.respond_to?(:reported_owner)
 
-      self.reported_user = reportable.reported_owner
+      self.reported_user = Moderate.responsible_user(reportable)
     end
 
     # Capture an IMMUTABLE evidence snapshot at create time. This is the heart of a

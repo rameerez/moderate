@@ -71,11 +71,14 @@ module Moderate
     # whatever shape a Moderate::Result exposed without each one re-normalizing.
     # `context` is freeform JSON for audit (which policy fired, the raw classifier
     # payload, etc.) — never relied on by the gem's own logic.
+    #
+    # `owner` is kept only if it is a person (the configured user class): hosts
+    # commonly pass `record.reported_owner`, which can be a desk or a bot.
     def self.flag!(flaggable:, field:, owner:, source:, mode:, excerpt:, categories:, scores:, context:)
       create!(
         flaggable: flaggable,
         field: field,
-        owner: owner,
+        owner: (owner if owner.is_a?(Moderate.user_class)),
         source: source,
         mode: mode,
         excerpt: excerpt,
