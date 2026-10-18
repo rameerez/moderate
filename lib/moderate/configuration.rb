@@ -15,7 +15,8 @@ module Moderate
   #     plain-English ArgumentError on a bad value — failing fast at the assignment
   #     line. `validate!` runs once more at the end of `configure` for cross-field
   #     checks (e.g. a :block filter pointed at an async adapter).
-  #   - Every hook (`audit`/`notify`/`on_block`/`ban_handler`) defaults to a no-op,
+  #   - Every hook (`audit`/`notify`/`on_block`/`ban_handler`) defaults to a no-op
+  #     (`ban_handler` refuses a ban it can't apply rather than faking one),
   #     so the gem works untouched and a host wires hooks only as needed.
   #
   # This mirrors the validating-setter convention across the ecosystem
@@ -57,7 +58,8 @@ module Moderate
     attr_accessor :report_categories
 
     # --- Hooks (all no-op by default) ----------------------------------------
-    attr_accessor :audit, :notify, :on_block, :ban_handler
+    attr_accessor :audit, :notify, :on_block
+    attr_reader :ban_handler # its writer (below) refuses a non-callable and tracks configured?
 
     # --- Misc -----------------------------------------------------------------
     attr_accessor :locale
@@ -161,6 +163,27 @@ module Moderate
       @transparency_report_enabled = false
 
       @signed_gid_purposes = %i[appeal confirm_notice unsubscribe]
+    end
+
+    # How a "ban" is applied in the host. Unlike the other hooks, leaving it unset is
+    # not a silent no-op when a ban is actually asked for: `ban_user: true` (and
+    # Moderate.apply_ban) raise until one is wired, because "we suspended your
+    # account" must never be sent for a suspension that didn't happen. Assigning nil
+    # puts the default back.
+    def ban_handler=(handler)
+      if handler.nil?
+        @ban_handler = ->(user:, by:, reason:) {}
+        @ban_handler_configured = false
+      else
+        raise ArgumentError, "ban_handler must respond to #call" unless handler.respond_to?(:call)
+
+        @ban_handler = handler
+        @ban_handler_configured = true
+      end
+    end
+
+    def ban_handler_configured?
+      @ban_handler_configured == true
     end
 
     def parent_controller=(value)

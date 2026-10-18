@@ -28,11 +28,11 @@
 
   <main class="moderate-main">
     <div class="moderate-container moderate-grid">
-      <%= render "summary_card", title: t("moderate.transparency.cards.notices_by_intake", default: "Notices by intake"), rows: @summary[:notices_by_intake] %>
-      <%= render "summary_card", title: t("moderate.transparency.cards.dsa_by_reason", default: "DSA notices by legal reason"), rows: @summary[:dsa_notices_by_legal_reason], translation_scope: "moderation.legal_reasons" %>
-      <%= render "summary_card", title: t("moderate.transparency.cards.actions_by_basis", default: "Actions by basis"), rows: @summary[:actions_by_basis], translation_scope: "moderation.resolution_bases" %>
-      <%= render "summary_card", title: t("moderate.transparency.cards.flags_by_source", default: "Automated flags by source"), rows: @summary[:automated_flags_by_source] %>
-      <%= render "summary_card", title: t("moderate.transparency.cards.appeals_by_status", default: "Appeals by status"), rows: @summary[:appeals_by_status] %>
+      <%= render "summary_card", title: t("moderate.transparency.cards.notices_by_intake", default: "Notices by intake"), rows: @summary[:notices_by_intake], kind: :intake_kind %>
+      <%= render "summary_card", title: t("moderate.transparency.cards.dsa_by_reason", default: "DSA notices by legal reason"), rows: @summary[:dsa_notices_by_legal_reason], kind: :legal_reason %>
+      <%= render "summary_card", title: t("moderate.transparency.cards.actions_by_basis", default: "Actions by basis"), rows: @summary[:actions_by_basis], kind: :resolution_basis %>
+      <%= render "summary_card", title: t("moderate.transparency.cards.flags_by_source", default: "Automated flags by source"), rows: @summary[:automated_flags_by_source], kind: :flag_source %>
+      <%= render "summary_card", title: t("moderate.transparency.cards.appeals_by_status", default: "Appeals by status"), rows: @summary[:appeals_by_status], kind: :appeal_status %>
 
       <article class="moderate-card">
         <h2><%= t("moderate.transparency.cards.median_times", default: "Median times") %></h2>

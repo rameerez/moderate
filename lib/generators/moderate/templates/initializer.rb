@@ -104,7 +104,8 @@ Moderate.configure do |config|
   # same place. No-op by default.
   #
   # The full event vocabulary:
-  #   :report_received        :report_decision        :affected_user_decision
+  #   :report_received        :notice_received
+  #   :report_decision        :affected_user_decision
   #   :appeal_received        :appeal_decision
   #   :user_blocked           :user_unblocked         :user_banned
   #   :content_flagged        :content_removed
@@ -139,7 +140,8 @@ Moderate.configure do |config|
   # `moderate` doesn't own your user lifecycle, so it never bans a user itself.
   # When a moderator resolves a report with `ban_user: true`, this proc decides
   # what "banned" means in your domain — suspend, soft-delete, flip a flag, etc.
-  # Signature uses keyword args. No-op by default (the action still audits).
+  # Signature uses keyword args. Required before any ban: with none set,
+  # `ban_user: true` raises instead of claiming a suspension that never happened.
   #
   # config.ban_handler = ->(user:, by:, reason:) { user.suspend!(reason: reason) }
 

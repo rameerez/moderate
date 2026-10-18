@@ -115,7 +115,7 @@ module Moderate
     # otherwise (the owner column is nullable — a flag with no resolvable owner is
     # still a valid queue item).
     def content_owner(record)
-      record.respond_to?(:reported_owner) ? record.reported_owner : nil
+      Moderate.responsible_user(record)
     end
 
     # Diagnostic context persisted on the flag (the `context` jsonb column): the raw

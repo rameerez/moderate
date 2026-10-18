@@ -185,6 +185,64 @@ module Moderate
       assert_predicate flag.reload, :pending?
     end
 
+    # --- Manual review flags ----------------------------------------------------
+
+    test "flag_for_review! files a manual flag owned by the content's person" do
+      admin = create_user
+      comment = Comment.create!(user: @user, body: "see you on the ladder")
+      ModerateTestRecorder.clear
+      Moderate.configure { |config| config.audit = ->(event) { ModerateTestRecorder.audit(event) } }
+
+      flag = Moderate::Flag.flag_for_review!(comment, field: :body, by: admin, note: "  Odd tone  ")
+
+      assert_predicate flag, :previously_new_record?
+      assert_predicate flag, :pending?
+      assert_equal "manual", flag.source
+      assert_equal "body", flag.field
+      assert_equal @user, flag.owner
+      assert_equal "see you on the ladder", flag.excerpt
+      assert_equal [], flag.categories
+      assert_equal({ "flagged_by_id" => admin.id, "note" => "Odd tone" }, flag.context)
+      assert_predicate comment, :flagged?
+
+      filed = ModerateTestRecorder.audits_named(:flag_filed).sole
+      assert_equal admin, filed.actor
+      assert_equal flag, filed.subject
+    end
+
+    test "flag_for_review! returns the flag already waiting instead of a second one" do
+      comment = Comment.create!(user: @user, body: "hello")
+      first = Moderate::Flag.flag_for_review!(comment, field: "body", by: create_user)
+
+      again = assert_no_difference(-> { Moderate::Flag.count }) do
+        Moderate::Flag.flag_for_review!(comment, field: :body, by: create_user)
+      end
+
+      assert_equal first, again
+      assert_not_predicate again, :previously_new_record?
+    end
+
+    test "flag_for_review! files again once the earlier flag was decided" do
+      comment = Comment.create!(user: @user, body: "hello")
+      Moderate::Flag.flag_for_review!(comment, field: :body, by: nil).dismiss!(note: "Fine.")
+
+      assert_predicate Moderate::Flag.flag_for_review!(comment, field: :body, by: nil), :previously_new_record?
+    end
+
+    test "flag_for_review! locks the row without touching the caller's object" do
+      comment = Comment.create!(user: @user, body: "hello")
+      comment.body = "an unsaved edit"
+
+      Moderate::Flag.flag_for_review!(comment, field: :body, by: nil)
+
+      assert_equal "an unsaved edit", comment.body, "not reloaded, and not refused for its unsaved change"
+    end
+
+    test "flag_for_review! needs a field and a saved record" do
+      assert_raises(ArgumentError) { Moderate::Flag.flag_for_review!(@user, field: "", by: nil) }
+      assert_raises(ArgumentError) { Moderate::Flag.flag_for_review!(Comment.new(user: @user), field: :body, by: nil) }
+    end
+
     private
 
     def build_pending_flag

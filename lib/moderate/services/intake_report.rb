@@ -51,18 +51,27 @@ module Moderate
       # failed (the report carries its errors, Rails-conventionally) so a controller
       # can `if intake.save ... else render :new` exactly like a bare model save.
       def save
-        return false unless report.save
+        # The report and, for "report and block", the block are ONE act: both commit
+        # or neither does (a host on_block hook that raises rolls the report back
+        # too, and the error reaches the caller), and the receipt goes out only after.
+        Moderate::Report.transaction do
+          # Captured before the save (Moderate::DeferredNotices).
+          connection = Moderate::DeferredNotices.connection_for(Moderate::Report)
+          next false unless report.save
 
-        # DSA Art. 16(4): the provider must confirm receipt "without undue delay."
-        # `acknowledge!` stamps `acknowledged_at` — the durable, on-record proof of
-        # receipt — BEFORE we attempt the (best-effort, possibly-undelivered) email,
-        # so the legal obligation is met by the database fact, not by a mailer that
-        # might not be wired. See: https://eur-lex.europa.eu/eli/reg/2022/2065/oj
-        report.acknowledge!
-
-        deliver_receipt
-        audit_intake
-        true
+          # DSA Art. 16(4): the provider must confirm receipt "without undue delay."
+          # `acknowledge!` stamps `acknowledged_at` — the durable, on-record proof of
+          # receipt — BEFORE we attempt the (best-effort, possibly-undelivered) email,
+          # so the legal obligation is met by the database fact, not by a mailer that
+          # might not be wired. See: https://eur-lex.europa.eu/eli/reg/2022/2065/oj
+          report.acknowledge!
+          block_reported_user
+          # The receipt waits for the report to be durable (Moderate::DeferredNotices):
+          # never a "we got your report" for a report a surrounding transaction undid.
+          report.after_commit_notice(on: connection) { deliver_receipt }
+          audit_intake
+          true
+        end
       end
 
       private
@@ -87,10 +96,13 @@ module Moderate
           payload: {
             category: report.category,
             intake_kind: report.intake_kind,
+            reported_field: report.reported_field,
+            reported_field_label: field_label,
             # `:summary` is the contract every event carries — a redaction-safe,
             # ready-to-send one-liner for the admin Telegram ping (docs/notifications.md).
-            summary: "New #{report.category} report on #{reportable_label}"
-          }
+            # The field label is host-declared copy, never user content, so it's safe here.
+            summary: ["New #{report.category} report on #{reportable_label}", field_label].compact.join(" · ")
+          }.compact
         )
       end
 
@@ -114,8 +126,25 @@ module Moderate
         )
       end
 
+      # "Report and block": the reporter asked to block the person responsible too.
+      # After the report is safely filed, through the one block path (Block.block!:
+      # idempotent, audited, on_block, user_blocked). A self-block is a no-op there.
+      def block_reported_user
+        return unless ActiveModel::Type::Boolean.new.cast(report.block_reported_user)
+
+        reporter = report.reporter
+        blocked = report.reported_user
+        return if reporter.blank? || blocked.blank? || !reporter.respond_to?(:block!)
+
+        reporter.block!(blocked)
+      end
+
       def recipient_email
         report.notifier_email
+      end
+
+      def field_label
+        report.reported_field_label
       end
 
       # The reportable's own human label, or a neutral fallback — NEVER a host-

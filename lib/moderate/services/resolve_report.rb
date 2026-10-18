@@ -32,10 +32,24 @@ module Moderate
     #      means disclosure, appeal path). Different people, different rights — see
     #      docs/notifications.md ("Why two decision events").
     class ResolveReport
-      def initialize(report, by:)
+      # The decision notices are queued on the report and sent when the outermost
+      # transaction commits (Moderate::DeferredNotices). `deliver: false` leaves them
+      # to a caller that queues them on a record of its own (ResolveFlag, on the flag),
+      # via `#deliver_decision_notices`.
+      #
+      # `conduct_since:` is when the conduct this decision answers was first raised —
+      # the report's own creation by default; ResolveFlag passes the flag's. A ban
+      # decided on the same person since then already answered it (see
+      # #ban_reported_user!).
+      def initialize(report, by:, deliver: true, conduct_since: nil)
         @report = report
         @moderator = by
+        @deliver = deliver
+        @conduct_since = conduct_since
       end
+
+      # The report being decided.
+      attr_reader :report
 
       # Resolve WITH action (the report was valid; we acted on the content/account).
       # `resolution_basis` records the legal/contractual ground bucket; it's
@@ -48,9 +62,14 @@ module Moderate
           resolution_basis: resolution_basis.to_s.strip.presence || "terms"
         }
 
+        # A ban nothing would apply is refused before anything changes (see
+        # Moderate.ensure_ban_handler!): never "account suspended" for a suspension
+        # that didn't happen.
+        Moderate.ensure_ban_handler! if actions[:ban_user] && report.reported_user.present?
+
         transition!("actioned", note: note, actions: actions) do
-          remove_reported_content! if actions[:remove_content]
-          ban_reported_user!(note: note) if actions[:ban_user]
+          remove_reported_content!(note: note) if actions[:remove_content]
+          ban_reported_user!(note: note, actions: actions) if actions[:ban_user]
         end
       end
 
@@ -62,14 +81,40 @@ module Moderate
         transition!("dismissed", note: note, actions: { resolution_basis: "no_violation" })
       end
 
+      # The two decision events (see the class doc, point 4). Sent by `resolve!` /
+      # `dismiss!` themselves unless this service was built with `deliver: false`.
+      def deliver_decision_notices
+        notify_user_banned
+        notify_reporter
+        notify_affected_user
+        notify_content_removed
+      end
+
       private
 
-      attr_reader :report, :moderator
+      attr_reader :moderator
 
       # The atomic core. Everything that mutates state happens under the row lock;
       # the (slow, fallible) notifications happen AFTER the lock is released, so a
       # broken mailer can't hold a database lock or roll back the decision.
-      def transition!(status, note:, actions:)
+      def transition!(status, note:, actions:, &enforcement)
+        # The report's connection, captured before anything is saved: every notice of
+        # this decision joins ITS transaction, whatever a host callback switches to.
+        @connection = Moderate::DeferredNotices.connection_for(report.class)
+
+        # One lock order everywhere: content, then (for a ban) the person, then the
+        # report — the order a flag escalation takes too, so they never deadlock. The
+        # person's lock serializes two bans of one account from different content.
+        Moderate.with_row_lock(report.reportable) do
+          Moderate.with_row_lock(actions[:ban_user] ? report.reported_user : nil) do
+            lock_and_transition!(status, note: note, actions: actions, &enforcement)
+          end
+        end
+
+        report
+      end
+
+      def lock_and_transition!(status, note:, actions:)
         report.with_lock do
           report.reload
 
@@ -100,36 +145,101 @@ module Moderate
           )
 
           audit_decision(status, actions, note)
-        end
 
-        deliver_decision_notices
-        report
+          # Sent when the outermost transaction commits, never on a rollback.
+          report.after_commit_notice(on: @connection) { deliver_decision_notices } if @deliver
+        end
       end
 
       # --- Enforcement (host contracts only) ----------------------------------
 
-      def remove_reported_content!
-        return if report.reportable.blank?
-        return unless report.reportable.respond_to?(:remove_reported_field!)
+      # The reportable's own removal (`remove_reported_field!`). When it says it
+      # removed something, the removal is audited here, inside the decision's
+      # transaction, and announced as `content_removed` with the decision notices.
+      def remove_reported_content!(note:)
+        # Nothing to remove from (the content was deleted, its report nullified) or
+        # no way to remove it: refused like a removal that removed nothing.
+        removable = report.reportable.present? && report.reportable.respond_to?(:remove_reported_field!)
+        refuse_unremoved! unless removable && report.reportable.remove_reported_field!(report.reported_field)
 
-        report.reportable.remove_reported_field!(report.reported_field)
+        @content_removed = content_removed_payload(note)
+        Moderate.audit(:content_removed, **content_removed_event)
+        true
       end
 
-      def ban_reported_user!(note:)
+      # "Remove the content" was asked and the reportable removed nothing (the field
+      # isn't removable, or it's already gone). Recording the decision anyway would
+      # tell the affected person "content removed" for content that's still there, so
+      # the whole decision is refused (and rolled back, a ban with it).
+      def refuse_unremoved!
+        message = I18n.t(
+          "moderate.errors.nothing_removed",
+          content: report.reportable_label,
+          default: "Nothing was removed: #{report.reportable_label} has nothing removable there (already " \
+                   "removed, deleted, or not removable). Resolve without removing content, or dismiss."
+        )
+        report.errors.add(:base, message)
+        raise ActiveRecord::RecordInvalid, report
+      end
+
+      def content_removed_payload(note)
+        {
+          report_id: report.id,
+          reportable_type: report.reportable_type,
+          reportable_id: report.reportable_id,
+          reported_field: report.reported_field,
+          reported_field_label: report.reported_field_label,
+          reason: note,
+          summary: ["Content removed: #{report.reportable_label}", report.reported_field_label].compact.join(" · ")
+        }.compact
+      end
+
+      def content_removed_event
+        { subject: report, actor: moderator, recipients: [report.reported_user].compact, payload: @content_removed }
+      end
+
+      # The gem never bans directly — it asks the host's ban_handler what "banned"
+      # means (suspend, soft-delete, flip a flag…). ONE ban per person per episode: if
+      # a decision on this same person, on any content or field, already banned them
+      # since this conduct was raised, the account is suspended already — this decision
+      # records which one (`ban_already_applied_by`) instead of banning twice. (An
+      # older ban, before this conduct, doesn't count: the person may have been
+      # unbanned since, and new conduct deserves its own decision.)
+      def ban_reported_user!(note:, actions:)
         user = report.reported_user
         return if user.blank?
 
-        # The gem never bans directly — it asks the host's ban_handler what "banned"
-        # means (suspend, soft-delete, flip a flag…). No-op by default, so the
-        # decision still completes and audits even if no ban is wired.
-        Moderate.apply_ban(user: user, by: moderator, reason: note)
+        if (prior = prior_ban_decision(user))
+          actions[:ban_already_applied_by] = prior.id
+          return
+        end
+
+        @user_banned = Moderate.apply_ban(user: user, by: moderator, reason: note, announce: false)
+      end
+
+      def prior_ban_decision(user)
+        since = @conduct_since || report.created_at
+        decided = Moderate::Report.actioned.where(reported_user_id: user.id, resolved_at: since..)
+                                  .where.not(id: report.id)
+        decided.recent_first.find { |prior| truthy?(prior.resolution_actions.to_h["ban_user"]) }
       end
 
       # --- Notifications (after the lock) -------------------------------------
 
-      def deliver_decision_notices
-        notify_reporter
-        notify_affected_user
+      # user_banned → the banned person (Moderate.apply_ban, announced here so it waits
+      # for the commit like the rest).
+      def notify_user_banned
+        return unless @user_banned
+
+        Moderate.announce_ban(**@user_banned)
+      end
+
+      # content_removed → the person whose content it was (when there is one) and the
+      # host's admin channels. Only when the removal actually removed something.
+      def notify_content_removed
+        return unless @content_removed
+
+        Moderate.notify(:content_removed, **content_removed_event)
       end
 
       # report_decision → the reporter (Art. 16(5): inform the notice provider of the
@@ -186,6 +296,8 @@ module Moderate
       #   - automated: whether automated means participated in detection/decision
       #     (Art. 17(3)(c)) — read off the report's recorded automated_processing
       #   - reason: the moderator's human-readable note
+      #   - reported_field_label: WHICH content the decision is about, in words the
+      #     affected user recognizes ("Chat message", never the column name "body")
       # The HOST renders the redress/appeal copy (it names the jurisdiction); the gem
       # supplies the data + the report so the host can mint the signed appeal link.
       def decision_payload
@@ -193,6 +305,8 @@ module Moderate
           report_id: report.id,
           status: report.status,
           action: action_label,
+          reported_field: report.reported_field,
+          reported_field_label: report.reported_field_label,
           resolution_basis: report.resolution_basis,
           # The contractual ground (in-app reports) vs. the legal ground (DSA notices).
           category: report.category,
@@ -218,6 +332,7 @@ module Moderate
             reported_user_id: report.reported_user_id,
             reportable_type: report.reportable_type,
             reportable_id: report.reportable_id,
+            reported_field: report.reported_field,
             actions: actions,
             resolution_basis: report.resolution_basis,
             automated: automated_processing_used?,

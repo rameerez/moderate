@@ -49,6 +49,26 @@ class ReportingTest < ActiveSupport::TestCase
     refute_includes html, "reportable_id", "no raw id param"
   end
 
+  test "moderate_report_target_path is viewer-agnostic and stable across renders" do
+    first = view_context(viewer: nil).moderate_report_target_path(@comment, field: :body)
+    second = view_context(viewer: @author).moderate_report_target_path(@comment, field: :body)
+
+    assert_equal first, second, "no viewer check, and a non-expiring target: one URL for every render"
+    target = Rack::Utils.parse_query(URI.parse(first).query).fetch("target")
+    assert_equal @comment.to_moderation_sgid, target
+    assert_equal @comment, Moderate::Report.locate_signed_reportable(target)
+    assert_includes first, "field=body"
+  end
+
+  test "the report path is found through main_app from inside another engine's views" do
+    view = view_context(viewer: nil)
+    host_routes = Object.new
+    def host_routes.new_report_path(query) = "/host/reports/new?#{query.to_query}"
+    view.define_singleton_method(:main_app) { host_routes }
+
+    assert_match %r{\A/host/reports/new\?}, view.moderate_report_target_path(@comment, field: :body)
+  end
+
   test "moderate_report_link renders NOTHING for an anonymous viewer (no current_user)" do
     # nil viewer => the in-app button is hidden (anonymous users use the public DSA
     # notice form instead). This is one of the three documented "render nothing" cases.

@@ -26,8 +26,9 @@ module Moderate
 
     # --- Report / Flag decisions ---------------------------------------------
     # Both `Moderate::Report` and `Moderate::Flag` expose `resolve!`/`dismiss!` with
-    # the same keyword contract, so the SAME two actions drive either resource —
-    # the host just includes this concern in whichever controller.
+    # the same keyword contract (`Flag#resolve!` is `Flag#action!`), so the SAME two
+    # actions drive either resource — the host just includes this concern in
+    # whichever controller.
 
     # Resolve (action) a report/flag: optionally remove the offending content and/or
     # ban the responsible user, always with a moderator + a note.
@@ -39,7 +40,7 @@ module Moderate
     def resolve
       record = moderation_record
       record.resolve!(**moderation_decision_params)
-      redirect_after_moderation(record, notice: moderation_t(:resolved))
+      redirect_after_moderation(record, notice: moderation_t(moderation_outcome_key(record, :resolved)))
     rescue => error
       redirect_after_moderation(record, alert: moderation_error(:resolve, error))
     end
@@ -48,7 +49,7 @@ module Moderate
     def dismiss
       record = moderation_record
       record.dismiss!(by: moderation_actor, note: moderation_note)
-      redirect_after_moderation(record, notice: moderation_t(:dismissed))
+      redirect_after_moderation(record, notice: moderation_t(moderation_outcome_key(record, :dismissed)))
     rescue => error
       redirect_after_moderation(record, alert: moderation_error(:dismiss, error))
     end
@@ -100,14 +101,18 @@ module Moderate
     # `params.require(:report)` because the decision form is a flat panel of
     # checkboxes + a note, not a nested model form — so we read top-level params and
     # hand the model exactly the keyword args it documents. `ban_user`/`remove_content`
-    # default to off so a missing checkbox never accidentally bans someone.
+    # default to off so a missing checkbox never accidentally bans someone, and
+    # `resolution_basis` (the Art. 17 ground) is passed only when the form sent one,
+    # so the model's default ("terms") applies otherwise. On a Flag, either
+    # enforcement option escalates to a report (Flag#action!).
     def moderation_decision_params
       {
         by: moderation_actor,
         note: moderation_note,
         remove_content: params[:remove_content],
-        ban_user: params[:ban_user]
-      }
+        ban_user: params[:ban_user],
+        resolution_basis: params[:resolution_basis].presence
+      }.compact
     end
 
     # Redirect back to the record after a decision.
@@ -146,12 +151,19 @@ module Moderate
       moderation_t(:"#{action}_failed", default: "Could not #{action}: #{message}", error: message)
     end
 
+    # A flag's outcome reads as a flag's ("Flag actioned."), a report's as a report's.
+    def moderation_outcome_key(record, outcome)
+      record.is_a?(Moderate::Flag) ? :"flag_#{outcome}" : outcome
+    end
+
     # Translated flash copy, with a plain-English default so the concern works even
     # before the host loads the gem's locale file.
     def moderation_t(key, **options)
       defaults = {
         resolved: "Report resolved.",
         dismissed: "Report dismissed.",
+        flag_resolved: "Flag actioned.",
+        flag_dismissed: "Flag dismissed.",
         upheld: "Appeal upheld.",
         rejected: "Appeal rejected."
       }

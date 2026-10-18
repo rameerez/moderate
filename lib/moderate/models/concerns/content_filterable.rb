@@ -121,9 +121,10 @@ module Moderate
             flaggable: self,
             field: field,
             # `reported_owner` comes from Moderate::Reportable. A filterable model
-            # is usually also reportable; if it isn't, the owner is simply nil
-            # (the flag still lands in the queue, just unattributed).
-            owner: (reported_owner if respond_to?(:reported_owner)),
+            # is usually also reportable; if it isn't — or its owner isn't a
+            # person (Moderate.responsible_user) — the owner is simply nil (the
+            # flag still lands in the queue, just unattributed).
+            owner: Moderate.responsible_user(self),
             source: result.source,
             mode: policy.mode,
             # Cap the stored excerpt so we never balloon a row with a huge body;

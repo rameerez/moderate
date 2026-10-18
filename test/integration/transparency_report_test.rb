@@ -24,7 +24,9 @@ class TransparencyReportTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_includes response.body, "Moderation transparency"
-    assert_includes response.body, "Public security"
+    # Labeled from the gem's taxonomy (Moderate.taxonomy_label), not humanized.
+    assert_includes response.body, "Risk for public security"
+    assert_includes response.body, "Legal notice"
   end
 
   test "Moderate.transparency aggregates the period counters and is queryable even when the page is OFF" do

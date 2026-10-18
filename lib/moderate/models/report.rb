@@ -19,6 +19,7 @@ module Moderate
   # what fields may be reported are all answered by the polymorphic `has_reportable_content`
   # (through the `Moderate::Reportable` interface), never by anything domain-specific.
   class Report < ApplicationRecord
+    include Moderate::DeferredNotices
     self.table_name = "moderate_reports"
 
     STATUSES = %w[open actioned dismissed].freeze
@@ -126,8 +127,10 @@ module Moderate
       foreign_key: :flaggable_id
 
     before_validation :normalize_strings
+    before_validation :default_community_message, on: :create
     before_validation :hydrate_reporter_contact, if: :reporter
     before_validation :infer_reported_user, on: :create
+    before_validation :infer_content_type, on: :create
     before_validation :capture_snapshot, on: :create
     before_validation :capture_automated_processing, on: :create
     # Default the JSON columns to their empty shape before save. WHY: the migration
@@ -192,6 +195,7 @@ module Moderate
     validates :resolution_basis, inclusion: { in: RESOLUTION_BASES }, allow_blank: true
     validate :reporter_cannot_report_self
     validate :reportable_field_must_be_allowed
+    validate :reporter_must_be_allowed_to_report, on: :create
     validate :subject_url_must_be_http_url
     validate :public_notice_requires_subject_url
     validate :dsa_notice_must_be_substantiated
@@ -205,6 +209,17 @@ module Moderate
     # in tests. Coerced to strings to match the normalized, persisted column value.
     def self.report_categories
       Array(Moderate.config.report_categories).map(&:to_s).presence || DEFAULT_CATEGORIES
+    end
+
+    # The community categories in effect as `[label, value]` pairs, in the current
+    # locale, ready for a report form's select:
+    #
+    #   f.select :category, Moderate::Report.category_options
+    #
+    # Honors `config.report_categories` (a host list's own values are labeled from
+    # `moderate.categories.<value>`, else humanized). See Moderate.taxonomy_label.
+    def self.category_options
+      report_categories.map { |category| [Moderate.taxonomy_label(:category, category), category] }
     end
 
     # --- Signed-GlobalID locators --------------------------------------------
@@ -236,6 +251,10 @@ module Moderate
     def open?
       status == "open"
     end
+
+    # Awaiting a decision — the record-level twin of the `pending` scope, so one
+    # predicate reads the same across Report, Flag and Appeal queues.
+    alias pending? open?
 
     def actioned?
       status == "actioned"
@@ -280,6 +299,16 @@ module Moderate
       return reportable.moderation_label if reportable.respond_to?(:moderation_label)
 
       subject_url.presence || I18n.t("moderate.reports.legal_notice_label", default: "Legal notice")
+    end
+
+    # What humans call the reported field ("Chat message", not "body"), or nil when
+    # the report targets the whole record. Resolved from the reportable's CLASS, so
+    # the label survives the content being deleted: deleting a reportable nullifies
+    # BOTH polymorphic columns (`dependent: :nullify`), so we fall back to the type
+    # frozen into the evidence snapshot. See Moderate.reportable_field_label.
+    def reported_field_label
+      type = reportable_type.presence || snapshot.to_h.with_indifferent_access[:reportable_type]
+      Moderate.reportable_field_label(reportable || type, reported_field)
     end
 
     # The snapshotted text of the reported field, asked of the reportable. Returns
@@ -432,6 +461,18 @@ module Moderate
       self.resolution_note = resolution_note.to_s.strip.presence
     end
 
+    # An in-app reporter's free text is optional: the category they picked IS the
+    # reason (a person who was just insulted shouldn't have to write an essay). The
+    # column is NOT NULL and the queue needs something to read, so a blank message
+    # becomes the category's label, in the reporter's language. A DSA notice must
+    # still be substantiated in the notifier's own words (Art. 16(2)(a)), so this
+    # never applies to one.
+    def default_community_message
+      return unless community? && message.blank? && category.present?
+
+      self.message = Moderate.taxonomy_label(:category, category)
+    end
+
     # When an authenticated user files the report, copy their contact onto the
     # notifier fields so DSA notices and community reports carry the same identity
     # shape downstream. We read `email`/`display_name` via `try` so the host's user
@@ -445,11 +486,31 @@ module Moderate
     # (its `reported_owner`, per the Moderate::Reportable interface). This is how a
     # report against a piece of content becomes a report "about" the user who posted
     # it — without this model knowing anything about the host's ownership model.
+    # Only a person is stored: an owner that isn't the configured user class (a
+    # support desk, a bot) means "nobody to reach" — see Moderate.responsible_user.
     def infer_reported_user
       return if reported_user.present?
-      return unless reportable.respond_to?(:reported_owner)
 
-      self.reported_user = reportable.reported_owner
+      self.reported_user = Moderate.responsible_user(reportable)
+    end
+
+    # The generic content bucket, from the reportable when the caller didn't name
+    # one: `moderation_content_type` (with or without the field — chats' takes none),
+    # kept if it is one of CONTENT_TYPES and filed as "other" if it isn't, so a
+    # host's own word ("ride") can never fail an intake. A caller's explicit value
+    # (the DSA notice form's select) is left alone.
+    def infer_content_type
+      return if content_type.present?
+
+      value = reportable_content_type
+      self.content_type = CONTENT_TYPES.include?(value) ? value : "other" if value
+    end
+
+    def reportable_content_type
+      return unless reportable.respond_to?(:moderation_content_type)
+
+      reader = reportable.method(:moderation_content_type)
+      (reader.arity.zero? ? reader.call : reader.call(reported_field)).to_s.squish.presence
     end
 
     # Capture an IMMUTABLE evidence snapshot at create time. This is the heart of a
@@ -504,10 +565,48 @@ module Moderate
     # isn't a managed reportable), we don't constrain the field.
     def reportable_field_must_be_allowed
       return if reportable.blank?
+      return if escalated_from_this_flag?
       return unless reportable.respond_to?(:reportable_field_allowed?)
       return if reportable.reportable_field_allowed?(reported_field)
 
       errors.add(:reported_field, I18n.t("moderate.errors.invalid_reported_field", default: "is not a reportable field"))
+    end
+
+    # An in-app (community) report from a signed-in person must be about something
+    # that person may report: the reportable's own `report_visible_to?` (never your
+    # own content; for chats, only a conversation you're in). The report affordance
+    # hides itself on that rule, but a hidden link is not a check: a signed target
+    # pasted or replayed from elsewhere reached the model unchecked until now. DSA
+    # notices (anyone may notify) and system reports (no reporter) are not affected.
+    # The self-report and field rules above already explain their own refusals.
+    def reporter_must_be_allowed_to_report
+      return unless visibility_checked?
+      return if reportable.report_visible_to?(reporter, field: reported_field)
+
+      message = I18n.t("moderate.errors.not_reportable_by_reporter", default: "isn't something you can report")
+      errors.add(:reportable, message)
+    end
+
+    # The Moderate::Flag a system report was opened from (Flag#action! enforcing).
+    # Such a report may name the flag's field even if people can't report that field.
+    # Private: only Services::ResolveFlag sets it, so it isn't mass-assignable or a
+    # general way around the field whitelist.
+    attr_accessor :escalated_from_flag
+
+    # The report was opened from a flag on THIS content and field (Flag#action!) —
+    # a system report: no reporter, community intake, never a DSA notice.
+    def escalated_from_this_flag?
+      flag = escalated_from_flag
+      return false unless flag.is_a?(Moderate::Flag) && community? && reporter.nil?
+
+      flag.field.to_s == reported_field.to_s &&
+        flag.flaggable_type == reportable_type && flag.flaggable_id.to_s == reportable_id.to_s
+    end
+
+    def visibility_checked?
+      return false unless community? && reporter.present? && reportable.respond_to?(:report_visible_to?)
+
+      errors.exclude?(:reported_user) && errors.exclude?(:reported_field)
     end
 
     def subject_url_must_be_http_url
@@ -579,7 +678,8 @@ module Moderate
     def automated_processing_evidence
       evidence = {}
 
-      matching_flags = flags.to_a
+      # A manual flag is an administrator's own judgment, not automated means.
+      matching_flags = flags.reject { |flag| flag.source == "manual" }
       if matching_flags.any?
         evidence["used"] = true
         evidence["flag_ids"] = matching_flags.map(&:id)

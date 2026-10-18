@@ -127,12 +127,15 @@ module Moderate
       end
     end
 
-    # Surface the gem's I18n files (filter validation messages, the DSA taxonomy
-    # labels, the notice-form copy) to the host's I18n load path. The locale files
-    # ship under the engine's conventional config/locales (provided by other
-    # components); listing the glob here is harmless if none exist yet.
-    initializer "moderate.locales" do |app|
-      app.config.i18n.load_path += Dir[root.join("config", "locales", "**", "*.{rb,yml}").to_s]
-    end
+    # The gem's I18n files (config/locales/*.yml — default copy and the generic
+    # reportable-field labels) need NO initializer: every Rails::Engine registers
+    # its `config/locales/**/*.{rb,yml}` in `config.i18n.railties_load_path`, which
+    # Rails puts AHEAD of the host app's own locale files — so a host translation
+    # of any `moderate.*` key overrides ours, as it must.
+    #
+    # Do NOT also append them to `app.config.i18n.load_path` (an earlier version
+    # did, while the directory was still empty): that list is loaded AFTER the
+    # host's files, so the gem's defaults would silently clobber the host's
+    # translations. test/integration/locale_precedence_test.rb pins this.
   end
 end

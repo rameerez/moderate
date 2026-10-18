@@ -16,6 +16,7 @@ module Moderate
   # consumer (e.g. a job that auto-actions high-confidence flags), so the gem
   # doesn't presume a human is the only reviewer.
   class Flag < ApplicationRecord
+    include Moderate::DeferredNotices
     self.table_name = "moderate_flags"
 
     STATUSES = %w[pending actioned dismissed].freeze
@@ -71,11 +72,14 @@ module Moderate
     # whatever shape a Moderate::Result exposed without each one re-normalizing.
     # `context` is freeform JSON for audit (which policy fired, the raw classifier
     # payload, etc.) — never relied on by the gem's own logic.
+    #
+    # `owner` is kept only if it is a person (the configured user class): hosts
+    # commonly pass `record.reported_owner`, which can be a desk or a bot.
     def self.flag!(flaggable:, field:, owner:, source:, mode:, excerpt:, categories:, scores:, context:)
       create!(
         flaggable: flaggable,
         field: field,
-        owner: owner,
+        owner: (owner if owner.is_a?(Moderate.user_class)),
         source: source,
         mode: mode,
         excerpt: excerpt,
@@ -84,6 +88,65 @@ module Moderate
         context: context.to_h
       )
     end
+
+    # An administrator filing `record`'s `field` for review by hand — the "Flag for
+    # review" button on a transcript line or a profile page. It lands in the same
+    # `pending` queue the filters feed, to be decided like any other flag. Nothing is
+    # removed or sanctioned here.
+    #
+    #   flag = Moderate::Flag.flag_for_review!(message, field: :body, by: current_user)
+    #   flag.previously_new_record?   # => true if filed now, false if one already waited
+    #
+    # ONCE per field: if a pending flag on that field already waits, it is returned
+    # instead of a second one. The check and the insert run under the RECORD's row
+    # lock, so two administrators pressing it together file one flag (a check-then-
+    # insert without the lock files two). The record must be persisted.
+    #
+    # The flag is `source: "manual"`, owned by the person responsible for the record
+    # (Moderate.responsible_user), with an excerpt from the record's evidence snapshot
+    # (or the field's text), and `context` naming who filed it and their note. The
+    # filing is audited as `:flag_filed` with the administrator as actor.
+    def self.flag_for_review!(record, field:, by:, note: nil)
+      field_s = field.to_s.strip
+      raise ArgumentError, "field is required" if field_s.empty?
+      unless record.respond_to?(:persisted?) && record.persisted?
+        raise ArgumentError, "#{record.class.name} must be persisted to be flagged"
+      end
+
+      note = note.to_s.strip.presence
+      flag = Moderate.with_row_lock(record) do
+        where(flaggable: record, field: field_s).pending.recent_first.first ||
+          file_for_review!(record, field_s, by: by, note: note)
+      end
+      audit_filed_for_review(flag, by: by, note: note) if flag.previously_new_record?
+      flag
+    end
+
+    def self.file_for_review!(record, field, by:, note:)
+      flag!(
+        flaggable: record, field: field, owner: Moderate.responsible_user(record),
+        source: "manual", mode: "flag", excerpt: review_excerpt(record, field),
+        categories: [], scores: {}, context: { "flagged_by_id" => by&.id, "note" => note }.compact
+      )
+    end
+
+    def self.audit_filed_for_review(flag, by:, note:)
+      payload = {
+        flag_id: flag.id, flaggable_type: flag.flaggable_type, flaggable_id: flag.flaggable_id,
+        field: flag.field, note: note,
+        summary: "Flag ##{flag.id} filed by hand on #{flag.flaggable_label} · #{flag.field_label}"
+      }
+      Moderate.audit(:flag_filed, subject: flag, actor: by, payload: payload.compact)
+    end
+
+    # What the reviewer reads in the queue: the record's evidence snapshot for the
+    # field (the same text a report would freeze), else the field's own text.
+    def self.review_excerpt(record, field)
+      text = record.moderation_snapshot(field) if record.respond_to?(:moderation_snapshot)
+      text = record.public_send(field) if text.nil? && record.respond_to?(field)
+      text.to_s.truncate(500) if text.is_a?(String) && text.present?
+    end
+    private_class_method :file_for_review!, :audit_filed_for_review, :review_excerpt
 
     def self.sources
       (SOURCES + Moderate.config.adapters.keys.map(&:to_s)).uniq
@@ -98,14 +161,29 @@ module Moderate
     end
 
     # Close this flag as ACTIONED — someone (or an automated policy) took
-    # action on the flagged content. Model-level sugar mirroring
-    # Report#resolve!/#dismiss! so hosts stop hand-writing status updates.
+    # action on the flagged content. Sugar over Moderate::Services::ResolveFlag
+    # (row lock, re-check, audit), mirroring Report#resolve!/#dismiss!.
     # `by:` is the reviewing user when a human decided; leave it nil for
     # automated closes — recording a human who never looked would poison the
     # audit trail (DSA statements of reasons read these rows).
-    def action!(note:, by: nil)
-      close!(new_status: "actioned", note: note, by: by)
+    #
+    # Enforce from the flag itself — the bridge every host used to hand-write:
+    #
+    #   flag.action!(by: admin, note: "Slur", remove_content: true)
+    #   flag.action!(by: admin, note: "Repeat offender", ban_user: true)
+    #
+    # Either option escalates to a report (the open one on the same content and
+    # field, or a system one) and resolves it, so the content is removed through
+    # the reportable's `remove_reported_field!`, the ban through your `ban_handler`,
+    # and the affected user gets the statement of reasons and the appeal window a
+    # restriction requires. `flag.report` is that report afterwards.
+    def action!(note:, by: nil, **enforcement)
+      Moderate::Services::ResolveFlag.new(self, by: by).action!(note: note, **enforcement)
     end
+
+    # The queue-wide verb: Report#resolve! and Flag#resolve! take the same
+    # keywords, so one admin action (Moderate::Moderation#resolve) decides both.
+    alias resolve! action!
 
     # Close this flag with NO action taken. The canonical automated use is
     # SUPERSEDED content: when the flagged field changes (text edited, photo
@@ -114,7 +192,14 @@ module Moderate
     # the NEW content in any host UI keyed on it. Hosts should dismiss with a
     # note saying what superseded it.
     def dismiss!(note:, by: nil)
-      close!(new_status: "dismissed", note: note, by: by)
+      Moderate::Services::ResolveFlag.new(self, by: by).dismiss!(note: note)
+    end
+
+    # The report an enforcing `action!` went through, or nil (a triage-only close,
+    # or a flag still pending).
+    def report
+      report_id = context.to_h["report_id"]
+      Moderate::Report.find_by(id: report_id) if report_id.present?
     end
 
     # A label for the flagged thing in the queue. Asks the flaggable for its own
@@ -126,20 +211,15 @@ module Moderate
       "#{flaggable_type} #{flaggable_id}"
     end
 
-    private
-
-    # Shared close path for action!/dismiss!. update! (not update_columns) on
-    # purpose: the `resolution_note presence if closed?` validation is the
-    # guard that every closed flag explains itself — sugar that skipped it
-    # would defeat the reason the sugar exists.
-    def close!(new_status:, note:, by:)
-      update!(
-        status: new_status,
-        resolution_note: note,
-        reviewed_by: by,
-        reviewed_at: Time.current
-      )
+    # What humans call the flagged field ("Chat message", not "body"). Same
+    # resolution as Report#reported_field_label, so a queue that lists reports and
+    # flags side by side names a field the same way in both. Works after the
+    # flagged record is gone (falls back to `flaggable_type`).
+    def field_label
+      Moderate.reportable_field_label(flaggable || flaggable_type, field)
     end
+
+    private
 
     # See the before_save comment: keep the NOT-NULL JSON columns non-null on MySQL.
     def default_json_columns
@@ -159,9 +239,10 @@ module Moderate
           flaggable_type: flaggable_type,
           flaggable_id: flaggable_id,
           field: field,
+          field_label: field_label,
           source: source,
           categories: Array(categories),
-          summary: "content flagged (#{source}) on #{flaggable_label}##{field}"
+          summary: "content flagged (#{source}) on #{flaggable_label} · #{field_label}"
         }
       )
     end

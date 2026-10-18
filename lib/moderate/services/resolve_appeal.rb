@@ -45,6 +45,9 @@ module Moderate
       def transition!(status, note)
         note = require_note!(note)
 
+        # Captured before any save (Moderate::DeferredNotices).
+        connection = Moderate::DeferredNotices.connection_for(appeal.class)
+
         appeal.with_lock do
           appeal.reload
 
@@ -63,9 +66,10 @@ module Moderate
           )
 
           audit_decision(status, note)
+          # Sent once the decision is durable (Moderate::DeferredNotices).
+          appeal.after_commit_notice(on: connection) { deliver_decision_notice(status) }
         end
 
-        deliver_decision_notice(status)
         appeal
       end
 

@@ -16,6 +16,7 @@ module Moderate
   #     report (`report_must_be_closed`).
   # Source: https://eur-lex.europa.eu/eli/reg/2022/2065/oj (Art. 20)
   class Appeal < ApplicationRecord
+    include Moderate::DeferredNotices
     self.table_name = "moderate_appeals"
 
     # Validated by the `validates :status, inclusion` below — NOT a DB constraint, so
@@ -68,6 +69,9 @@ module Moderate
     def open?
       status == "open"
     end
+
+    # Awaiting a decision — the twin of the `pending` scope (see Report#pending?).
+    alias pending? open?
 
     def closed?
       status.in?(%w[upheld rejected])

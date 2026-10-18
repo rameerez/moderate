@@ -1,0 +1,169 @@
+# moderate's default English copy. Override any key in your app's own
+# config/locales: Rails loads an engine's locale files BEFORE the host's, so
+# your translation always wins.
+en:
+  moderate:
+    appeals:
+      reported_field: "Content"
+
+    # Human labels for reported / flagged fields — what the moderation queue,
+    # the statement of reasons and the appeal page print instead of the column
+    # name. Resolution (Moderate.reportable_field_label):
+    #
+    #   1. `has_reportable_content :body, labels: { body: "…" }` on the model
+    #   2. moderate.reportable_fields.<model i18n_key>.<field>   e.g. chats/message.body
+    #   3. moderate.reportable_fields.<field>                    the generic ones below
+    #   4. field.humanize
+    #
+    # The generic set is deliberately small and avoids names that are also common
+    # MODEL names (message, comment, photo…): model-scoped and generic keys share
+    # this namespace, so a host's `comment: { body: … }` block would otherwise
+    # replace a generic `comment:` label.
+    reportable_fields:
+      body: "Text"
+      title: "Title"
+      description: "Description"
+      name: "Name"
+      display_name: "Display name"
+      username: "Username"
+      bio: "Bio"
+      avatar: "Profile photo"
+      photos: "Photos"
+      images: "Images"
+      attachments: "Attachments"
+      files: "Files"
+
+    # Labels for the gem's own value lists, read by Moderate.taxonomy_label(kind,
+    # value) and Moderate::Report.category_options (and, for legal_reasons,
+    # content_types and member_states, by the public notice form). The stored values
+    # never change; only what people read does.
+    categories:
+      harassment: "Harassment"
+      hate: "Hate"
+      threats: "Threats"
+      sexual_content: "Sexual content"
+      spam: "Spam"
+      fraud: "Fraud"
+      unsafe_behavior: "Unsafe behavior"
+      illegal_content: "Illegal content"
+      privacy: "Privacy"
+      child_safety: "Child safety"
+      other: "Other"
+      hate_abuse_harassment: "Hate, abuse or harassment"
+      violent_speech: "Violent speech"
+      graphic_violent_media: "Graphic or violent media"
+      illegal_regulated_behaviors: "Illegal or regulated behavior"
+      impersonation: "Impersonation"
+      adult_sexual_content: "Adult sexual content"
+      private_non_consensual_content: "Private or non-consensual content"
+      suicide_self_harm: "Suicide or self-harm"
+      terrorism_violent_extremism: "Terrorism or violent extremism"
+      scam_fraud: "Scam or fraud"
+
+    # The EU statement-of-reasons categories (DSA Art. 17 / the Transparency Database).
+    legal_reasons:
+      animal_welfare: "Animal welfare"
+      consumer_information: "Consumer information infringements"
+      cyber_violence: "Cyber violence"
+      data_protection_privacy: "Data protection and privacy violations"
+      illegal_or_harmful_speech: "Illegal or harmful speech"
+      civic_elections: "Negative effects on civic discourse or elections"
+      non_consensual_behavior: "Non-consensual behavior"
+      pornography_sexualized_content: "Pornography or sexualized content"
+      protection_of_minors: "Protection of minors"
+      public_security: "Risk for public security"
+      scams_fraud: "Scams and fraud"
+      scope_of_platform_service: "Scope of platform service"
+      self_harm: "Self-harm"
+      unsafe_illegal_products: "Unsafe or illegal products"
+      violence: "Violence"
+      intellectual_property: "Intellectual property infringements"
+      other: "Other"
+
+    member_states:
+      AT: "Austria"
+      BE: "Belgium"
+      BG: "Bulgaria"
+      CY: "Cyprus"
+      CZ: "Czechia"
+      DE: "Germany"
+      DK: "Denmark"
+      EE: "Estonia"
+      ES: "Spain"
+      FI: "Finland"
+      FR: "France"
+      GR: "Greece"
+      HR: "Croatia"
+      HU: "Hungary"
+      IE: "Ireland"
+      IT: "Italy"
+      LT: "Lithuania"
+      LU: "Luxembourg"
+      LV: "Latvia"
+      MT: "Malta"
+      NL: "Netherlands"
+      PL: "Poland"
+      PT: "Portugal"
+      RO: "Romania"
+      SE: "Sweden"
+      SI: "Slovenia"
+      SK: "Slovakia"
+      EU: "The whole EU"
+
+    content_types:
+      user_profile: "User profile"
+      profile_avatar: "Profile photo"
+      listing: "Listing"
+      message: "Message"
+      conversation: "Conversation"
+      group: "Group"
+      other: "Other"
+
+    resolution_bases:
+      terms: "Terms of service"
+      law: "The law"
+      law_and_terms: "The law and the terms of service"
+      insufficient_information: "Insufficient information"
+      no_violation: "No violation"
+
+    decisions:
+      no_restriction: "No restriction"
+      no_action: "No action"
+      content_removed: "Content removed"
+      account_suspended: "Account suspended"
+      other_restriction: "Other restriction"
+
+    intake_kinds:
+      community: "In-app report"
+      dsa: "Legal notice"
+
+    statuses:
+      report:
+        open: "Open"
+        actioned: "Actioned"
+        dismissed: "Dismissed"
+      flag:
+        pending: "Awaiting review"
+        actioned: "Actioned"
+        dismissed: "Dismissed"
+      appeal:
+        open: "Open"
+        upheld: "Upheld"
+        rejected: "Rejected"
+
+    flag_sources:
+      text_filter: "Text filter"
+      image_filter: "Image filter"
+      external_classifier: "External classifier"
+      manual: "Filed by hand"
+      wordlist: "Word list"
+
+    flag_modes:
+      flag: "Published, queued for review"
+      block: "Blocked"
+
+    appeal_sources:
+      notifier: "The notifier"
+      affected_user: "The affected person"
+      admin: "An administrator"
+      other: "Other"

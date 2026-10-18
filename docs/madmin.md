@@ -100,15 +100,17 @@ class Moderate::ReportResource < Madmin::Resource
   # Everything is read-only (form: false): decisions go through the custom
   # member actions below, never through madmin's stock edit form.
   attribute :id,          index: true, form: false
-  attribute :status,      index: true, form: false   # pending / resolved / dismissed
-  attribute :kind,        index: true, form: false   # "report" (in-app) or "dsa_notice"
+  attribute :status,      index: true, form: false   # open / actioned / dismissed
+  attribute :intake_kind, index: true, form: false   # "community" (in-app) or "dsa" (a public notice)
   attribute :category,    index: true, form: false   # community category OR DSA legal_reason
   attribute :reportable,  :polymorphic, index: true, form: false, label: "Target"
-  attribute :reported_field, index: true, form: false, label: "Field"
+  # The field's human label ("Chat message"), not the raw column ("body") — see
+  # `labels:` on has_reportable_content. A virtual attribute, so it needs a type.
+  attribute :reported_field_label, :string, index: true, form: false, label: "Field"
   attribute :reported_user,  index: true, form: false
   attribute :reporter,       index: true, form: false
   attribute :notifier_email, index: true, form: false, label: "Notifier"  # DSA notices
-  attribute :details,        index: false, form: false
+  attribute :message,        index: false, form: false, label: "Reason"   # what the reporter wrote
   attribute :snapshot,       index: false, form: false   # the immutable evidence snapshot
   attribute :resolution_note, index: false, form: false
   attribute :created_at,  index: true, form: false, label: "Received"
@@ -116,7 +118,7 @@ class Moderate::ReportResource < Madmin::Resource
 
   # Queue scopes — these are the gem's own scopes, surfaced as madmin filters.
   scope :pending
-  scope :resolved
+  scope :actioned
   scope :dismissed
 
   menu label: "Reports", parent: "Trust & Safety"
@@ -135,10 +137,10 @@ class Moderate::FlagResource < Madmin::Resource
   model Moderate::Flag
 
   attribute :id,         index: true, form: false
-  attribute :status,     index: true, form: false   # pending / resolved / dismissed
+  attribute :status,     index: true, form: false   # pending / actioned / dismissed
   attribute :source,     index: true, form: false   # wordlist / image / <your adapter> / manual
   attribute :flaggable,  :polymorphic, index: true, form: false, label: "Target"
-  attribute :field,      index: true, form: false
+  attribute :field_label, :string, index: true, form: false, label: "Field"   # "Chat message", not "body"
   attribute :owner,      index: true, form: false
   attribute :categories, index: false, form: false  # e.g. [:hate, :threats]
   attribute :scores,     index: false, form: false  # { hate: 1.0 } (0..1 for ML adapters)
@@ -147,7 +149,7 @@ class Moderate::FlagResource < Madmin::Resource
   attribute :reviewed_at, index: true, form: false
 
   scope :pending
-  scope :resolved
+  scope :actioned
   scope :dismissed
 
   menu label: "Flags", parent: "Trust & Safety"
@@ -296,8 +298,14 @@ end
 # app/controllers/madmin/flags_controller.rb
 module Madmin
   class FlagsController < Madmin::ResourceController
+    # Without the checkboxes this only triages the flag. With either, the flag
+    # escalates to a report (the open one on the same content, or a system one) and
+    # resolves it: the content goes through your remove_reported_field!, the ban
+    # through your ban_handler, and the author gets the statement of reasons and the
+    # appeal window a restriction requires. `@record.report` is that report after.
     def resolve
-      @record.resolve!(by: current_user, note: params[:note])
+      @record.resolve!(by: current_user, note: params[:note],
+                       remove_content: params[:remove_content], ban_user: params[:ban_user])
       redirect_to main_app.madmin_flag_path(@record), notice: "Flag actioned.", status: :see_other
     rescue => error
       redirect_to main_app.madmin_flag_path(@record), alert: "Could not action flag: #{error.message}", status: :see_other
@@ -379,7 +387,10 @@ Hand-rolling (above) is the right call when your redirects/flashes need to match
   <section>
     <h2>Resolve</h2>
     <%= form_with url: resolve_madmin_report_path(report), method: :post do %>
-      <label><%= check_box_tag :remove_content, "1" %> Remove reported content</label>
+      <% if report.reportable.respond_to?(:removable_reported_field?) && report.reportable.removable_reported_field?(report.reported_field) %>
+        <%# Only where removal can happen: a removal that removes nothing refuses the decision. %>
+        <label><%= check_box_tag :remove_content, "1" %> Remove reported content</label>
+      <% end %>
       <label><%= check_box_tag :ban_user, "1" %> Ban reported user</label>
       <%= text_area_tag :note, nil, placeholder: "Decision note", required: true %>
       <%= submit_tag "Resolve", data: { turbo_confirm: "Resolve and notify the parties?" } %>
@@ -419,6 +430,23 @@ Two details worth copying:
 
 The evidence snapshot (`report.snapshot`) is plain JSON on the record — render it in a `<pre>` so the moderator sees exactly what was reported, even if the original content was since edited or deleted. That immutability is the whole point of the snapshot.
 
+The flag show view is the report's, pointed at the flag routes: the same two checkboxes on `resolve` (each escalates the flag to a report, see the controller above), and `dismiss`. Print labels, not stored values: `Moderate.taxonomy_label(:flag_status, flag.status)`, `Moderate.taxonomy_label(:flag_source, flag.source)`, `flag.field_label`, and for reports `Moderate.taxonomy_label(:category, report.category)` and `report.reported_field_label`. The gem ships English and Spanish for every value it defines.
+
+### "Flag for review" from a browse screen
+
+Moderators often find bad content while browsing something else: a conversation's transcript, a user's page. Don't grow enforcement buttons there; file the content into the queue, where the decision tools already are:
+
+```ruby
+# app/controllers/madmin/messages_controller.rb
+def flag
+  flag = Moderate::Flag.flag_for_review!(@record, field: :body, by: current_user, note: params[:note])
+  notice = flag.previously_new_record? ? "Filed for review." : "It's already waiting for review."
+  redirect_to main_app.madmin_flag_path(flag), notice: notice, status: :see_other
+end
+```
+
+`flag_for_review!` files a `source: "manual"` flag owned by the content's person, or returns the one already waiting on that field. The check and the insert run under the record's row lock, so two moderators pressing it at once file one flag.
+
 ---
 
 ## The moderation-queue pattern (the index)
@@ -456,14 +484,15 @@ The headline trick of the model design: **a human admin and an ML/automation con
 class AutoModerationJob < ApplicationJob
   def perform
     Moderate::Flag.pending.find_each do |flag|
-      next unless flag.scores[:csam].to_f >= 0.99   # only the unambiguous ones
-      flag.resolve!(by: Moderate.system_actor, note: "Auto-removed: high-confidence CSAM")
+      next unless flag.scores["sexual/minors"].to_f >= 0.99   # only the unambiguous ones
+      # `by: nil`: an automated decision is never attributed to a person who didn't look.
+      flag.resolve!(by: nil, note: "Removed automatically: high-confidence sexual/minors", remove_content: true)
     end
   end
 end
 ```
 
-Because the job calls `resolve!` (not a raw `update`), the auto-decision is identical to a human one — atomic enforcement, `notify`/`audit` hooks, statement-of-reasons, appeal window. Whatever the job doesn't touch stays in `pending` for a human in madmin. One queue, two consumers, zero divergence.
+Because the job calls `resolve!` (not a raw `update`), the auto-decision is identical to a human one — atomic enforcement, `notify`/`audit` hooks, statement-of-reasons, appeal window. (Declare the automation honestly: a decision taken by a job is "automated means" under DSA Art. 17(3)(c).) Whatever the job doesn't touch stays in `pending` for a human in madmin. One queue, two consumers, zero divergence.
 
 ---
 

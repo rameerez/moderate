@@ -249,7 +249,7 @@ end
 Called for **every notifiable event**. One hook drives them all — `goodmail` for user emails, `telegrama` for admin alerts, `noticed` for in-app feed + push — because every event shares the same envelope. The full vocabulary:
 
 ```
-report_received   report_decision   affected_user_decision
+report_received   notice_received   report_decision   affected_user_decision
 appeal_received   appeal_decision
 user_blocked      user_unblocked    user_banned
 content_flagged   content_removed
@@ -272,7 +272,9 @@ Optional teardown when one user blocks another — cancel a pending invite, leav
 config.ban_handler = ->(user:, by:, reason:) { user.suspend!(reason: reason) }
 ```
 
-`moderate` doesn't own your user lifecycle, so it **never bans a user itself**. When a moderator resolves a report with `ban_user: true` (see [the madmin queue](madmin.md#step-3--the-controller-call-the-gems-decision-methods)), this proc decides what "banned" means in your domain — `suspend!`, soft-delete, flip a flag, revoke sessions, whatever. Signature is **keyword args** (`user:`, `by:`, `reason:`). No-op by default — the decision still audits and notifies even if you haven't wired a ban yet, so you're never silently dropping the action.
+`moderate` doesn't own your user lifecycle, so it **never bans a user itself**. When a moderator resolves a report with `ban_user: true` (see [the madmin queue](madmin.md#step-3--the-controller-call-the-gems-decision-methods)), this proc decides what "banned" means in your domain — `suspend!`, soft-delete, flip a flag, revoke sessions, whatever. Signature is **keyword args** (`user:`, `by:`, `reason:`).
+
+Leave it unset and everything works except a ban: `ban_user: true` (on a report or a flag) and `Moderate.apply_ban` raise `Moderate::ConfigurationError` before anything changes. A ban nothing applies would still audit `user_banned` and send the person a statement of reasons saying their account was suspended, which is a false statement, so the gem refuses it instead. Assigning `nil` puts the default back.
 
 ---
 

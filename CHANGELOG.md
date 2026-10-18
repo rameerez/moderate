@@ -4,6 +4,253 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0.beta3] - 2026-10-18
+
+### Added
+
+- **Human labels for reportable fields.** `has_reportable_content :body, :files, labels:
+  { body: "Chat message", files: "Chat photo" }` (and `reportable_fields …, labels:`) names
+  each field once, next to its declaration, so moderators and affected users stop reading raw
+  column names («Body») for what was reported. Resolution: the declared label (a String, or a
+  lambda evaluated at read time) → i18n `moderate.reportable_fields.<model>.<field>` (walking
+  reportable STI parents) → `moderate.reportable_fields.<field>` → `field.humanize`. Read it
+  with `Moderate.reportable_field_label(record_or_class_or_type, field)`,
+  `Report#reported_field_label`, `Flag#field_label`, or `record.reportable_field_label(field)`;
+  labels resolve from the stored type, so they survive the content being deleted. A label key
+  for an undeclared field raises. Hosts that kept their own field → label map can delete it.
+- **Labels everywhere the gem names a field.** The public appeal page shows the reported
+  content's label; the statement-of-reasons payload (`affected_user_decision`, `report_decision`)
+  carries `reported_field` + `reported_field_label`; `report_received` carries both and appends
+  the label to its summary; `content_flagged` and the `flag_decision` audit carry `field_label`,
+  and the `content_flagged` summary prints the label instead of `Type#field`.
+- **Default locale files** (`config/locales/en.yml`, `es.yml`): the appeal page's new string and
+  generic labels for common field names (`body` → "Text"/"Texto", `avatar` → "Profile
+  photo"/"Foto de perfil", …).
+- **Labels for every value list the gem defines, in English and Spanish.**
+  `Moderate.taxonomy_label(kind, value)` names a community category, a DSA legal reason, an
+  EU member state, a content type, a resolution basis, a decision, an intake kind, a report /
+  flag / appeal status, a flag source or mode, or an appeal source in the current locale, from
+  `moderate.<scope>.<value>` (scopes in `Moderate::TAXONOMY_LABEL_SCOPES`), falling back to
+  the value humanized so a host's own category or adapter name still renders. The gem's
+  `config/locales/{en,es}.yml` now carry every value, and a host's translation wins. The
+  public notice form, which always read `moderate.legal_reasons/content_types/member_states`,
+  now shows real copy in both languages. **`Moderate::Report.category_options`** gives a
+  report form's select its `[label, value]` pairs, honoring `config.report_categories`. Hosts
+  that translated the regulator's vocabulary themselves can drop their copies for en/es.
+- **An in-app report's details are optional.** A community report with a blank message now
+  files with the category's label (in the reporter's language) as its message, instead of
+  failing "Message can't be blank": the category a person picked is the reason. A DSA notice
+  still needs its own explanation (Art. 16(2)(a)). Hosts that filled the message with the
+  category label themselves, or whose forms said "optional" while the gem refused it, can
+  stop.
+- **"Report and block": `report!(…, block: true)`** blocks the person responsible for the
+  content in the same transaction as the report (both or neither; the receipt goes out
+  after), through the one block path (idempotent, audited, `on_block`, `user_blocked`). `Report#block_reported_user`, which has existed since beta1
+  and which nothing read, is what it sets. Nothing is blocked when the content has no person
+  behind it.
+- **Reports know what kind of content they're about.** A community report with no
+  `content_type` takes the reportable's `moderation_content_type` (with or without the field
+  argument, since chats' takes none), stored if it is one of `Report::CONTENT_TYPES`, else
+  `"other"`, so a host's own word never fails an intake. `Moderate::Reportable` defines it
+  (nil) and `Moderate::Actor` answers `"user_profile"`. Hosts that mapped their models to
+  content types in the report controller can delete the map.
+- **`Reportable#to_moderation_sgid`** and the view helper
+  **`moderate_report_target_path(record, field:)`**: the signed report target and the report
+  form's path, public and non-expiring, for markup rendered once for many viewers (a chat
+  bubble broadcast to everyone in the thread, a fragment cache), where
+  `moderate_report_link`'s per-viewer check can't run. The helper always probed for
+  `to_moderation_sgid`; now it exists. Hosts building
+  `to_sgid_param(for: Moderate::Report::SIGNED_GLOBAL_ID_PURPOSE)` by hand can use these
+  (without `expires_in: nil`, that token changed on every render and died after a month).
+- **The `content_removed` event is emitted.** It was in the documented vocabulary from
+  beta1 and nothing sent it. A decision whose `remove_reported_field!` removed something now
+  audits `content_removed` inside the decision's transaction and announces it with the
+  decision notices, to the content's person, with `reported_field`, its label and the
+  moderator's reason. (`notice_received`, which the DSA form has always sent, joins the
+  vocabulary lists in the README, the configuration guide and the initializer.)
+- **`examples/regexp_pattern_adapter.rb`**: a reference adapter for what a word list can't
+  express (phone numbers, links, "contact me on…"), each pattern filed under the category it
+  means, synchronous so `:block` works too, the matched fragments in `raw[:matches]`. The
+  idea is @killondark's (#1, written against the 0.x validator).
+- **Enforce from a flag.** `flag.action!(by:, note:, remove_content: true)` and
+  `flag.action!(by:, note:, ban_user: true)` (any combination, plus `resolution_basis:`)
+  escalate to a report and resolve it: the newest open report on the same content and field
+  if a person already filed one, else a system report (no reporter, so no receipt and no
+  reporter-facing decision). Content is removed through the reportable's
+  `remove_reported_field!`, the ban goes through your `ban_handler`, and the affected user
+  gets the statement of reasons and the appeal window a restriction requires. It runs under
+  the flag's row lock and then the content's, so two moderators enforcing the same flag, or
+  two flags on the same content, enforce once: the second closes against the decision the
+  first took (unless it asks for more, say a ban after a removal). A recorded removal only
+  counts if the content is gone now, so an older decision that said "removed" without
+  removing anything doesn't stand in for a real one. A system report may name the flag's
+  field even when people can't report that field (a filtered image) — an exception only
+  the escalation sets, on a report with no reporter, never on a DSA notice — and
+  enforcing a classifier's flag through a person's earlier report adds the classifier to
+  that report's automated-means disclosure. `flag.report` is the report it went through.
+  Hosts that hand-wrote this bridge (find-or-create a report, resolve it, then close the
+  flag) can delete it. Without those options `action!` is the triage close it was.
+- **`Moderate::Flag.flag_for_review!(record, field:, by:, note: nil)`**: an administrator
+  filing content for review by hand (the "Flag for review" button on a transcript line). It
+  returns the pending flag on that field if one already waits, else files a
+  `source: "manual"` flag owned by the content's person, with the evidence snapshot as
+  excerpt and `context` naming who filed it; `flag.previously_new_record?` says which. The
+  check and the insert run under the record's row lock, so two administrators pressing it
+  together file one flag. Audited as `:flag_filed`. Hosts that hand-assembled the nine
+  `Flag.flag!` arguments (and, without a lock, could file two) can call this instead.
+- **`Flag#resolve!`**, an alias of `action!`: reports and flags now share one verb and one
+  keyword contract, which is what `Moderate::Moderation#resolve` and `docs/madmin.md`
+  always assumed.
+
+### Changed
+
+- **`Flag#action!` / `#dismiss!` go through `Moderate::Services::ResolveFlag`.** The beta2
+  model methods were a second closing path with no row lock and no `flag_decision` audit;
+  now there is one. Re-closing an already decided flag returns it unchanged (as the service
+  always did) instead of overwriting the first decision.
+- **`ResolveReport.new(report, by:, deliver: false)`** holds the decision notices back for a
+  caller that decides inside a lock of its own; `#deliver_decision_notices` sends them.
+- **Notices follow Active Record's after_commit rules, on every supported Rails.** Report,
+  flag and appeal decisions (with their `user_banned` and `content_removed`), the in-app
+  report receipt, and `user_blocked` / `user_unblocked` are owned by the transaction they
+  were queued in (`Moderate::DeferredNotices`, `record.after_commit_notice { … }`): each is
+  enrolled in the current transaction as a transaction record, exactly as a saved record
+  is, so the transaction sends it on commit and drops it on rollback or when an exception
+  ends it. Nested transactions and savepoints under a joinable parent send at the
+  outermost commit; a rolled-back savepoint drops only its own; under a parent that isn't
+  joinable (including the wrapper of Rails' transactional tests) it's sent at the
+  savepoint's release, when after_commit runs too; with no transaction open, at once.
+  Under multiple databases or shards, the notice joins the transaction of the connection
+  it's queued on: `record.after_commit_notice(on: connection) { … }`, `on:` defaulting to
+  the record class's connection at call time. Queue it inside the transaction that saved
+  the record, on that transaction's connection. The gem's services do: each captures its
+  model's connection at the top of its transaction, before any save, and passes it to
+  every notice it queues, so a host callback that switches databases or shards mid-save
+  can't move them. A host that calls `after_commit_notice` itself passes `on:` when it uses
+  `connected_to`.
+  Nothing lives on a record instance or on the thread. A host that decides, reports or
+  blocks inside a transaction of its own and rolls it back tells nobody; Rails 7.1, 7.2 and
+  8.x behave the same. `Moderate.apply_ban(…, announce: false)` +
+  `Moderate.announce_ban` split the ban's notice from the ban for the same reason. (The
+  public notice and appeal forms' own receipts are unchanged.)
+- **One lock order for enforcement: flag, then content, then the person (for a ban), then
+  the report.** Row locks are taken by query (`Moderate.with_row_lock`), so concurrent
+  decisions on the same content, or bans of the same person from different content,
+  serialize instead of enforcing twice or deadlocking.
+- **One ban per person per episode.** A decision asked to ban someone who a decision on
+  any content or field has already banned since this conduct was raised (the report's
+  creation; the flag's, for an escalation) doesn't call the `ban_handler` again: it records
+  `resolution_actions["ban_already_applied_by"]` with that decision's id. An older ban
+  doesn't count (the person may have been unbanned since).
+- **A manual flag is not automated means.** A report's automated-processing disclosure
+  (DSA Art. 17(3)(c)) no longer counts `source: "manual"` flags on the same content.
+
+- **Removing content that isn't removable refuses the decision.** `remove_content: true`
+  when the reportable's `remove_reported_field!` removes nothing (the default for a
+  reportable that defines no removal, a field that isn't removable, content already gone),
+  when the content was deleted (the report's reportable is nil), or when the reportable has
+  no removal method at all, now raises `RecordInvalid` ("Nothing was removed…", `moderate.errors.nothing_removed`)
+  and rolls the decision back, a ban with it. Before, the report was closed with
+  `decision_visibility: "content_removed"` and the affected person was told their content
+  was removed while it was still up. **Behavior change:** offer "remove content" only where
+  `removable_reported_field?` says it can happen.
+- **A ban needs a `ban_handler`.** With none configured, `ban_user: true` (on a report or a
+  flag) and `Moderate.apply_ban` raise `Moderate::ConfigurationError` before anything
+  changes. Before, the default no-op handler let the decision record
+  `decision_visibility: "account_suspended"`, audit and announce `user_banned`, and send the
+  person a statement of reasons saying their account was suspended, while nothing had
+  suspended it: a false Art. 17 statement. `config.ban_handler = nil` restores the default;
+  a non-callable raises `ArgumentError`; `config.ban_handler_configured?` tells. Decisions
+  without a ban are unaffected. **Behavior change** for hosts that never wired one and
+  relied on the no-op.
+- **An in-app report is refused when its reporter may not report the content.** A community
+  report filed by a signed-in person now validates the reportable's own `report_visible_to?`
+  (never your own content; for a chats message, only a conversation you're in), with an
+  error on `:reportable` ("isn't something you can report",
+  `moderate.errors.not_reportable_by_reporter`). The report link always hid itself on that
+  rule, and chats' docs said moderate re-checks it server-side, but nothing did: a signed
+  target replayed or pasted from elsewhere reached the model unchecked. DSA notices and
+  system reports (no reporter) are not affected. **Behavior change:** a host that files
+  community reports on behalf of people who couldn't see the content now gets a validation
+  error; use a manual flag (`Flag.flag_for_review!`) for an administrator's own concern.
+
+### Fixed
+
+- **`moderate_report_target_path` (and `moderate_report_link`) find the host's report route
+  from inside another engine's views**, through `main_app`. Rendered in a chats slot, the
+  helper fell back to the hard-coded `/reports/new`.
+- **The transparency page labels its counters from the gem's own keys.** Two of its cards
+  read `moderation.legal_reasons.*` / `moderation.resolution_bases.*`, a namespace from the
+  app the gem was extracted from that no other part of the gem uses; the rest printed raw
+  values humanized. Every card now goes through `Moderate.taxonomy_label`.
+- **`Moderate.blocked_ids_for(nil)` returns the same type as every other call**: an empty
+  relation selecting user ids, not `[]`. Composing the two shapes was a real bug in a host
+  (`relation | array` yields User records, and `include?(id)` silently missed). Call `.ids`
+  for an Array.
+- **`Report#pending?` and `Appeal#pending?`** exist, twins of the `pending` scopes all three
+  queues share (`docs/madmin.md` called them and they didn't exist).
+- **`Moderate::Moderation#resolve` works on flags.** It called `record.resolve!`, which
+  `Moderate::Flag` didn't have, so a host following the concern's own documentation got a
+  `NoMethodError` (as an alert flash) on every flag. It also passes `resolution_basis` when
+  the form sends one, and its flash says "Flag actioned." / "Flag dismissed." for flags.
+- **Content spoken by something that isn't a person no longer breaks reports and flags.**
+  moderate stored `reportable.reported_owner` straight into `Report#reported_user` and
+  `Flag#owner`, both associations to `config.user_class`. A support desk or a bot behind the
+  content (chats answers `author || sender`, which is a desk for an unsigned support reply)
+  raised `ActiveRecord::AssociationTypeMismatch` and the report never filed. The new
+  `Moderate.responsible_user(record)` keeps the owner only if it is a person; anything else
+  means "nobody to reach": the report files, the evidence is kept, content can still be
+  removed, and only a decision notice or a ban has no addressee. Report intake, `Flag.flag!`,
+  the `:flag` after_commit and `ClassifyJob` all go through it. A reportable that never
+  defined `reported_owner` still raises at the first report. Hosts that overrode
+  `Chats::Message#reported_owner` to return nil for non-users can delete the override.
+- **The gem's locale files can no longer override the host's.** The engine appended its
+  `config/locales` to `config.i18n.load_path`, which Rails loads AFTER the app's own locale
+  files — harmless while the directory was empty, but any shipped default would have silently
+  beaten the host's translation of the same key. Rails already loads an engine's
+  `config/locales` before the app's, so the initializer is gone.
+
+### Documentation
+
+- **`docs/chats.md`**: the whole chats integration from moderate's side (reportable and
+  filtered messages, blocks, Report on a broadcast bubble, Block in the thread menu, the
+  admin side, a launch checklist), the shape two production hosts converged on.
+- **`docs/madmin.md` runs as written.** It called `scope :resolved` (the scopes are
+  `actioned`), `attribute :kind` / `:details` (the columns are `intake_kind` / `message`),
+  `report.pending?` (now real), `Moderate.system_actor` (never existed; automated decisions
+  pass `by: nil`) and `flag.scores[:csam]` (scores are JSON with string keys, and the
+  canonical category is `sexual/minors`). The flag controller now shows enforcement, and a
+  new section covers "Flag for review" from a browse screen.
+
+### Upgrading from 1.0.0.beta2
+
+No migrations. Check these against your app:
+
+1. **Wire `config.ban_handler`** if any moderator can press "ban": without one, a ban now
+   raises instead of being a silent no-op.
+2. **Reports are visibility-checked.** If you file community reports with a `reporter:` who
+   couldn't see the content, they now fail validation. Use `Flag.flag_for_review!` for an
+   administrator's own concern.
+3. **Delete the workarounds this release makes unnecessary**, if you wrote them:
+   - a `reported_owner` override that returns nil for non-users;
+   - a find-or-create-report bridge for removing or banning from a flag (use
+     `flag.action!(remove_content:, ban_user:)`);
+   - a hand-assembled manual `Flag.flag!` (use `Flag.flag_for_review!`);
+   - a model-to-`content_type` map in your report controller;
+   - your own "report and block" (use `report!(…, block: true)`);
+   - `to_sgid_param(for: Moderate::Report::SIGNED_GLOBAL_ID_PURPOSE)` (use
+     `to_moderation_sgid` or `moderate_report_target_path`);
+   - en/es translations of the gem's taxonomies and field names (keep only the ones you
+     changed);
+   - a duplicated `config.filter` next to a `moderates` declaration for the same field.
+4. **"Remove content" must remove something.** If your admin offers it on content whose
+   `remove_reported_field!` returns false, those decisions now fail instead of claiming a
+   removal. Gate the checkbox on `removable_reported_field?`.
+5. **`Flag#action!` re-closing** an already decided flag no longer overwrites the first
+   decision: it returns the flag as it was.
+6. **`Moderate.blocked_ids_for(nil)`** is an empty relation, not `[]`. Call `.ids` if you
+   need an Array.
+
 ## [1.0.0.beta2] - 2026-07-10
 
 Second beta on the road to 1.0. Fixes beta1's async-adapter routing bug (the one

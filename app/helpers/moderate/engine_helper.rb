@@ -65,6 +65,20 @@ module Moderate
       moderate_report_link(record, field: field, label: label, **html_options)
     end
 
+    # The path to the in-app report form for `record` (and `field`), with the record
+    # as a signed target — WITHOUT asking who is looking. For markup rendered once
+    # and shown to many viewers (a chat bubble broadcast to every participant, a
+    # fragment cache), where `moderate_report_link`'s per-viewer check can't run at
+    # render time: show it to everyone but the author on the client, and let the
+    # report be refused server-side (Report validates `report_visible_to?`).
+    #
+    #   <%= link_to "Report", moderate_report_target_path(message, field: :body) %>
+    #
+    # The target never expires, so the URL is stable across renders.
+    def moderate_report_target_path(record, field: nil)
+      moderate_report_path_for(record, field: field)
+    end
+
     private
 
     # The path to the in-app intake form for this record/field.
@@ -87,15 +101,20 @@ module Moderate
       target = moderate_signed_target(record)
       query = { target: target, field: field.presence }.compact
 
-      if respond_to?(:new_report_path)
-        new_report_path(query)
-      elsif respond_to?(:new_moderate_report_path)
-        new_moderate_report_path(query)
-      else
-        # Last-resort conventional path so the helper is never a hard dependency on
-        # a particular route name. The host wires the actual route (BYOUI).
-        "/reports/new?#{query.to_query}"
+      # The host's route, from this view's own helpers first, then through
+      # `main_app` — inside ANOTHER isolated engine's views (a chats slot, say) the
+      # host's route helpers are only reachable that way.
+      route_sets = [self]
+      route_sets << main_app if respond_to?(:main_app)
+      route_sets.each do |routes|
+        %i[new_report_path new_moderate_report_path].each do |name|
+          return routes.public_send(name, query) if routes.respond_to?(name)
+        end
       end
+
+      # Last-resort conventional path so the helper is never a hard dependency on
+      # a particular route name. The host wires the actual route (BYOUI).
+      "/reports/new?#{query.to_query}"
     end
 
     # The record as a signed, purpose-scoped GID parameter. We delegate to the

@@ -173,9 +173,18 @@ Post.where.not(user_id: Moderate.blocked_ids_for(current_user))
 ```ruby
 current_user.report!(@message, category: :harassment, details: "Won't stop messaging me")
 current_user.report!(@user,    category: :impersonation)
+current_user.report!(@message, category: :spam, block: true)   # "Report and block"
 ```
 
-`moderate` snapshots the offending content at report time (so evidence survives edits/deletes), infers who's responsible, sends the reporter a receipt, and drops it in the queue.
+`moderate` snapshots the offending content at report time (so evidence survives edits/deletes), infers who's responsible, records what kind of content it is (`moderation_content_type`), sends the reporter a receipt, and drops it in the queue. A report is refused when the reporter may not report the content (the reportable's own `report_visible_to?`: never your own content, never a conversation you're not in), whether or not the link was hidden.
+
+Your report form's category select is one line, labeled in the reader's language (the gem ships English and Spanish for every value it defines, and your locale files win):
+
+```erb
+<%= f.select :category, Moderate::Report.category_options %>   <%# honors config.report_categories %>
+```
+
+`Moderate.taxonomy_label(kind, value)` labels the rest of the gem's vocabulary the same way in your queue: `Moderate.taxonomy_label(:flag_status, flag.status)`, `(:legal_reason, report.legal_reason)`, `(:decision, report.decision_visibility)`, and so on.
 
 ## 🚩 Reportable content
 
@@ -193,6 +202,37 @@ end
 
 *(Explicit-include equivalent: `include Moderate::Reportable` + `reportable_fields :title, :description`.)*
 
+Give each field the name a human should see. Without a label, a report of a chat message reaches your moderators as «Body» and they have to guess what was reported — declare it once, next to the field:
+
+```ruby
+class Message < ApplicationRecord
+  has_reportable_content :body, :files, labels: { body: "Chat message", files: "Chat photo" }
+end
+
+report.reported_field_label                    # => "Chat message"
+flag.field_label                               # => "Chat message"
+Moderate.reportable_field_label(Message, :body) # => "Chat message" (also takes a record, or a "Message" type string)
+```
+
+`moderate` prints the label wherever it names a field — the public appeal page, the statement-of-reasons payload (`reported_field_label`), the `report_received` / `content_flagged` summaries — and keeps the raw name next to it (`reported_field`, `field`) for your code. Labels are optional and per field; each field resolves to the first of:
+
+1. its `labels:` entry — a String, or a lambda evaluated at read time (`-> { I18n.t("chat.message") }`);
+2. `moderate.reportable_fields.<model>.<field>` in your locale files, where `<model>` is the model's `model_name.i18n_key` (`chats/message` for `Chats::Message`; STI children also try their reportable parent);
+3. `moderate.reportable_fields.<field>` — one label for that field name on every model. `moderate` ships `en` and `es` defaults for the common ones (`body` → "Text" / "Texto", `avatar` → "Profile photo" / "Foto de perfil", …), and your locale files override them;
+4. `field.humanize`.
+
+```yaml
+# config/locales/es.yml — the multi-locale way to say the same thing
+es:
+  moderate:
+    reportable_fields:
+      chats/message:
+        body: "Mensaje de chat"
+        files: "Foto de chat"
+```
+
+Model-scoped and field-wide keys share one namespace, so a model whose key matches a field name (`Listing` and a `listing` field) can't also have a field-wide label for that name — scope it to the model instead. A whole-record report has no field, so its label is `nil`.
+
 You get:
 
 ```ruby
@@ -207,6 +247,14 @@ Drop a report link into any view with the helper (it renders nothing if the view
 ```erb
 <%= moderate_report_link(@listing, field: :description) %>
 ```
+
+For markup rendered once and shown to many viewers (a chat bubble broadcast to everyone in the thread, a cached fragment), where the per-viewer check can't run, use the viewer-agnostic path and hide it on the author's own content client-side; the server still refuses a report the viewer may not make:
+
+```erb
+<%= link_to "Report", moderate_report_target_path(message, field: :body) %>   <%# target: message.to_moderation_sgid, never expires %>
+```
+
+Using [`chats`](https://github.com/rameerez/chats) for messages? Its messages already speak this contract; the whole integration is in [`docs/chats.md`](docs/chats.md).
 
 Because `moderate` is UI-agnostic, it does not render a built-in "under review" badge. Use `flagged?` / `flagged?(:field)` to render copy that fits your product when `:flag` mode lets content through but queues it for review.
 
@@ -296,16 +344,22 @@ Moderate::Appeal.pending             # appeals awaiting a human
 
 report.resolve!(by: admin, remove_content: true, ban_user: false, note: "Removed: hate speech")
 report.dismiss!(by: admin, note: "No violation")
+flag.resolve!(by: admin, note: "Slur", remove_content: true)   # enforces through a report (below)
+flag.dismiss!(by: admin, note: "False positive")
 appeal.uphold!(by: admin, note: "...")   # overturns the decision
 appeal.reject!(by: admin, note: "...")
+
+Moderate::Flag.flag_for_review!(message, field: :body, by: admin)   # "Flag for review" from any browse screen
 ```
 
-Every action is atomic, requires a moderator + a note, runs your enforcement (content removal via the reportable's own `remove_reported_field!`, bans via your `ban_handler`), and writes to your audit log.
+Every action is atomic, requires a moderator + a note, runs your enforcement (content removal via the reportable's own `remove_reported_field!`, bans via your `ban_handler`), and writes to your audit log. A ban needs a `ban_handler`: without one, `ban_user: true` raises instead of telling someone their account was suspended when nothing suspended it.
+
+A flag has no reporter, statement of reasons or appeal window, but removing content or suspending an account is a restriction that needs all three. So `remove_content:` / `ban_user:` on a flag escalate it: the open report on the same content and field (if a person reported it too) or a system one is resolved under the flag's lock, and `flag.report` is that report afterwards. Without them, resolving a flag only triages it.
 
 ### Use it from a controller (BYOUI)
 
 ```ruby
-class Admin::ReportsController < ApplicationController
+class Admin::ReportsController < ApplicationController   # the same concern drives Admin::FlagsController
   include Moderate::Moderation   # resolve!/dismiss! actions, strong params, redirects
 
   before_action :require_admin
@@ -348,7 +402,9 @@ end
 
 Events carry a stable envelope (`event.name`, `event.subject`, `event.recipients`, `event.actor`, `event.payload`), so a single `notify` hook can drive **goodmail** (user emails), **telegrama** (admin alerts), and **noticed** (in-app feed + push) at once. Notify users via email/in-app **and** ping admins on Telegram from the same place. (Recipes in [`docs/notifications.md`](docs/notifications.md).)
 
-The full event vocabulary: `report_received`, `report_decision`, `affected_user_decision`, `appeal_received`, `appeal_decision`, `user_blocked`, `user_unblocked`, `user_banned`, `content_flagged`, `content_removed`.
+**Notices follow Active Record's `after_commit` rules.** A decision, a report's receipt, a block: each notice belongs to the transaction it happened in and is sent when that transaction commits, never if it rolls back. If you decide inside a transaction of your own, nothing goes out until yours commits; inside nested transactions and savepoints, at the outermost commit; under a parent that isn't joinable (Rails' transactional tests run every test in one), when the savepoint is released, the same moment your models' `after_commit` runs; with no transaction open, at once. Under multiple databases or shards, queue a notice inside the transaction that saved the record, on that transaction's connection: the gem's services capture their connection before they save and pass it along, so a host callback that switches databases mid-save can't move them; if you call `record.after_commit_notice { … }` yourself under `connected_to`, pass `on: connection` (it defaults to the record class's connection at call time).
+
+The full event vocabulary: `report_received`, `notice_received`, `report_decision`, `affected_user_decision`, `appeal_received`, `appeal_decision`, `user_blocked`, `user_unblocked`, `user_banned`, `content_flagged`, `content_removed`.
 
 ## ⚖️ DSA & app-store compliance, out of the box
 
@@ -386,7 +442,7 @@ Moderate.configure do |config|
   config.audit       = ->(event) { ... }     # optional; no-op by default
   config.notify      = ->(event) { ... }     # optional; no-op by default
   config.on_block    = ->(blocker:, blocked:, at:) { ... }   # optional
-  config.ban_handler = ->(user:, by:, reason:) { user.suspend! }   # how a "ban" is applied in your app
+  config.ban_handler = ->(user:, by:, reason:) { user.suspend! }   # how a "ban" is applied in your app (required before any ban_user: true)
 
   config.filter "Message", :body, with: :wordlist, mode: :flag
 end

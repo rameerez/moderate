@@ -2,40 +2,48 @@
 
 module Moderate
   module Services
-    # ResolveFlag — the decision on an auto-filter `Moderate::Flag`, behind the
-    # flag's `action!` / `dismiss!`.
+    # ResolveFlag — the decision on a `Moderate::Flag`, behind the flag's
+    # `action!` / `dismiss!` (and `resolve!`, the queue-wide verb).
     #
     # A Flag is a SYSTEM-raised queue item (the wordlist/image/external classifier
-    # tripped on a `:flag`-mode field, or a human filed one manually) — it's the
-    # "ongoing moderation" surface Apple Guideline 1.2 and Google Play UGC expect:
+    # tripped on a `:flag`-mode field, or an administrator filed one by hand) — it's
+    # the "ongoing moderation" surface Apple Guideline 1.2 and Google Play UGC expect:
     #   - https://developer.apple.com/app-store/review/guidelines/#user-generated-content
     #   - https://support.google.com/googleplay/android-developer/answer/9876937
     #
-    # A flag is lighter than a report: there's no reporter to inform and no appeal
-    # window to stamp (an appeal attaches to a *report* decision, not to a raw
-    # queue item). So this service is the simplest of the resolvers — atomic
-    # transition, mandatory note, audit — but it follows the same discipline:
+    # Same discipline as every resolver:
     #   - `with_lock` + re-check `pending?` inside the lock for idempotency under
-    #     concurrent review;
+    #     concurrent review (a flag already reviewed is returned as-is: a benign
+    #     "already done" suits a fast triage queue);
     #   - a NOTE IS MANDATORY (the moderator's rationale is the audit trail);
-    #   - the decision is recorded via `Moderate.audit`, never a host-specific log.
+    #   - the decision is recorded via `Moderate.audit` (`:flag_decision`).
     #
-    # NOTE: unlike ResolveReport, resolving a flag does NOT itself run content
-    # removal/bans. A flag marks "this needs a look"; the enforcement decision is a
-    # *report* concern. If a moderator wants to remove the flagged content, they file
-    # /resolve a report on it. This keeps the flag a pure triage record and avoids
-    # two divergent enforcement paths. (Documented so a maintainer doesn't "helpfully"
-    # add removal here and create that divergence.)
+    # ENFORCEMENT GOES THROUGH A REPORT. A flag carries no reporter, no statement of
+    # reasons and no appeal window — but removing content or suspending an account is
+    # a restriction, and DSA Art. 17 (statement of reasons) and Art. 20 (appeal) attach
+    # to restrictions, not to queue items. So `action!(remove_content: or ban_user:)`
+    # ESCALATES: it takes the open report on the same content and field, or opens a
+    # system one (no reporter, no receipt), and resolves it through ResolveReport —
+    # the one enforcement path in the gem (remove via `remove_reported_field!`, ban via
+    # `ban_handler`, the decision notices, the appeal window). All of it happens under
+    # the FLAG's row lock, so two moderators pressing "remove" at once enforce once;
+    # the decision notices go out after the lock is released, like every decision.
+    #
+    # Without enforcement options, `action!` is a pure triage close, as before.
     class ResolveFlag
       def initialize(flag, by:)
         @flag = flag
         @moderator = by
       end
 
-      # The flagged content was indeed objectionable — mark the flag actioned. (Any
-      # actual takedown is done by acting on a report; see the class note.)
-      def action!(note:)
-        transition!("actioned", note)
+      # The flagged content was indeed objectionable — mark the flag actioned, and,
+      # when asked, enforce through a report (see the class doc). `resolution_basis`
+      # is the report's legal/contractual ground (Report::RESOLUTION_BASES).
+      def action!(note:, remove_content: false, ban_user: false, resolution_basis: "terms")
+        enforcement = { remove_content: truthy?(remove_content), ban_user: truthy?(ban_user) }
+        enforcement = nil unless enforcement.values.any?
+
+        transition!("actioned", note, enforcement: enforcement, resolution_basis: resolution_basis)
       end
 
       # False positive / acceptable — dismiss the flag.
@@ -47,31 +55,151 @@ module Moderate
 
       attr_reader :flag, :moderator
 
-      def transition!(status, note)
+      def transition!(status, note, enforcement: nil, resolution_basis: nil)
         note = require_note!(note)
+        decision = nil
+        # Captured before any save: the decision's notices join this connection's
+        # transaction, whatever a host callback switches to (Moderate::DeferredNotices).
+        connection = Moderate::DeferredNotices.connection_for(flag.class)
 
         flag.with_lock do
           flag.reload
 
           # Re-check inside the lock. A flag already reviewed is returned as-is (NOT
-          # an error): unlike a report, double-reviewing a flag is harmless and a
-          # benign "already done" is friendlier for a fast triage queue.
-          return flag unless flag.pending?
+          # an error) — and nothing is enforced a second time.
+          next unless flag.pending?
 
-          flag.update!(
-            status: status,
-            resolution_note: note,
-            reviewed_by: moderator,
-            reviewed_at: Time.now
-          )
+          decision, report = enforce!(note, enforcement, resolution_basis) if enforcement
+          close!(status, note, report)
 
-          audit_decision(status, note)
+          # The escalated decision's notices, queued on the flag: sent when the
+          # outermost transaction commits, never on a rollback (DeferredNotices).
+          flag.after_commit_notice(on: connection) { decision.deliver_decision_notices } if decision
         end
 
         flag
       end
 
-      def audit_decision(status, note)
+      # Enforce under the CONTENT's row lock too (after the flag's, before the
+      # report's — the gem's one lock order), so two flags on the same content can't
+      # both enforce: the second waits, then finds the decision the first took.
+      # Returns [the ResolveReport that decided, or nil, the report the flag answers to].
+      def enforce!(note, enforcement, resolution_basis)
+        Moderate.with_row_lock(flag.flaggable) do
+          prior = covering_decision(enforcement)
+          next [nil, prior] if prior
+
+          report = escalation_report!(note)
+          decision = ResolveReport.new(report, by: moderator, deliver: false, conduct_since: flag.created_at)
+          decision.resolve!(note: note, resolution_basis: resolution_basis, **enforcement)
+          [decision, report]
+        end
+      end
+
+      # A report on the same content and field, decided since this flag was filed,
+      # that already did everything asked now (removed it, banned the person). The
+      # flag closes against it instead of restricting a second time. A recorded
+      # removal only counts if the content is actually gone now: an older decision
+      # may say "removed" without having removed anything.
+      def covering_decision(enforcement)
+        asked = enforcement.select { |_action, wanted| wanted }.keys.map(&:to_s)
+        return if asked.include?("remove_content") && !content_gone?
+
+        decided = Moderate::Report.actioned.where(same_content).where(resolved_at: flag.created_at..).recent_first
+        decided.find { |report| asked.all? { |action| truthy?(report.resolution_actions.to_h[action]) } }
+      end
+
+      # Is the flagged field's content gone? The record deleted, the record saying it
+      # is (`deleted?`, a soft-delete tombstone), or the field reading as empty. Read
+      # fresh, under the content's lock: a decision that just committed removed it.
+      def content_gone?
+        content = flag.flaggable&.reload
+        return true if content.nil?
+        return true if content.respond_to?(:deleted?) && content.deleted?
+
+        value = flagged_value(content)
+        value.respond_to?(:attached?) ? !value.attached? : value.blank?
+      rescue ActiveRecord::RecordNotFound
+        true
+      end
+
+      def flagged_value(content)
+        return content.send(:moderation_field_value, flag.field) if content.respond_to?(:moderation_field_value, true)
+
+        content.public_send(flag.field) if content.respond_to?(flag.field)
+      end
+
+      def close!(status, note, report)
+        context = report ? flag.context.to_h.merge("report_id" => report.id) : flag.context
+        flag.update!(status: status, resolution_note: note, reviewed_by: moderator, reviewed_at: Time.current,
+                     context: context)
+        audit_decision(status, note, report)
+      end
+
+      # The report enforcement runs through: the newest OPEN report on the same
+      # content and field (a person may already have reported what the filter
+      # caught), else a system report opened for this decision. A system report has
+      # no reporter, so it sends no receipt and no reporter-facing decision; the
+      # affected user still gets the statement of reasons and the appeal window.
+      def escalation_report!(note)
+        existing = Moderate::Report.open.where(same_content).recent_first.first
+        return disclose_automation!(existing) if existing
+
+        system_report!(note)
+      end
+
+      def same_content
+        { reportable_type: flag.flaggable_type, reportable_id: flag.flaggable_id, reported_field: flag.field }
+      end
+
+      # A system report opened for this decision. It may name any field the flag is
+      # on (`escalated_from_flag`): a filtered field (an image, say) needn't be one a
+      # PERSON may report for the gem to enforce on it.
+      def system_report!(note)
+        message = "Escalated from flag ##{flag.id} (#{flag.source}): #{note}"
+        report = Moderate::Report.new(
+          reportable: flag.flaggable, reported_field: flag.field, reported_user: flag.owner,
+          intake_kind: "community", category: escalation_category,
+          message: message.truncate(Moderate::Report::MESSAGE_MAX_LENGTH),
+          good_faith_confirmed: true, skip_received_notice: true
+        )
+        # Private on Report, set only here: not a host-assignable way around the
+        # field whitelist.
+        report.send(:escalated_from_flag=, flag)
+        report.save!
+        report
+      end
+
+      # A person's report filed BEFORE a classifier flagged the same content never
+      # saw that flag, so its automated-means disclosure (DSA Art. 17(3)(c)) says
+      # "no". When the flag is what's being enforced, the decision must say "yes":
+      # merge the flag's evidence in first. A manual flag is a person, not automation.
+      def disclose_automation!(report)
+        return report if flag.source == "manual"
+
+        evidence = report.automated_processing.to_h
+        disclosed = evidence.merge(
+          "used" => true,
+          "flag_ids" => Array(evidence["flag_ids"]) | [flag.id],
+          "sources" => Array(evidence["sources"]) | [flag.source],
+          "categories" => Array(evidence["categories"]) | Array(flag.categories)
+        )
+        report.update_column(:automated_processing, disclosed)
+        report
+      end
+
+      # The flag's own categories speak the classifier taxonomy ("hate",
+      # "hate/threatening", "sexual/minors"); keep the first one the host's community
+      # list also has, else "other" (or the list's first entry, for a host whose list
+      # has no "other").
+      def escalation_category
+        allowed = Moderate::Report.report_categories
+        top_level = Array(flag.categories).map { |category| category.to_s.split("/").first }
+        found = top_level.find { |category| allowed.include?(category) }
+        found || (allowed.include?("other") ? "other" : allowed.first)
+      end
+
+      def audit_decision(status, note, report)
         Moderate.audit(
           :flag_decision,
           subject: flag,
@@ -81,8 +209,10 @@ module Moderate
             flaggable_type: flag.flaggable_type,
             flaggable_id: flag.flaggable_id,
             field: flag.field,
+            field_label: flag.field_label,
             source: flag.source,
             categories: flag.categories,
+            report_id: report&.id,
             note: note,
             summary: "Flag ##{flag.id} #{status} by moderator"
           }.compact
@@ -95,6 +225,10 @@ module Moderate
 
         flag.errors.add(:resolution_note, :blank)
         raise ActiveRecord::RecordInvalid, flag
+      end
+
+      def truthy?(value)
+        ActiveModel::Type::Boolean.new.cast(value) || false
       end
     end
   end

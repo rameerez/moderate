@@ -9,6 +9,8 @@ require "set"
 # context (a console, a non-Rails test) without booting all of Rails. ActiveSupport
 # is a declared runtime dependency in the gemspec.
 require "active_support/core_ext/string/inflections"
+require "active_support/core_ext/string/filters"
+require "active_support/core_ext/object/blank"
 
 require_relative "moderate/version"
 require_relative "moderate/errors"
@@ -44,6 +46,27 @@ require_relative "moderate/engine" if defined?(::Rails::Engine)
 # The heavy lifting (the AR models, the decision services, the controllers) lives
 # in the autoloaded `app/` tree and calls back into these facade methods.
 module Moderate
+  # Where each of the gem's value lists is labeled for humans, under `moderate.`
+  # in I18n. The gem ships English and Spanish for every value it defines
+  # (config/locales/*.yml); a host overrides any key in its own locale files (they
+  # load after the gem's) and adds the languages it needs. The public DSA notice
+  # form has always read the legal_reasons, content_types and member_states keys.
+  TAXONOMY_LABEL_SCOPES = {
+    category: "categories",              # in-app community report categories (Report#category)
+    legal_reason: "legal_reasons",       # DSA statement-of-reasons grounds (Report#legal_reason)
+    member_state: "member_states",       # EU member-state codes (Report#legal_country_code)
+    content_type: "content_types",       # Report#content_type
+    resolution_basis: "resolution_bases", # the Art. 17 ground of a decision (Report#resolution_basis)
+    decision: "decisions",               # the restriction imposed (Report#decision_visibility, a decision's :action)
+    intake_kind: "intake_kinds",         # community report vs. DSA notice (Report#intake_kind)
+    report_status: "statuses.report",
+    flag_status: "statuses.flag",
+    appeal_status: "statuses.appeal",
+    flag_source: "flag_sources",         # Flag#source (host adapter names fall back to humanize)
+    flag_mode: "flag_modes",             # Flag#mode
+    appeal_source: "appeal_sources"      # Appeal#source
+  }.freeze
+
   class << self
     # --- Configuration --------------------------------------------------------
 
@@ -139,6 +162,74 @@ module Moderate
       end
     end
 
+    # --- Reportable field labels ----------------------------------------------
+
+    # The human name of a reported field — what the queue, the statement of
+    # reasons, and the appeal page print instead of the raw column name. A
+    # moderator reading «Body» on a chat-message report has to guess what was
+    # reported; «Chat message» they can act on.
+    #
+    #   Moderate.reportable_field_label(message, :body)          # => "Chat message"
+    #   Moderate.reportable_field_label(Message, "body")         # same, from the class
+    #   Moderate.reportable_field_label("Message", "body")       # same, from a stored type
+    #
+    # Resolution, first non-blank answer wins:
+    #
+    #   1. the `labels:` declared next to the field
+    #      (`has_reportable_content :body, labels: { body: "Chat message" }`) —
+    #      a String, or a callable evaluated now (so a lambda can use I18n);
+    #   2. i18n `moderate.reportable_fields.<model>.<field>`, where <model> is the
+    #      model's `model_name.i18n_key` (`chats/message` for `Chats::Message`),
+    #      walking up to STI parents that are themselves reportable;
+    #   3. i18n `moderate.reportable_fields.<field>` — one label for every model
+    #      that has a field by that name (the gem ships a few generic ones);
+    #   4. `field.to_s.humanize`, so an unlabeled field still renders something.
+    #
+    # Returns nil for a blank field: a whole-record report has no field to name,
+    # and callers decide how to say that in their own UI.
+    #
+    # `record_or_class` may be a record, a class, or a class-name String (a
+    # report's `reportable_type`), so a label still resolves after the reported
+    # record is gone. An unknown class name skips straight to steps 3–4.
+    def reportable_field_label(record_or_class, field)
+      field_s = field.to_s.squish
+      return if field_s.empty?
+
+      klass, class_name = reportable_label_class(record_or_class)
+
+      translated = reportable_label_i18n_keys(klass, class_name, field_s)
+        .lazy.filter_map { |key| reportable_label_i18n(key) }
+
+      declared_reportable_field_label(klass, field_s) || translated.first || field_s.humanize
+    end
+
+    # --- Taxonomy labels ------------------------------------------------------
+
+    # The human label for one value of one of the gem's taxonomies, in the current
+    # locale — what a report form, a moderation queue or a statement of reasons
+    # prints instead of the stored value:
+    #
+    #   Moderate.taxonomy_label(:category, "harassment")       # => "Harassment"   ("Acoso" in :es)
+    #   Moderate.taxonomy_label(:legal_reason, :scams_fraud)   # => "Scams and fraud"
+    #   Moderate.taxonomy_label(:flag_status, flag.status)     # => "Awaiting review"
+    #
+    # Reads `moderate.<scope>.<value>` (TAXONOMY_LABEL_SCOPES), falling back to the
+    # value humanized (a member-state code falls back to itself), so a host's own
+    # category or adapter name still renders. nil/blank in, nil out. An unknown kind
+    # raises: a typo'd kind would otherwise silently print raw values forever.
+    def taxonomy_label(kind, value)
+      scope = TAXONOMY_LABEL_SCOPES.fetch(kind.to_sym) do
+        raise ArgumentError, "unknown taxonomy #{kind.inspect}; one of: #{TAXONOMY_LABEL_SCOPES.keys.join(", ")}"
+      end
+      value_s = value.to_s.strip
+      return if value_s.empty?
+
+      fallback = kind.to_sym == :member_state ? value_s : value_s.tr("/", " ").humanize
+      return fallback unless defined?(I18n)
+
+      I18n.t("moderate.#{scope}.#{value_s}", default: fallback)
+    end
+
     # --- Notify / audit hooks -------------------------------------------------
 
     # Dispatch a notifiable moment to the host's `config.notify` hook.
@@ -206,20 +297,92 @@ module Moderate
     end
 
     # Apply a ban via the host's `ban_handler` (suspend!, soft-delete, flip a flag,
-    # whatever "banned" means in the host's domain). Keyword-arg signature. No-op by
-    # default — the surrounding decision still audits and notifies even if no ban is
-    # wired, so the action is never silently dropped (docs/configuration.md).
-    def apply_ban(user:, by:, reason:)
+    # whatever "banned" means in the host's domain). Keyword-arg signature.
+    #
+    # Raises ConfigurationError when no ban_handler is wired: auditing and announcing
+    # `user_banned` for a ban nothing applied would put a false statement in the
+    # audit trail and in the person's inbox.
+    #
+    # `announce: false` (the decision services) audits now but leaves the
+    # `user_banned` notice to the caller: it returns the event's keywords for
+    # `Moderate.announce_ban`, so the notice can wait for the decision's commit.
+    def apply_ban(user:, by:, reason:, announce: true)
+      ensure_ban_handler!
       result = config.ban_handler.call(user: user, by: by, reason: reason)
       payload = {
         user_id: user&.id,
         reason: reason,
         summary: "user #{user&.id || '(unknown)'} banned"
       }.compact
+      event = { subject: user, actor: by, recipients: [user].compact, payload: payload }
 
-      audit(:user_banned, subject: user, actor: by, recipients: [user].compact, payload: payload)
-      notify(:user_banned, subject: user, actor: by, recipients: [user].compact, payload: payload)
+      audit(:user_banned, **event)
+      return event unless announce
+
+      announce_ban(**event)
       result
+    end
+
+    # The `user_banned` notice for a ban applied with `apply_ban(announce: false)`.
+    def announce_ban(**event)
+      notify(:user_banned, **event)
+    end
+
+    # --- Responsibility -------------------------------------------------------
+
+    # The PERSON responsible for `record` — the account a decision notifies and a
+    # ban reaches — or nil when nobody is. It asks the record's `reported_owner`
+    # (the Reportable contract) and keeps the answer only if it is an instance of
+    # the configured `user_class`.
+    #
+    # Why the type check lives here: content is often spoken by something that
+    # isn't a person — a support desk, a bot, an organization. `chats` answers
+    # `author || sender` for a message, which is a desk for an unsigned support
+    # reply. Every place moderate stores an owner is a `user_class` association
+    # (Report#reported_user, Flag#owner), so a desk there would raise
+    # ActiveRecord::AssociationTypeMismatch and take the report down with it.
+    # "Nobody to reach" is the honest answer: the report still files, the evidence
+    # is still kept, content can still be removed; only a decision notice or a ban
+    # has no addressee.
+    #
+    # A reportable that doesn't define `reported_owner` still raises (loudly, at
+    # the first report) — that omission is a bug in the host, not "nobody".
+    def responsible_user(record)
+      return if record.nil? || !record.respond_to?(:reported_owner)
+
+      owner = record.reported_owner
+      owner if owner.is_a?(user_class)
+    end
+
+    # Raised before anything changes when a ban is asked for and nothing would apply
+    # it. Public so a decision service can check before it takes any lock.
+    def ensure_ban_handler!
+      return true if config.ban_handler_configured?
+
+      raise ConfigurationError,
+            "a ban was requested but no config.ban_handler is set, so nothing would suspend the account " \
+            "while the audit trail and the statement of reasons said it was. Wire one in " \
+            "config/initializers/moderate.rb, e.g. " \
+            "`config.ban_handler = ->(user:, by:, reason:) { user.suspend!(reason: reason) }`."
+    end
+
+    # --- Transactions -----------------------------------------------------------
+
+    # Hold `record`'s row lock (SELECT … FOR UPDATE) for the block, or just run the
+    # block when there's no saved row to lock. Enforcement takes the CONTENT's lock
+    # before the report's, everywhere (flag → content → report), so two decisions
+    # about the same content serialize instead of enforcing twice or deadlocking.
+    #
+    # The lock is taken by query, not with `record.with_lock`, so the caller's object
+    # is neither reloaded nor refused for carrying unsaved changes.
+    def with_row_lock(record)
+      model = record.class
+      return yield unless record.respond_to?(:persisted?) && record.persisted? && model.respond_to?(:lock)
+
+      model.transaction do
+        model.unscoped.lock.where(model.primary_key => record.id).ids
+        yield
+      end
     end
 
     # --- Blocking SSOT --------------------------------------------------------
@@ -232,10 +395,14 @@ module Moderate
     #   Post.where.not(user_id: Moderate.blocked_ids_for(current_user))
     #
     # Delegates to Moderate::Block (the model that owns the block SQL) so the join
-    # logic lives in exactly one place. Returns an empty array for a blank user.
+    # logic lives in exactly one place.
+    #
+    # ALWAYS a relation selecting user ids (`user_class.where(...).select(:id)`), for
+    # a blank user too (then an empty one): compose it into `where.not(user_id: …)`
+    # and it stays one subquery. Call `.ids` for an Array of id values. (beta2 gave
+    # `[]` for nil and a relation otherwise; a host composing the two got an Array of
+    # User records from `relation | array`, and `include?(id)` silently missed.)
     def blocked_ids_for(user)
-      return [] if user.nil?
-
       Block.related_user_ids(user)
     end
 
@@ -339,6 +506,79 @@ module Moderate
     # is idempotent.
     def reportable_registry
       @reportable_classes ||= Set.new
+    end
+
+    # [Class or nil, class name or nil] for whatever reportable_field_label got.
+    def reportable_label_class(record_or_class)
+      case record_or_class
+      when nil then [nil, nil]
+      when Class then [record_or_class, record_or_class.name]
+      when String, Symbol
+        name = record_or_class.to_s
+        [name.safe_constantize, name.presence]
+      else
+        [record_or_class.class, record_or_class.class.name]
+      end
+    end
+
+    # A label is display copy, so it must never take a page down: a host lambda
+    # that raises is logged and treated as "no declared label" (the i18n/humanize
+    # fallbacks still answer), the same way a view should treat a nil.
+    def declared_reportable_field_label(klass, field_s)
+      return unless klass.respond_to?(:moderation_reportable_field_labels)
+
+      label = klass.moderation_reportable_field_labels[field_s]
+      label = label.call if label.respond_to?(:call)
+      label.to_s.presence
+    rescue StandardError => error
+      logger&.warn("[moderate] label for #{klass.name}##{field_s} raised #{error.class}: #{error.message}")
+      nil
+    end
+
+    # Model-scoped keys first (the class, then its reportable STI parents), then
+    # the field-wide key. A class name that no longer constantizes still gets its
+    # own model key, derived the way ActiveModel::Name would.
+    def reportable_label_i18n_keys(klass, class_name, field_s)
+      model_keys =
+        if klass
+          chain = klass.ancestors.select { |ancestor| ancestor.is_a?(Class) && reportable_label_model?(ancestor) }
+          chain = [klass] if chain.empty?
+          chain.filter_map { |ancestor| reportable_label_model_key(ancestor) }
+        elsif class_name
+          [class_name.underscore]
+        else
+          []
+        end
+
+      model_keys.uniq.map { |model_key| "moderate.reportable_fields.#{model_key}.#{field_s}" } +
+        ["moderate.reportable_fields.#{field_s}"]
+    end
+
+    def reportable_label_model?(klass)
+      defined?(Moderate::Reportable) && klass.include?(Moderate::Reportable)
+    end
+
+    # `model_name` constantizes the class's namespace, which can raise for a class
+    # whose name doesn't match a loaded module; the underscored name is the same
+    # key ActiveModel would derive for a non-isolated namespace.
+    def reportable_label_model_key(klass)
+      return klass.model_name.i18n_key.to_s if klass.respond_to?(:model_name)
+
+      klass.name&.underscore
+    rescue NameError
+      klass.name&.underscore
+    end
+
+    # A translated String, or nil. Two guards: `I18n.t` with no default returns a
+    # "Translation missing" string rather than nil, so we ask `exists?` first;
+    # and the model-scoped and field-wide keys share one namespace, so a field
+    # called `listing` on a host that also has a `Listing` model would read the
+    # model's Hash of labels — anything that isn't a String is not a label.
+    def reportable_label_i18n(key)
+      return unless defined?(I18n) && I18n.exists?(key)
+
+      value = I18n.t(key)
+      value.presence if value.is_a?(String)
     end
 
     # Coerce whatever an adapter returned into a Moderate::Result, stamping the

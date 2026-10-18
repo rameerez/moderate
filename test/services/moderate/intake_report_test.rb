@@ -110,16 +110,16 @@ module Moderate
         reporter = User.create!(name: "Reporter", email: "reporter@example.com")
         reported = User.create!(name: "Reported")
 
-        # Blank message fails Report's presence validation, so save returns false and the
+        # An unknown category fails Report's validation, so save returns false and the
         # report carries its errors — exactly like a bare model save (controllers rely on this).
-        report = Moderate::Report.new(category: "harassment", message: "", good_faith_confirmed: "1")
+        report = Moderate::Report.new(category: "not_a_category", message: "", good_faith_confirmed: "1")
         intake = Moderate::Services::IntakeReport.new(
           report: report, reporter: reporter, reportable: reported, reported_field: "name"
         )
 
         refute intake.save
         refute_predicate report, :persisted?
-        assert_predicate report.errors[:message], :present?
+        assert_predicate report.errors[:category], :present?
 
         # Nothing fired downstream of the failed save.
         assert_empty ModerateTestRecorder.notifications
