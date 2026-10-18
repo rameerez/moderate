@@ -11,6 +11,9 @@ en:
       # A :block attachment whose direct upload hasn't finished: nothing enters unverified.
       upload_not_finished: "hasn't finished uploading yet"
   moderate:
+    # Refusals and validation messages (the inline defaults in the code are English).
+    errors:
+      resolve_needs_action: "Resolving a report restricts something: remove the content, ban the account, or both. To close it without a restriction, dismiss it."
     appeals:
       reported_field: "Content"
 

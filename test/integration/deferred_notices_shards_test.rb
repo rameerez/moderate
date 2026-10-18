@@ -125,6 +125,7 @@ module Moderate
       Moderate.configure do |config|
         config.audit = ->(event) { ModerateTestRecorder.audit(event) }
         config.notify = ->(event) { ModerateTestRecorder.notify(event) }
+        config.ban_handler = ->(user:, by:, reason:) { ModerateTestRecorder.ban_handler(user: user, by: by, reason: reason) }
       end
       @b = ShardRecord.connected_to(shard: :b) { ShardRecord.connection }
       b = @b
@@ -150,20 +151,20 @@ module Moderate
     test "the decision's notices follow the connection captured before the save" do
       ActiveRecord::Base.transaction do
         Thread.current[SWITCH] = true
-        @report.resolve!(by: User.create!(name: "Mod"), note: "Warned.")
+        @report.resolve!(by: User.create!(name: "Mod"), note: "Suspended.", ban_user: true)
         Thread.current[SWITCH] = nil
         assert_equal @b, Moderate::DeferredNotices.connection_for(Moderate::Report), "the host switched it"
         assert_empty ModerateTestRecorder.notifications, "nothing before the primary database commits"
         assert_not @b.current_transaction.open?, "and nothing on B"
       end
 
-      assert_equal %i[affected_user_decision report_decision], ModerateTestRecorder.notifications.map(&:name).sort
+      assert_equal %i[affected_user_decision report_decision user_banned], ModerateTestRecorder.notifications.map(&:name).sort
     end
 
     test "and are dropped when the primary database rolls back" do
       ActiveRecord::Base.transaction do
         Thread.current[SWITCH] = true
-        @report.resolve!(by: User.create!(name: "Mod"), note: "Warned.")
+        @report.resolve!(by: User.create!(name: "Mod"), note: "Suspended.", ban_user: true)
         Thread.current[SWITCH] = nil
         raise ActiveRecord::Rollback
       end

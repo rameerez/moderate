@@ -217,6 +217,7 @@ module Moderate
       Moderate.configure do |config|
         config.audit = ->(event) { ModerateTestRecorder.audit(event) }
         config.notify = ->(event) { ModerateTestRecorder.notify(event) }
+        config.ban_handler = ->(user:, by:, reason:) { ModerateTestRecorder.ban_handler(user: user, by: by, reason: reason) }
       end
       ModerateTestRecorder.clear
 
@@ -229,7 +230,7 @@ module Moderate
       assert_equal "Comment text", received.payload[:reported_field_label]
       assert_equal "New harassment report on Comment ##{comment.id} · Comment text", received.summary
 
-      report.resolve!(by: moderator, note: "Abusive")
+      report.resolve!(by: moderator, note: "Abusive", ban_user: true)
       statement = ModerateTestRecorder.notifications_named(:affected_user_decision).first
       assert_equal "body", statement.payload[:reported_field]
       assert_equal "Comment text", statement.payload[:reported_field_label]

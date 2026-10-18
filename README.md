@@ -356,7 +356,7 @@ appeal.reject!(by: admin, note: "...")
 Moderate::Flag.flag_for_review!(message, field: :body, by: admin)   # "Flag for review" from any browse screen
 ```
 
-Every action is atomic, requires a moderator + a note, runs your enforcement (content removal via the reportable's own `remove_reported_field!`, bans via your `ban_handler`), and writes to your audit log. A ban needs a `ban_handler`: without one, `ban_user: true` raises instead of telling someone their account was suspended when nothing suspended it.
+Every action is atomic, requires a moderator + a note, runs your enforcement (content removal via the reportable's own `remove_reported_field!`, bans via your `ban_handler`), and writes to your audit log. A ban needs a `ban_handler`: without one, `ban_user: true` raises instead of telling someone their account was suspended when nothing suspended it. And a report's `resolve!` restricts something (`remove_content:`, `ban_user:`, or both): one with neither is refused, because its statement of reasons would claim a restriction nobody imposed; a decision that restricts nothing is a `dismiss!`.
 
 A flag has no reporter, statement of reasons or appeal window, but removing content or suspending an account is a restriction that needs all three. So `remove_content:` / `ban_user:` on a flag escalate it: the open report on the same content and field (if a person reported it too) or a system one is resolved under the flag's lock, and `flag.report` is that report afterwards. Without them, resolving a flag only triages it.
 

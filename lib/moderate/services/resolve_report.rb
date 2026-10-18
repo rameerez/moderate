@@ -54,6 +54,11 @@ module Moderate
       # Resolve WITH action (the report was valid; we acted on the content/account).
       # `resolution_basis` records the legal/contractual ground bucket; it's
       # validated against the migration's check-constraint list by the model.
+      #
+      # A resolve restricts something: `remove_content:`, `ban_user:`, or both. One with
+      # neither is refused (RecordInvalid): recording it would tell the affected person a
+      # restriction was imposed when none was. A decision that restricts nothing is a
+      # `dismiss!`, whose statement says so.
       def resolve!(note:, remove_content: false, ban_user: false, resolution_basis: "terms")
         note = require_note!(note)
         actions = {
@@ -61,6 +66,7 @@ module Moderate
           ban_user: truthy?(ban_user),
           resolution_basis: resolution_basis.to_s.strip.presence || "terms"
         }
+        require_action!(actions)
 
         # A ban nothing would apply is refused before anything changes (see
         # Moderate.ensure_ban_handler!): never "account suspended" for a suspension
@@ -373,9 +379,19 @@ module Moderate
       def decision_visibility_for(status, actions)
         return "no_restriction" unless status == "actioned"
         return "account_suspended" if actions[:ban_user]
-        return "content_removed" if actions[:remove_content]
 
-        "other_restriction"
+        "content_removed" # resolve! requires one of the two (require_action!)
+      end
+
+      def require_action!(actions)
+        return if actions[:remove_content] || actions[:ban_user]
+
+        report.errors.add(:base, I18n.t(
+          "moderate.errors.resolve_needs_action",
+          default: "Resolving a report restricts something: remove the content, ban the account, or both. " \
+                   "To close it without a restriction, dismiss it."
+        ))
+        raise ActiveRecord::RecordInvalid, report
       end
 
       def automated_processing_used?

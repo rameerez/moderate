@@ -197,7 +197,7 @@ module Moderate
         comment = Comment.create!(user: author, body: "fine body")
         report = create_report(reportable: comment, field: "body")
 
-        Moderate::Services::ResolveReport.new(report, by: moderator).resolve!(note: "First decision")
+        Moderate::Services::ResolveReport.new(report, by: moderator).resolve!(note: "First decision", ban_user: true)
         first_resolved_at = report.reload.resolved_at
         ModerateTestRecorder.clear # ignore the first (valid) decision's side effects
 
@@ -238,20 +238,23 @@ module Moderate
         refute statement.payload[:automated]
       end
 
-      test "records resolution_basis and a no_action label for a dismissal" do
+      test "a resolve that restricts nothing is refused: it would claim a restriction nobody imposed" do
         moderator = User.create!(name: "Mod")
         author = User.create!(name: "Author")
         comment = Comment.create!(user: author, body: "fine body")
         report = create_report(reportable: comment, field: "body")
 
-        Moderate::Services::ResolveReport.new(report, by: moderator)
-          .resolve!(note: "Acted but no removal/ban", resolution_basis: "law")
+        error = assert_raises(ActiveRecord::RecordInvalid) do
+          Moderate::Services::ResolveReport.new(report, by: moderator).resolve!(note: "Acted but no removal/ban", resolution_basis: "law")
+        end
 
-        report.reload
-        # Neither remove nor ban ⇒ the neutral "other_restriction" scope, and the
-        # caller's explicit ground is recorded.
-        assert_equal "other_restriction", report.decision_visibility
-        assert_equal "law", report.resolution_basis
+        assert_match "dismiss", error.message
+        assert_predicate report.reload, :open?
+        assert_empty ModerateTestRecorder.notifications_named(:affected_user_decision)
+        I18n.with_locale(:es) do
+          assert_raises(ActiveRecord::RecordInvalid) { report.resolve!(by: moderator, note: "x") }
+          assert_match "desestímala", report.errors.full_messages.join
+        end
       end
 
       # --- A ban nothing applies is refused ------------------------------------
@@ -298,9 +301,9 @@ module Moderate
         author = User.create!(name: "Author", email: "author-nobanneeded@example.com")
         report = create_report(reportable: Comment.create!(user: author, body: "meh"), field: "body")
 
-        report.resolve!(by: User.create!(name: "Mod"), note: "Warned.")
+        report.dismiss!(by: User.create!(name: "Mod"), note: "No violation.")
 
-        assert_predicate report.reload, :actioned?
+        assert_predicate report.reload, :dismissed?
       end
 
       # --- content_removed --------------------------------------------------

@@ -80,6 +80,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A report resolved with neither removal nor ban is refused.** It recorded
+  `decision_visibility: "other_restriction"` and sent the author a statement of reasons
+  for a restriction nobody imposed. `resolve!` restricts something (`remove_content:`,
+  `ban_user:`, or both); with neither it now raises `ActiveRecord::RecordInvalid` with
+  `moderate.errors.resolve_needs_action` (en/es: "… To close it without a restriction,
+  dismiss it."), and the report stays open. **Behavior change:** a host that resolved
+  reports with only a note (a "warning") should `dismiss!` them, or apply its own measure
+  and dismiss. `other_restriction` stays in the decision taxonomy for labels.
 - **A ban after a host-side unban is applied again.** One ban per person per episode: a
   second ban decision in the same episode was recorded as covered by the first
   (`ban_already_applied_by`), so after the host lifted the ban the `ban_handler` wasn't
