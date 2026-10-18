@@ -18,6 +18,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `create_moderate_tables` and copies the migration after it, an app without copies gets it
   through the engine, and its `down` drops only what it created.
 
+- **What changes for an app upgrading from beta4** (each is detailed below):
+  - Ruby 3.3+ and Rails 8.0.5.1+ (Rails 8.0 hosts on json 3 need `json < 3`, as before).
+  - `config.signed_gid_purposes` is gone: delete the line if you set it.
+  - `report.resolve!` with neither `remove_content:` nor `ban_user:` is refused: dismiss
+    instead.
+  - `decision_notified_at` / `affected_user_notified_at` (and the appeal window's
+    extension) wait for `Moderate.delivered!` from your mailer's delivery.
+  - `Report#reported_content_text` is the intake snapshot.
+  - If your app can lift a ban, set `config.banned`.
+  - If you worked around the attachment upload race (CarHey's avatar), remove the
+    workaround.
+  - Attachment classification queues two `ClassifyJob`s per upload (the guard and the
+    immediate one); each set of files is still classified once.
+
 ### Added
 
 - **A missed migration copy fails at boot.** An app holding copies of the gem's migrations
