@@ -71,4 +71,26 @@ class Moderate::CoveringRemovalTest < ActiveSupport::TestCase
 
     assert_predicate @second.reload, :dismissed?
   end
+
+  test "a repost into the same field is new content: an old removal is not credited for it" do
+    remove_through(@first) # the original post is removed
+    travel 1.minute
+    @comment.update!(body: "vile words") # the author posts the same words again
+    repost_report = User.create!(name: "Third", email: "third@example.com").report!(@comment, category: :harassment, field: :body)
+    @comment.update_column(:body, "") # and that repost goes too (deleted by its author, say)
+
+    assert_raises(ActiveRecord::RecordInvalid) do
+      repost_report.resolve!(by: @moderator, note: "Repost", remove_content: true)
+    end
+    assert_nil repost_report.reload.resolution_actions["content_already_removed_by"]
+  end
+
+  test "a report whose snapshot can't name the revision is not covered" do
+    remove_through(@first)
+    @second.update_column(:snapshot, @second.snapshot.except("content_updated_at")) # an older intake
+
+    assert_raises(ActiveRecord::RecordInvalid) do
+      @second.resolve!(by: @moderator, note: "Same content", remove_content: true)
+    end
+  end
 end

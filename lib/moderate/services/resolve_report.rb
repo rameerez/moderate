@@ -201,7 +201,21 @@ module Moderate
         pointer = report.reportable_id ? { reportable_type: type, reportable_id: id } : { reportable_id: nil }
         Moderate::Report.actioned.where(pointer).where(reported_field: report.reported_field)
           .where.not(id: report.id).recent_first.lock
-          .find { |prior| content_ids(prior) == [type, id] && truthy?(prior.resolution_actions.to_h["remove_content"]) }
+          .find do |prior|
+            content_ids(prior) == [type, id] && same_revision?(prior) &&
+              truthy?(prior.resolution_actions.to_h["remove_content"])
+          end
+      end
+
+      # Did `prior` decide on the very revision this report was filed on? Their intake
+      # snapshots must carry the same content text and the same content `updated_at`.
+      # When either is missing (an older snapshot, a purged one, content with no text),
+      # identity can't be established and nothing is covered: a repost into the same
+      # field is new content, and an old removal must never be credited for it.
+      def same_revision?(prior)
+        mine = report.snapshot.to_h.with_indifferent_access
+        theirs = prior.snapshot.to_h.with_indifferent_access
+        %i[content_text content_updated_at].all? { |key| mine[key].present? && mine[key] == theirs[key] }
       end
 
       # A report's content type and id, from its snapshot when its own pointer was
