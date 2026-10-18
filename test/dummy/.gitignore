@@ -5,6 +5,7 @@
 /db/*.sqlite3-*
 /db/schema.rb
 /log/*.log
+/log/*.log.*
 /tmp/
 
 # Keep the directory skeletons that must exist for db:create / Active Storage even
