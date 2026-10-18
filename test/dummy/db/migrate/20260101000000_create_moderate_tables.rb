@@ -15,10 +15,9 @@
 # .github/workflows/test.yml: "Exercise the real migration path in SQLite too so
 # dummy/test schema drift is caught").
 #
-# ONE deliberate difference: this is the template as of 1.0.0.beta3, without
-# moderate_flags.pending_key. The gem's own db/migrate (which the engine adds to the
-# app's migration paths) then adds it, exactly as it does for a host upgrading from
-# beta3, so every CI run exercises the upgrade migration on all three databases.
+# Like the template, it has no moderate_flags.pending_key: the gem's own db/migrate
+# (which the engine adds to the app's migration paths here) creates it, as it does in
+# every host, so every CI run exercises that migration on all three databases.
 #
 # The migration version is pinned to [7.1] — the gemspec floor and the lowest Rails
 # in the test matrix. (The template renders this from ActiveRecord::VERSION at

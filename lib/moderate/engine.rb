@@ -98,27 +98,34 @@ module Moderate
     # autoloadable; adding it to eager_load_paths makes the boot-time pass cover it.
     config.eager_load_paths << MODERATE_LIB
 
-    # The gem's own upgrade migrations (db/migrate, e.g. beta4's pending_key) run with
-    # the host's `bin/rails db:migrate`: this appends the gem's db/migrate to the
-    # app's migration paths. The tables themselves still come from
-    # `rails generate moderate:install`, which copies the adaptive create migration.
+    # The gem's own migrations (db/migrate, e.g. beta4's pending_key) and how an app
+    # gets them. The tables come from `rails generate moderate:install`, which writes
+    # the adaptive create migration and then COPIES the gem's migrations after it
+    # (*.moderate.rb), so a fresh app runs both, in order. An app installed before it
+    # copied them (beta3) holds no copies: this appends the gem's db/migrate to its
+    # migration paths, so it runs only what it lacks.
     #
     # Not appended when the same migrations would then be found twice (Active Record
     # raises DuplicateMigrationNameError):
     #   - under the gem's own Rakefile (ENGINE_ROOT is this engine), where Rails' engine
     #     tasks already add the engine's db/migrate;
-    #   - when the host copied them with `bin/rails moderate:install:migrations`
-    #     (files named *.moderate.rb in its db/migrate): the copies run instead.
+    #   - when the app holds copies (*.moderate.rb, from moderate:install or
+    #     `bin/rails moderate:install:migrations`): the copies run instead, and a later
+    #     release's migrations arrive with `bin/rails moderate:install:migrations`.
     initializer "moderate.migrations" do |app|
       next if app.root.to_s == root.to_s
       next if defined?(ENGINE_ROOT) && ENGINE_ROOT.to_s == root.to_s
 
-      host_dirs = app.config.paths["db/migrate"].expanded
-      next if host_dirs.any? { |dir| Dir.glob(File.join(dir, "*.moderate.rb")).any? }
-
-      config.paths["db/migrate"].expanded.each do |path|
-        app.config.paths["db/migrate"] << path unless host_dirs.include?(path)
+      Engine.migration_paths_for(app.config.paths["db/migrate"].expanded).each do |path|
+        app.config.paths["db/migrate"] << path
       end
+    end
+
+    # The gem's migration directories an app with `host_dirs` as its own should add.
+    def self.migration_paths_for(host_dirs)
+      return [] if host_dirs.any? { |dir| Dir.glob(File.join(dir, "*.moderate.rb")).any? }
+
+      config.paths["db/migrate"].expanded - host_dirs
     end
 
     # Register the model macros on ActiveRecord, the canonical Rails way.

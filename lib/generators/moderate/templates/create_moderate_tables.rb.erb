@@ -151,14 +151,10 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
     add_index :moderate_flags, [:owner_id, :status], name: "index_moderate_flags_on_owner_id_and_status"
     add_index :moderate_flags, [:status, :created_at], name: "index_moderate_flags_on_status_and_created_at"
 
-    # At most one PENDING flag per content + field: `pending_key` is set while a flag
-    # is pending ("<flaggable_type>/<flaggable_id>/<field>") and NULL once it is closed
-    # (Moderate::Flag keeps it in sync); NULLs never collide in a unique index. The key
-    # compares as bytes: on MySQL, whose default collation ignores case, the column is
-    # utf8mb4_bin, so "Post/1/body" and "POST/1/body" stay two keys (it still ignores
-    # trailing spaces, PAD SPACE: Moderate::Flag strips `field`, so keys never have them).
-    add_column :moderate_flags, :pending_key, :string, **pending_key_options
-    add_index :moderate_flags, :pending_key, unique: true, name: "index_moderate_flags_on_pending_key"
+    # moderate_flags.pending_key (at most one PENDING flag per content + field) is NOT
+    # here: the gem's own AddPendingKeyToModerateFlags creates it, for a fresh install
+    # (moderate:install copies it right after this migration) and an upgrade alike, so
+    # one migration creates it everywhere and its `down` drops only what it created.
 
     # Flag's mode/source/status vocabularies are validated in Moderate::Flag
     # (constants + inclusion validations), not by DB CHECK constraints — same
@@ -237,11 +233,6 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
   # MySQL under either of Rails' adapters: mysql2, or Trilogy (Rails 7.1+).
   def mysql?
     connection.adapter_name.downcase.match?(/mysql|trilogy/)
-  end
-
-  # See `pending_key` above: byte comparison on MySQL; PostgreSQL and SQLite already.
-  def pending_key_options
-    mysql? ? { collation: "utf8mb4_bin" } : {}
   end
 
   # The SQL function for COUNTING CHARACTERS in a check constraint, chosen per
