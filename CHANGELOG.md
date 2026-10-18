@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The public API is frozen and listed.** The README's new "What is public" section names
+  everything that keeps its name, arguments and meaning until 2.0: the macros, `report!` /
+  `block!`, the reportable contract, the decision methods (`resolve!` / `dismiss!` /
+  `action!` / `uphold!` / `reject!`) and their services, `flag_for_review!`, `taxonomy_label`,
+  `reportable_field_label`, `blocked_ids_for`, `purge`, every configuration key, the view
+  helpers, the controller concern and its seams, the adapter contract, and the event
+  vocabulary with the notifier contract. The vocabulary is now code:
+  `Moderate::Event::NOTIFY_NAMES` and `Moderate::Event::AUDIT_NAMES`.
+  `test/public_api_test.rb` fails when a listed name doesn't exist, when a public
+  `Moderate.*` method or configuration key isn't listed, when the event lists drift from
+  what the gem emits, or when the README or docs/ name a `Moderate…` constant or method that
+  doesn't exist (it caught `Moderate::DSA_LEGAL_REASONS` in docs/compliance.md; it is
+  `Moderate::Report::DSA_LEGAL_REASONS`).
+- **What isn't public is marked.** `@api private`: `Moderate.notify`, `.audit`, `.apply_ban`,
+  `.announce_ban`, `.ensure_ban_handler!`, `.run_on_block`, `.with_row_lock`,
+  `.register_reportable`, `.locale`; `Report::SIGNED_GLOBAL_ID_PURPOSE` /
+  `APPEAL_SIGNED_GLOBAL_ID_PURPOSE`, `Report#signed_reportable_gid`, `#acknowledge!`,
+  `#close_redress_window!`, `#block_reported_user`, `Report.locate_signed_appeal_report`;
+  `DeferredNotices.defer` / `.connection_for` / `Envelope`; the wordlist's compiler
+  internals. `Moderate::Engine::LIB_ROOT`, `MODERATE_LIB` and `ZEITWERK_IGNORED` are private
+  constants. Nothing tagged was removed; a host still calling one should move:
+  `Moderate.apply_ban` → `flag.action!(ban_user: true)` or `report.resolve!(ban_user: true)`
+  (which also send the statement of reasons and open the appeal window);
+  `to_sgid_param(for: Moderate::Report::SIGNED_GLOBAL_ID_PURPOSE)` and
+  `report.signed_reportable_gid` → `record.to_moderation_sgid` or
+  `moderate_report_target_path(record, field:)`.
+- **docs/notifications.md lists the audit events** instead of claiming `audit` fires for every
+  event (`content_flagged`, for one, is notify-only: the flag row is its record).
+
 - **Retention: `Moderate.purge(older_than: 1.year, dry_run: false)`** and the
   `moderate:purge` rake task (`OLDER_THAN_DAYS`, `DRY_RUN`), opt-in. They redact the personal
   data in reports, notices, flags and appeals whose decision is final (closed, decided more

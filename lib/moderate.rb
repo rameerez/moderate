@@ -143,6 +143,8 @@ module Moderate
     #
     # Stored as a Set of STRING class names (not Class objects) so we never pin a
     # class in memory across a Zeitwerk reload in development; we constantize on read.
+    #
+    # @api private: called by Moderate::Reportable on inclusion.
     def register_reportable(klass)
       name = klass.is_a?(Class) ? klass.name : klass.to_s
       return if name.nil? || name.empty?
@@ -250,6 +252,8 @@ module Moderate
     # We never let a host hook's exception bubble into a moderation action (a slow
     # or broken mailer must not roll back a decision). On error we audit the failure
     # and return false.
+    #
+    # @api private: the gem's dispatch into config.notify; hosts wire the hook, they don't call this.
     def notify(event_or_name, **payload)
       event = event_or_name.is_a?(Event) ? event_or_name : Event.new(name: event_or_name, **payload)
 
@@ -278,6 +282,8 @@ module Moderate
     # same `case`. Like notify, an audit hook exception is swallowed (turned into a
     # logged warning) so it can never roll back the action it's recording — audit is
     # observational, never load-bearing.
+    #
+    # @api private: the gem's dispatch into config.audit.
     def audit(event_or_name = nil, **payload)
       event = event_or_name.is_a?(Event) ? event_or_name : Event.new(name: event_or_name, **payload)
       config.audit.call(event)
@@ -292,6 +298,8 @@ module Moderate
     # block row's creation time so hosts can apply time-aware teardown without
     # reaching back into the database. Kept as a facade method so Moderate::Block has
     # one call site and doesn't reach into config internals. No-op by default.
+    #
+    # @api private: called by Moderate::Block.
     def run_on_block(blocker:, blocked:, at:)
       config.on_block.call(blocker: blocker, blocked: blocked, at: at)
     end
@@ -306,6 +314,8 @@ module Moderate
     # `announce: false` (the decision services) audits now but leaves the
     # `user_banned` notice to the caller: it returns the event's keywords for
     # `Moderate.announce_ban`, so the notice can wait for the decision's commit.
+    #
+    # @api private: decisions ban through `report.resolve!(ban_user: true)` / `flag.action!(ban_user: true)`, which send the statement of reasons this skips.
     def apply_ban(user:, by:, reason:, announce: true)
       ensure_ban_handler!
       result = config.ban_handler.call(user: user, by: by, reason: reason)
@@ -324,6 +334,8 @@ module Moderate
     end
 
     # The `user_banned` notice for a ban applied with `apply_ban(announce: false)`.
+    #
+    # @api private: used by the decision services.
     def announce_ban(**event)
       notify(:user_banned, **event)
     end
@@ -356,6 +368,8 @@ module Moderate
 
     # Raised before anything changes when a ban is asked for and nothing would apply
     # it. Public so a decision service can check before it takes any lock.
+    #
+    # @api private: used by the decision services.
     def ensure_ban_handler!
       return true if config.ban_handler_configured?
 
@@ -400,6 +414,8 @@ module Moderate
     # the latest committed row on every database. Those reads come after the locks that serialize them
     # (content, and person for a ban), so two decisions never hold gap locks on the
     # reports table at once.
+    #
+    # @api private: the lock order the decision services rely on.
     def with_row_lock(record)
       model = record.class
       return yield unless record.respond_to?(:persisted?) && record.persisted? && model.respond_to?(:lock)
@@ -488,6 +504,8 @@ module Moderate
     # The locale for copy the gem generates itself, falling back to the app's
     # default. Read lazily so a host setting I18n.default_locale after our boot
     # still wins.
+    #
+    # @api private: read config.locale.
     def locale
       config.locale || (defined?(I18n) ? I18n.default_locale : :en)
     end

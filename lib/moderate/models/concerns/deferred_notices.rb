@@ -34,6 +34,8 @@ module Moderate
     # `before_committed!`, then `committed!` or `rolledback!` on every record enrolled
     # in it (and reads `trigger_transactional_callbacks?`, `destroyed?`,
     # `_new_record_before_last_commit` when choosing which instance runs callbacks).
+    #
+    # @api private
     class Envelope
       attr_accessor :_new_record_before_last_commit
 
@@ -64,6 +66,8 @@ module Moderate
 
     # Enroll `notice` in `connection`'s current transaction, or send it now when there
     # is no connection or it has no transaction open.
+    #
+    # @api private: call `record.after_commit_notice { … }`.
     def self.defer(connection, &notice)
       return notice.call unless connection&.current_transaction&.open?
 
@@ -72,6 +76,8 @@ module Moderate
     end
 
     # The connection a service captures at the top of its transaction, before any save.
+    #
+    # @api private
     def self.connection_for(model)
       model.lease_connection
     end

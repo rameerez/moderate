@@ -72,4 +72,25 @@ module Moderate
       payload.to_h.transform_keys(&:to_sym)
     end
   end
+
+  # The event vocabulary, frozen for 1.0. Defined by reopening the class (a
+  # constant inside the `Data.define` block would land on the enclosing scope).
+  # test/public_api_test.rb checks that every name the gem emits is listed here and
+  # that the README lists exactly these.
+  class Event
+    # What `config.notify` receives: moments a person (or an admin channel) is told about.
+    NOTIFY_NAMES = %i[
+      report_received notice_received report_decision affected_user_decision
+      appeal_received appeal_decision user_blocked user_unblocked user_banned
+      content_flagged content_removed
+    ].freeze
+
+    # What `config.audit` receives: the record of every intake, decision, block,
+    # ban and removal, plus the gem's own housekeeping.
+    AUDIT_NAMES = %i[
+      report_received appeal_received report_decision flag_decision appeal_decision
+      flag_filed user_blocked user_unblocked user_banned content_removed
+      notify_failed classification_skipped retention_purged
+    ].freeze
+  end
 end

@@ -87,6 +87,11 @@ module Moderate
     # locate the *report itself* (and vice versa) — GlobalID verifies the purpose on
     # the way back out. See https://github.com/rails/globalid#signed-global-ids.
     # The strings are gem-stable ("moderate_*") and host-agnostic.
+    #
+    # @api private: build a report target with `record.to_moderation_sgid` (or the
+    # `moderate_report_target_path` helper) and read one back with
+    # `Report.locate_signed_reportable`; appeal links with `report.signed_appeal_gid`.
+    # The strings never change (tokens already sent out carry them).
     SIGNED_GLOBAL_ID_PURPOSE = "moderate_report"
     APPEAL_SIGNED_GLOBAL_ID_PURPOSE = "moderate_appeal"
 
@@ -99,6 +104,9 @@ module Moderate
     # receipt for this seeded record", "also block the reported user"). They never
     # persist; the services read them. Kept here so both the model and its services
     # share one definition.
+    #
+    # `skip_received_notice` is public (seed and import scripts set it).
+    # `block_reported_user` is @api private: say `report!(…, block: true)`.
     attr_accessor :skip_received_notice, :block_reported_user
 
     # All actor associations resolve to the HOST's configured user class, read
@@ -240,6 +248,8 @@ module Moderate
     # Resolve a signed token back into the Report it was minted for (used by the
     # public appeal flow, where the appellant arrives via an emailed signed link).
     # Locked to `self` so the token can only ever name a Report.
+    #
+    # @api private: the public appeal form's lookup.
     def self.locate_signed_appeal_report(token)
       return if token.blank?
 
@@ -321,6 +331,8 @@ module Moderate
 
     # --- Signed GIDs for emailed links ---------------------------------------
 
+    # @api private: an expiring token for the reported content. Use the reportable's
+    # `to_moderation_sgid`, which doesn't expire.
     def signed_reportable_gid
       reportable&.to_sgid_param(for: SIGNED_GLOBAL_ID_PURPOSE)
     end
@@ -355,6 +367,8 @@ module Moderate
     # `update_column` skips validations/callbacks on purpose — this is a timestamp
     # stamp, not a content change, and must succeed even on an already-validated row.
     # Idempotent: only sets the first acknowledgement.
+    #
+    # @api private: stamped by the intake services.
     def acknowledge!(at: Time.current)
       update_column(:acknowledged_at, at) if acknowledged_at.blank?
     end
@@ -362,6 +376,8 @@ module Moderate
     # DSA Art. 20(1): open the redress (appeal) window for at least six months after
     # the decision. Stamped once when the report is decided; idempotent so re-running
     # a decision flow doesn't slide the deadline.
+    #
+    # @api private: stamped by the decision services.
     def close_redress_window!(at: resolved_at || Time.current)
       update_column(:appeal_deadline_at, at + APPEAL_WINDOW) if appeal_deadline_at.blank?
     end

@@ -353,7 +353,7 @@ Moderate.configure do |config|
 end
 ```
 
-`audit` fires for **every** event (including the silent ones like `user_blocked` that you usually don't notify on), it's append-only by intent, and it's where DSA **Art. 24 transparency counters** ultimately draw from (notices received, actions taken, appeal outcomes). Wire it once next to `notify` and you have both halves: humans get told, history gets kept.
+`audit` fires for every intake, decision, block, ban and removal (including the silent ones like `user_blocked` that you usually don't notify on), plus the gem's own housekeeping: `report_received`, `appeal_received`, `report_decision`, `flag_decision`, `appeal_decision`, `flag_filed`, `user_blocked`, `user_unblocked`, `user_banned`, `content_removed`, `notify_failed`, `classification_skipped`, `retention_purged` (`Moderate::Event::AUDIT_NAMES`). It's append-only by intent, and it's the trail behind the DSA **Art. 24 transparency counters** (notices received, actions taken, appeal outcomes), which `Moderate.transparency` computes from the moderation tables themselves. Wire it once next to `notify` and you have both halves: humans get told, history gets kept.
 
 > [!NOTE]
 > Same envelope (`name` / `subject` / `actor` / `recipients` / `payload` / `to_h`), two destinations. Keep both hooks fast and side-effect-light; push real work (emails, HTTP, heavy writes) to background jobs.

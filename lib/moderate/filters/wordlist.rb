@@ -77,6 +77,10 @@ module Moderate
       # at runtime, so compile them ONCE per process and memoize on the class.
       # (config.additional_words / excluded_words are layered in per-call, since the
       # host can in principle reconfigure between calls — and they're cheap.)
+      #
+      # @api private (as are reset!, compile_bundled_patterns, compile_pair,
+      # compact_source and the normalization constants): the public surface of an
+      # adapter is `classify` and `synchronous?`.
       def self.patterns
         @patterns ||= compile_bundled_patterns
       end

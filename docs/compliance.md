@@ -64,7 +64,7 @@ The statement must include, at minimum: the **restriction imposed** (and its sco
 | State the **specific restriction** imposed and its scope (content removed? account suspended?). | Every resolution records its action (`remove_content:`, `ban_user:`) and emits `affected_user_decision` with that action in `event.payload`. | **[gem]** | `test/services/moderate/resolve_report_test.rb` |
 | State the **facts and circumstances** relied on. | The immutable **evidence snapshot** taken at report time travels with the decision; the moderator's mandatory `note:` is the human-readable ground. | **[gem]** | `test/models/moderate/report_test.rb` |
 | State whether **automated means** were used in detection or decision — Art. 17(3)(c). | Reports/flags carry their `source` (`text_filter`, `image_filter`, `external_classifier`, or `manual`). A decision acting on an auto-`Moderate::Flag` is flagged as automated-means in the `affected_user_decision` payload; a human report is not. | **[gem]** | `test/services/moderate/resolve_report_test.rb` |
-| State the **legal or contractual ground**. | For DSA notices, the `legal_reason` (from `Moderate::DSA_LEGAL_REASONS`) is the legal ground; for in-app reports, the community `category` + your `note:` is the contractual (terms-of-service) ground. Both ride in the decision payload. | **[gem + you]** | `test/services/moderate/resolve_report_test.rb` |
+| State the **legal or contractual ground**. | For DSA notices, the `legal_reason` (from `Moderate::Report::DSA_LEGAL_REASONS`) is the legal ground; for in-app reports, the community `category` + your `note:` is the contractual (terms-of-service) ground. Both ride in the decision payload. | **[gem + you]** | `test/services/moderate/resolve_report_test.rb` |
 | Communicate **redress** options (internal complaint, out-of-court, judicial). | The `affected_user_decision` event carries the appeal entry point; you render the redress text in your decision email (the gem ships the data; the copy is yours, because it names your jurisdiction). | **[gem + you]** | `test/services/moderate/resolve_report_test.rb` |
 | Deliver the statement to the **affected recipient** (the content owner), not just the reporter. | Two distinct events fire: `report_decision` → the **reporter**; `affected_user_decision` → the **content owner** (resolved via the reportable's `reported_owner`). You wire both. | **[gem + you]** | `test/services/moderate/resolve_report_test.rb` |
 
@@ -98,7 +98,7 @@ The statement must include, at minimum: the **restriction imposed** (and its sco
 | **Publish** the report (at least annually). | The gem produces the numbers; **you** publish them (a `/transparency` page, a PDF, whatever) — only you know your reporting period and format. | **[you]** | manual: render `Moderate.transparency(from:, to:)` |
 
 > [!TIP]
-> `Moderate.transparency(from: 1.year.ago, to: Time.current)` returns a plain hash you can drop straight into a view, a JSON endpoint, or a rake task that emails it to you each January. The counters are the regulator-aligned ones — same taxonomy as the notice form (`Moderate::DSA_LEGAL_REASONS`) — so the published numbers line up with the intake.
+> `Moderate.transparency(from: 1.year.ago, to: Time.current)` returns a plain hash you can drop straight into a view, a JSON endpoint, or a rake task that emails it to you each January. The counters are the regulator-aligned ones — same taxonomy as the notice form (`Moderate::Report::DSA_LEGAL_REASONS`) — so the published numbers line up with the intake.
 
 ---
 

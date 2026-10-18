@@ -68,6 +68,7 @@ module Moderate
       configuration.rb engine.rb macros.rb
       text.rb text_validator.rb word_list.rb
     ].freeze
+    private_constant :LIB_ROOT, :MODERATE_LIB, :ZEITWERK_IGNORED
 
     initializer "moderate.autoload", before: :set_autoload_paths do
       loader = Rails.autoloaders.main

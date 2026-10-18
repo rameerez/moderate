@@ -455,6 +455,77 @@ end
 
 Reportable classes are auto-discovered from the `has_reportable_content` macro (or `include Moderate::Reportable`) — no manual registry.
 
+## What is public
+
+From 1.0 on, everything listed here keeps its name, its arguments and its meaning until 2.0. Anything not listed (and anything tagged `@api private` in the source) may change in any release. `test/public_api_test.rb` reads this section and fails if a name listed here doesn't exist, if a public `Moderate.*` method or configuration key isn't listed, or if the event lists drift from what the gem emits.
+
+#### Declarations (`Moderate::Macros`, on every Active Record model)
+
+`#has_reporting_and_blocking` · `#has_reportable_content` (`*fields, labels:`) · `#moderates` (`*fields, mode:, with:`). The include forms are equivalent: `Moderate::Actor`; `Moderate::Reportable` with `Moderate::Reportable::ClassMethods#reportable_fields`; `Moderate::ContentFilterable` with `Moderate::ContentFilterable::ClassMethods#moderates_fields`.
+
+#### `Moderate::Actor` (your user model)
+
+`#report!` (`reportable, category:, details: nil, block: false, field:, …`) · `#block!` · `#unblock!` · `#blocks?` · `#blocked_by?` · `#blocked_with?`
+
+#### `Moderate::Reportable` (your content models)
+
+What you define (each has a default): `#reported_owner` (required in practice) · `#moderation_label` · `#moderation_snapshot` · `#moderation_content_type` · `#report_visible_to?` · `#remove_reported_field!` · `#removable_reported_field?` · `#moderation_subject_url` · `#moderation_return_path` · `#moderation_admin_path`.
+What you get: `#reports` · `#open_reports` · `#reported?` · `#flagged?` · `#moderation_flags` · `#pending_moderation_flags` · `#to_moderation_sgid` · `#reportable_field_label` · `#reportable_field_allowed?` · `Moderate::Reportable::ClassMethods#reportable_field_label`.
+
+#### `Moderate::ContentFilterable` (seams you may override)
+
+`#moderation_field_value` · `#moderation_field_changed_for_commit?` · `#moderation_field_committed`
+
+#### `Moderate` (the module)
+
+`.configure` · `.config` · `.configuration` · `.reset!` · `.user_class` · `.reportable_classes` · `.classify` · `.filter_policy_for` · `.register_adapter` · `.blocked_ids_for` · `.responsible_user` · `.reportable_field_label` · `.taxonomy_label` · `.transparency` · `.purge` · `Moderate::TAXONOMY_LABEL_SCOPES` · `Moderate::VERSION`
+
+#### `Moderate::Report`
+
+Queries: `.pending` · `.open` · `.actioned` · `.dismissed` · `.recent_first` · `.report_categories` · `.category_options` · `.locate_signed_reportable`.
+Decisions: `#resolve!` (`by:, note:, remove_content: false, ban_user: false, resolution_basis: "terms"`) · `#dismiss!` (`by:, note:`).
+Readers: `#pending?` · `#open?` · `#closed?` · `#actioned?` · `#dismissed?` · `#dsa?` · `#community?` · `#anonymous_notice?` · `#automated_processing_used?` · `#reported_field_label` · `#reportable_label` · `#notifier_label` · `#reported_content_text` · `#subject_url_list` · `#safe_subject_url` · `#safe_subject_urls` · `#safe_subject_url_for` · `#signed_appeal_gid` · `#skip_received_notice` · `#appeals` · `#flags`.
+Value lists: `::DEFAULT_CATEGORIES` · `::DSA_LEGAL_REASONS` · `::EU_COUNTRY_CODES` · `::CONTENT_TYPES` · `::RESOLUTION_BASES` · `::STATUSES` · `::INTAKE_KINDS` · `::APPEAL_WINDOW` · `::MESSAGE_MAX_LENGTH`.
+
+#### `Moderate::Flag`
+
+`.pending` · `.actioned` · `.dismissed` · `.recent_first` · `.flag_for_review!` (`record, field:, by:, note: nil`) · `.flag!` (`flaggable:, field:, owner:, source:, mode:, excerpt:, categories:, scores:, context:`, for a host's own classifier pipeline) · `.sources` · `#action!` (`note:, by: nil, remove_content:, ban_user:, resolution_basis:`) · `#resolve!` (its alias) · `#dismiss!` (`note:, by: nil`) · `#pending?` · `#closed?` · `#report` · `#field_label` · `#flaggable_label` · `::STATUSES` · `::SOURCES` · `::MODES`
+
+#### `Moderate::Appeal`
+
+`.pending` · `.open` · `.upheld` · `.rejected` · `.recent_first` · `#uphold!` (`by:, note:`) · `#reject!` (`by:, note:`) · `#pending?` · `#open?` · `#closed?` · `#upheld?` · `#rejected?` · `::STATUSES` · `::SOURCES`
+
+#### `Moderate::Block`
+
+`.block!` (`blocker:, blocked:`) · `.unblock!` (`blocker:, blocked:`) · `.between` · `.recent_first`. Read the edge set with `Moderate.blocked_ids_for(user)`: always a relation of user ids, `.ids` for an Array.
+
+#### Services (the long form of the decision methods, same keywords)
+
+`Moderate::Services::ResolveReport` (`.new(report, by:)`, `#resolve!`, `#dismiss!`) · `Moderate::Services::ResolveFlag` (`.new(flag, by:)`, `#action!`, `#dismiss!`) · `Moderate::Services::ResolveAppeal` (`.new(appeal, by:)`, `#uphold!`, `#reject!`) · `Moderate::Services::IntakeReport` · `Moderate::Services::IntakeNotice` · `Moderate::Services::IntakeAppeal` (each `#save`).
+
+#### Jobs, adapters and value objects
+
+`Moderate::ClassifyJob` (`perform_later(record, field)`; `::UPLOAD_WAIT`, `::UPLOAD_ATTEMPTS`) · the adapter contract: any object with `classify(value)` returning a `Moderate::Result` (or a Hash of its fields), optionally `synchronous?`; `Moderate::Filters::Base` to inherit from · `Moderate::Filters::Wordlist` (`:wordlist`) · `Moderate::Result` (`.allowed`, `#allowed?`, `#flagged?`, `#categories`, `#scores`, `#labels`, `#source`, `#raw`) · `Moderate::Label` (`#slug`, `#canonical?`, `::CATEGORIES`) · `Moderate::Error` · `Moderate::ConfigurationError` · the 0.x validator `validates :field, moderate: true`.
+
+#### Views and controllers
+
+Helpers (`Moderate::EngineHelper`): `#moderate_report_link` · `#report_link` · `#moderate_report_target_path`, and the seam `#moderate_current_viewer`.
+Admin decisions (`Moderate::Moderation`, a controller concern): `#resolve` · `#dismiss` · `#uphold` · `#reject`, and the seams `#moderation_record` · `#moderation_actor` · `#moderation_note` · `#moderation_decision_params` · `#moderation_redirect_path`.
+The engine (`mount Moderate::Engine => "/trust"`): `new_notice_path` / `notices_path`, `new_appeal_path` / `appeals_path` (`token:`, `source:`), `transparency_path`; `record.after_commit_notice` (`Moderate::DeferredNotices#after_commit_notice`) on the gem's records. Generators: `moderate:install`, `moderate:views`. Rake: `moderate:purge`.
+
+#### Configuration (`Moderate.configure do |config| … end`)
+
+`config.user_class` · `config.default_filter_mode` · `config.filter_adapter` · `config.additional_words` · `config.excluded_words` · `config.report_categories` · `config.register_adapter` · `config.filter` · `config.audit` · `config.notify` · `config.on_block` · `config.ban_handler` · `config.locale` · `config.parent_controller` · `config.notice_form_enabled` · `config.notice_rate_limit` · `config.notice_turnstile_site_key` · `config.notice_turnstile_secret_key` · `config.notice_captcha_verifier` · `config.notice_guard` · `config.notice_human_verification_skip_if` · `config.appeal_form_enabled` · `config.appeal_rate_limit` · `config.appeal_guard` · `config.appeal_human_verification_skip_if` · `config.appeal_return_path` · `config.transparency_report_enabled`.
+Read-only: `config.adapters` · `config.filters` · `config.adapter_for` · `config.adapter_registered?` · `config.adapter_async?` · `config.ban_handler_configured?` · `config.validate!`.
+
+#### Events and the notifier contract
+
+Notify events (`Moderate::Event::NOTIFY_NAMES`): `:report_received` · `:notice_received` · `:report_decision` · `:affected_user_decision` · `:appeal_received` · `:appeal_decision` · `:user_blocked` · `:user_unblocked` · `:user_banned` · `:content_flagged` · `:content_removed`
+
+Audit events (`Moderate::Event::AUDIT_NAMES`): `:report_received` · `:appeal_received` · `:report_decision` · `:flag_decision` · `:appeal_decision` · `:flag_filed` · `:user_blocked` · `:user_unblocked` · `:user_banned` · `:content_removed` · `:notify_failed` · `:classification_skipped` · `:retention_purged`
+
+Every hook receives one `Moderate::Event`: `#name` · `#subject` · `#actor` · `#recipients` · `#payload` (always with `:summary`) · `#occurred_at` · `#id` · `#summary` · `#to_h`. The contract for `config.notify`: it is called once per event, after the transaction that caused it commits (never for a rolled-back change); a truthy return means "delivered" (the gem stamps `decision_notified_at` / `affected_user_notified_at` and, for a DSA notice, treats the Art. 16(4) receipt as sent); an exception is swallowed, audited as `:notify_failed`, and never rolls back the decision. `config.audit` follows the same rules and its return value is ignored. Payload keys may be added in a minor release, never removed or renamed.
+
 ## Upgrading between 1.0 betas
 
 **1.0.0.beta4 adds a migration.** After upgrading, run `bin/rails db:migrate`: the engine adds the gem's own `db/migrate` to your app's migration paths, so it runs with yours. (If your app holds copies of the gem's migrations, `*.moderate.rb` files from `bin/rails moderate:install:migrations`, the engine adds nothing and the copies run instead: run `bin/rails moderate:install:migrations` to copy the new one, then migrate.) A fresh install from 1.0.0.beta4 on gets the same migration from `rails generate moderate:install`, copied right after the tables, so it holds copies: after each later upgrade, run `bin/rails moderate:install:migrations`, then migrate. It gives `moderate_flags` a `pending_key` with a unique index, so at most one flag is pending per content and field. If flags filed before the upgrade would break that index, the migration stops and lists them; close all but one of each and run it again. On MySQL the key column is `utf8mb4_bin`, so keys compare by case; that collation still ignores trailing spaces (PAD SPACE), which is why `moderate` strips a flag's `field`, and why a legacy flag whose field ends in a space can be one of those the migration lists. See [`CHANGELOG.md`](CHANGELOG.md) for what each beta changes.
