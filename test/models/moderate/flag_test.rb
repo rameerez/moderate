@@ -229,6 +229,15 @@ module Moderate
       assert_predicate Moderate::Flag.flag_for_review!(comment, field: :body, by: nil), :previously_new_record?
     end
 
+    test "flag_for_review! locks the row without touching the caller's object" do
+      comment = Comment.create!(user: @user, body: "hello")
+      comment.body = "an unsaved edit"
+
+      Moderate::Flag.flag_for_review!(comment, field: :body, by: nil)
+
+      assert_equal "an unsaved edit", comment.body, "not reloaded, and not refused for its unsaved change"
+    end
+
     test "flag_for_review! needs a field and a saved record" do
       assert_raises(ArgumentError) { Moderate::Flag.flag_for_review!(@user, field: "", by: nil) }
       assert_raises(ArgumentError) { Moderate::Flag.flag_for_review!(Comment.new(user: @user), field: :body, by: nil) }

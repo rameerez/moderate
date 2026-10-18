@@ -373,10 +373,17 @@ module Moderate
     # block when there's no saved row to lock. Enforcement takes the CONTENT's lock
     # before the report's, everywhere (flag → content → report), so two decisions
     # about the same content serialize instead of enforcing twice or deadlocking.
-    def with_row_lock(record, &block)
-      return yield unless record.respond_to?(:with_lock) && record.persisted?
+    #
+    # The lock is taken by query, not with `record.with_lock`, so the caller's object
+    # is neither reloaded nor refused for carrying unsaved changes.
+    def with_row_lock(record)
+      model = record.class
+      return yield unless record.respond_to?(:persisted?) && record.persisted? && model.respond_to?(:lock)
 
-      record.with_lock(&block)
+      model.transaction do
+        model.unscoped.lock.where(model.primary_key => record.id).ids
+        yield
+      end
     end
 
     # --- Blocking SSOT --------------------------------------------------------
