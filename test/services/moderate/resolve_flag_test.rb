@@ -253,6 +253,17 @@ module Moderate
         assert_equal 1, ModerateTestRecorder.notifications_named(:affected_user_decision).size
       end
 
+      test "a flag on other content doesn't open the field whitelist" do
+        flag = create_flag(field: "image")
+        other = Comment.create!(user: flag.owner, body: "elsewhere")
+
+        report = Moderate::Report.new(reportable: other, reported_field: "image", category: "other",
+                                      message: "x", good_faith_confirmed: true, escalated_from_flag: flag)
+
+        assert_not report.valid?
+        assert_predicate report.errors[:reported_field], :any?
+      end
+
       test "a new kind of enforcement on the same content is a new decision" do
         Moderate.configure { |config| config.ban_handler = ModerateTestRecorder.method(:ban_handler) }
         moderator = User.create!(name: "Mod")

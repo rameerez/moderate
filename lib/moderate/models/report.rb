@@ -567,7 +567,7 @@ module Moderate
     # isn't a managed reportable), we don't constrain the field.
     def reportable_field_must_be_allowed
       return if reportable.blank?
-      return if escalated_from_flag && escalated_from_flag.field.to_s == reported_field.to_s
+      return if escalated_from_this_flag?
       return unless reportable.respond_to?(:reportable_field_allowed?)
       return if reportable.reportable_field_allowed?(reported_field)
 
@@ -587,6 +587,13 @@ module Moderate
 
       message = I18n.t("moderate.errors.not_reportable_by_reporter", default: "isn't something you can report")
       errors.add(:reportable, message)
+    end
+
+    # The report was opened from a flag on THIS content and field (Flag#action!).
+    def escalated_from_this_flag?
+      flag = escalated_from_flag
+      flag.is_a?(Moderate::Flag) && flag.field.to_s == reported_field.to_s &&
+        flag.flaggable_type == reportable_type && flag.flaggable_id.to_s == reportable_id.to_s
     end
 
     def visibility_checked?
