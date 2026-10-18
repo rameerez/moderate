@@ -400,6 +400,25 @@ module Moderate
       Moderate::Services::ResolveReport.new(self, by: by).dismiss!(note: note)
     end
 
+    # DSA Art. 20(2): the (at least) six-month appeal window starts when the person
+    # is INFORMED of the decision, not when it was taken. The decision stamps
+    # `appeal_deadline_at` from its own time; a decision notice that is actually
+    # delivered stamps when (`decision_notified_at` for the reporter,
+    # `affected_user_notified_at` for the person whose content or account it was)
+    # and moves the deadline to six months after that, never earlier. A notice that
+    # never goes out (no notify hook) leaves the decision-time deadline.
+    #
+    # @api private: called by the decision services when the notify hook delivers.
+    def record_notified!(column, at: Time.current)
+      update_columns(column => at, appeal_deadline_at: appeal_deadline_if_notified_at(at))
+    end
+
+    # The appeal deadline once a notice delivered at `at` counts: the later of the
+    # decision-time deadline and `at` + APPEAL_WINDOW. What a decision notice says.
+    def appeal_deadline_if_notified_at(at)
+      [appeal_deadline_at, at + APPEAL_WINDOW].compact.max
+    end
+
     # Under a legal hold right now (Moderate.hold)? The purge leaves it alone.
     def held?(at: Time.current)
       held_until.present? && held_until > at

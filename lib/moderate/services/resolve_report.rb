@@ -264,7 +264,7 @@ module Moderate
           )
         )
 
-        report.update_column(:decision_notified_at, Time.now) if delivered
+        report.record_notified!(:decision_notified_at) if delivered
       end
 
       # affected_user_decision → the content owner: the DSA Art. 17 statement of
@@ -288,7 +288,7 @@ module Moderate
           )
         )
 
-        report.update_column(:affected_user_notified_at, Time.now) if delivered
+        report.record_notified!(:affected_user_notified_at) if delivered
       end
 
       # The shared statement-of-reasons payload (Art. 17(3)). Every field the law
@@ -321,7 +321,8 @@ module Moderate
           # already participated.
           automated: automated_processing_used?,
           reason: report.resolution_note,
-          appeal_deadline_at: report.appeal_deadline_at
+          # Art. 20(2): six months from being informed, i.e. from this notice.
+          appeal_deadline_at: report.appeal_deadline_if_notified_at(Time.current)
         }.compact
       end
 
