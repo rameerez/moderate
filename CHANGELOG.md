@@ -120,6 +120,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   outermost commit; a rolled-back savepoint drops only its own; under a parent that isn't
   joinable (including the wrapper of Rails' transactional tests) it's sent at the
   savepoint's release, when after_commit runs too; with no transaction open, at once.
+  Under multiple databases or shards a notice follows the connection its record was last
+  saved on (the record remembers its pool at save and destroy), not whichever is current
+  when it's queued: a change saved on shard A is announced when A commits, even if the
+  notice was queued inside a `connected_to` block on shard B.
   Nothing lives on a record instance or on the thread. A host that decides, reports or
   blocks inside a transaction of its own and rolls it back tells nobody; Rails 7.1, 7.2 and
   8.x behave the same. `Moderate.apply_ban(…, announce: false)` +
