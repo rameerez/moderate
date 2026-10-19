@@ -13,6 +13,7 @@ class ChangeModerateClassificationsRecordIdToStringTest < ActiveSupport::TestCas
   setup do
     @migration = ChangeModerateClassificationsRecordIdToString.new
     @migration.verbose = false
+    migrate(:up) # the schema the suite expects, whatever ran before
   end
 
   teardown do
