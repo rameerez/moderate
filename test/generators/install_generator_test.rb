@@ -35,8 +35,10 @@ module Moderate
       code = File.read(create).lines.grep_v(/\A\s*#/).join
       assert_no_match(/pending_key/, code, "the template leaves pending_key to the gem")
       assert_no_match(/redacted_at|held_until|covered_by_report_id|moderate_classifications/, code, "and the 1.0 columns and table")
-      header = "# frozen_string_literal: true\n# This migration comes from moderate (originally 20261018200000)\n"
-      gem_migration = File.read(GEM_MIGRATION).delete_prefix("# frozen_string_literal: true\n")
+      # As `bin/rails moderate:install:migrations` writes it: the magic comment and its
+      # blank line, then where it came from, then the migration.
+      header = "# frozen_string_literal: true\n\n# This migration comes from moderate (originally 20261018200000)\n"
+      gem_migration = File.read(GEM_MIGRATION).delete_prefix("# frozen_string_literal: true\n\n")
       assert_equal header + gem_migration, File.read(upgrade)
     end
 

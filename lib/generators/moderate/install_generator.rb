@@ -66,11 +66,15 @@ module Moderate
 
       private
 
-      # As Rails' engine copy writes it: magic comments first, then where it came from.
+      # As Rails' engine copy writes it: magic comments first (with the blank line after
+      # them that the source has, which RuboCop's omakase style asks for), then where it
+      # came from, then the rest.
       def copied_migration(source, version)
         body = File.read(source)
         magic = body[/\A(?:#.*\b(?:coding|frozen_string_literal):.*\n)+/].to_s
-        "#{magic}# This migration comes from moderate (originally #{version})\n#{body.delete_prefix(magic)}"
+        rest = body.delete_prefix(magic)
+        magic += "\n" if !magic.empty? && rest.start_with?("\n")
+        "#{magic}# This migration comes from moderate (originally #{version})\n#{rest.delete_prefix("\n")}"
       end
 
       def migration_version

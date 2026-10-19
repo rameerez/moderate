@@ -12,6 +12,7 @@ group :development do
   gem "rubocop", "~> 1.0"
   gem "rubocop-minitest", "~> 0.35"
   gem "rubocop-performance", "~> 1.0"
+  gem "rubocop-rails-omakase", require: false
   gem "standard"
 end
 

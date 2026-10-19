@@ -4,6 +4,39 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-10-19
+
+### Upgrading from 1.0.0
+
+- **One migration: run `bin/rails moderate:install:migrations` (if your app holds copies of
+  the gem's migrations, `*.moderate.rb`; boot tells you if you forget), then
+  `bin/rails db:migrate`.** `db/migrate/20261019120000_change_moderate_classifications_record_id_to_string.rb`
+  makes `moderate_classifications.record_id` a string and caps it and `digest` at 64
+  characters (which keeps the table's unique index within MySQL's 3072-byte key limit).
+  Existing rows keep their ids, as strings. Polymorphic ids compare bytewise on every
+  database (on MySQL and Trilogy the column is `utf8mb4_bin`, as `pending_key` is). Guarded
+  (a no-op when the column is already a string) and reversible: `down` turns `record_id`
+  back into your primary-key type, and first refuses with `ActiveRecord::IrreversibleMigration`,
+  naming how many, while any row holds an id that type can't hold (for bigint: anything but
+  an integer within the signed 64-bit range, negatives included; for uuid: anything but the
+  canonical 8-4-4-4-12 form, in either case); delete those
+  classification rows (bookkeeping, re-created on the next classification) and run it
+  again.
+
+### Fixed
+
+- **Attachment classification works in apps that mix uuid and bigint primary keys.**
+  1.0.0 created `moderate_classifications.record_id` with the app's one primary-key type,
+  so records of the other kind couldn't be claimed or marked classified. It is a string
+  now (above).
+- **The migrations an app receives pass a Rails omakase app's RuboCop.** The gem's
+  migrations and the install template use omakase's array-bracket spacing, and the copies
+  `rails generate moderate:install` writes keep the blank line after the magic comment,
+  as `bin/rails moderate:install:migrations` (Rails' own copy) does. A test runs
+  rubocop-rails-omakase on both kinds of copies and on the generated initializer, so a host
+  needs no exclude for them. The README also explains the `.moderate` suffix Rails adds to
+  copied migrations' names in `db:migrate:status`.
+
 ## [1.0.0] - 2026-10-19
 
 The first stable release. The public API is frozen until 2.0: everything listed in the

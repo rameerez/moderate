@@ -2,6 +2,7 @@
 
 require "test_helper"
 require Moderate::Engine.root.join("db/migrate/20261018210000_add_retention_and_classifications_to_moderate_tables").to_s
+require Moderate::Engine.root.join("db/migrate/20261019120000_change_moderate_classifications_record_id_to_string").to_s
 
 # 1.0's upgrade migration (db/migrate/…_add_retention_and_classifications_to_moderate_tables.rb):
 # down and up again on the test database, with a row a beta host has. Not
@@ -17,7 +18,10 @@ class AddRetentionAndClassificationsToModerateTablesTest < ActiveSupport::TestCa
   end
 
   teardown do
-    migrate(:up) # whatever happened, the schema the suite expects
+    migrate(:up) # whatever happened, the schema the suite expects: with the later gem
+    # migrations too, since `up` recreated moderate_classifications in its 1.0.0 shape
+    ChangeModerateClassificationsRecordIdToString.new.tap { |m| m.verbose = false }.migrate(:up)
+    Moderate::Classification.reset_column_information
   end
 
   test "down removes the columns, the hold index and the classifications table; up adds them back, keeping rows" do
