@@ -13,9 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bin/rails db:migrate`.** `db/migrate/20261019120000_change_moderate_classifications_record_id_to_string.rb`
   makes `moderate_classifications.record_id` a string and caps it and `digest` at 64
   characters (which keeps the table's unique index within MySQL's 3072-byte key limit).
-  Existing rows keep their ids, as strings. Guarded (a no-op when the column is already a
-  string) and reversible: `down` turns `record_id` back into your primary-key type, which
-  fails if rows of the other key kind exist (delete those bookkeeping rows first).
+  Existing rows keep their ids, as strings. Polymorphic ids compare bytewise on every
+  database (on MySQL and Trilogy the column is `utf8mb4_bin`, as `pending_key` is). Guarded
+  (a no-op when the column is already a string) and reversible: `down` turns `record_id`
+  back into your primary-key type, and first refuses with `ActiveRecord::IrreversibleMigration`,
+  naming how many, while any row holds an id of the other key kind; delete those
+  classification rows (bookkeeping, re-created on the next classification) and run it
+  again.
 
 ### Fixed
 
