@@ -17,7 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   database (on MySQL and Trilogy the column is `utf8mb4_bin`, as `pending_key` is). Guarded
   (a no-op when the column is already a string) and reversible: `down` turns `record_id`
   back into your primary-key type, and first refuses with `ActiveRecord::IrreversibleMigration`,
-  naming how many, while any row holds an id of the other key kind; delete those
+  naming how many, while any row holds an id that type can't hold (for bigint: anything but
+  an integer within the signed 64-bit range, negatives included; for uuid: anything but the
+  canonical 8-4-4-4-12 form, in either case); delete those
   classification rows (bookkeeping, re-created on the next classification) and run it
   again.
 

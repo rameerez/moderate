@@ -22,8 +22,11 @@ class ChangeModerateClassificationsRecordIdToString < ActiveRecord::Migration[8.
     self.table_name = "moderate_classifications"
   end
 
-  UUID = /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
-  BIGINT = /\A\d+\z/
+  # The canonical 8-4-4-4-12 form, either case: what Rails writes for a uuid key. (Other
+  # forms PostgreSQL accepts as uuid input, braces or no hyphens, aren't expected here.)
+  UUID = /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/i
+  BIGINT = /\A-?\d+\z/
+  BIGINT_RANGE = (-(2**63))..((2**63) - 1)
 
   def up
     return unless table_exists?(:moderate_classifications)
@@ -49,18 +52,30 @@ class ChangeModerateClassificationsRecordIdToString < ActiveRecord::Migration[8.
   # reverse): rolling back would fail midway on PostgreSQL and MySQL, or keep the text
   # in an integer column on SQLite.
   def refuse_unfit_ids!(key_type)
-    fits = key_type == :uuid ? UUID : BIGINT
-    Classification.reset_column_information
-    unfit = 0
-    Classification.in_batches(of: 1000) do |batch|
-      unfit += batch.pluck(:record_id).count { |id| !fits.match?(id.to_s) }
-    end
+    unfit = unfit_ids_count(key_type)
     return if unfit.zero?
 
     raise ActiveRecord::IrreversibleMigration,
       "#{unfit} moderate_classifications row(s) hold a record_id that isn't a #{key_type} id, so record_id " \
       "can't go back to #{key_type}. Delete those classification rows first; they are bookkeeping, " \
       "re-created on the next classification."
+  end
+
+  def unfit_ids_count(key_type)
+    Classification.reset_column_information
+    unfit = 0
+    Classification.in_batches(of: 1000) do |batch|
+      unfit += batch.pluck(:record_id).count { |id| !fits?(id.to_s, key_type) }
+    end
+    unfit
+  end
+
+  # A uuid in the canonical form; a bigint: an optionally negative integer within the
+  # signed 64-bit range (a longer one would fail the conversion, not this refusal).
+  def fits?(id, key_type)
+    return UUID.match?(id) if key_type == :uuid
+
+    BIGINT.match?(id) && BIGINT_RANGE.cover?(id.to_i)
   end
 
   def mysql?

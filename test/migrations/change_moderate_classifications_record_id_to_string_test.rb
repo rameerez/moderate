@@ -34,6 +34,34 @@ class ChangeModerateClassificationsRecordIdToStringTest < ActiveSupport::TestCas
     assert_not_equal :string, record_id_type
   end
 
+  test "a negative bigint id fits: the rollback keeps it" do
+    Moderate::Classification.create!(record_type: "Comment", record_id: "-5", field: "photo", digest: "c" * 16)
+
+    migrate(:down)
+
+    assert_equal(-5, Moderate::Classification.find_by(digest: "c" * 16).record_id)
+  end
+
+  test "a decimal id beyond the signed 64-bit range is refused, with the count" do
+    Moderate::Classification.create!(record_type: "Comment", record_id: (2**63).to_s, field: "photo", digest: "c" * 16)
+
+    error = assert_raises(ActiveRecord::IrreversibleMigration) { migrate(:down) }
+    assert_match "1 moderate_classifications row(s)", error.message
+    assert_equal :string, record_id_type
+  end
+
+  test "in a uuid-keyed app, a canonical uuid of either case fits and a bigint-looking id is refused" do
+    @migration.stubs(:key_type_setting).returns(:uuid)
+    assert @migration.send(:fits?, SecureRandom.uuid.upcase, :uuid)
+    assert @migration.send(:fits?, SecureRandom.uuid, :uuid)
+    assert_not @migration.send(:fits?, "{#{SecureRandom.uuid}}", :uuid)
+    Moderate::Classification.create!(record_type: "Comment", record_id: "42", field: "photo", digest: "c" * 16)
+
+    error = assert_raises(ActiveRecord::IrreversibleMigration) { migrate(:down) }
+    assert_match "isn't a uuid id", error.message
+    assert_equal :string, record_id_type
+  end
+
   test "on MySQL record_id compares bytewise" do
     unless ActiveRecord::Base.connection.adapter_name.downcase.match?(/mysql|trilogy/)
       skip "MySQL only: elsewhere a string column compares bytes"
