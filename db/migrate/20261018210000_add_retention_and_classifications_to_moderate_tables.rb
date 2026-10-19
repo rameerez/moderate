@@ -98,6 +98,6 @@ class AddRetentionAndClassificationsToModerateTables < ActiveRecord::Migration[8
   def key_types
     config = Rails.configuration.generators
     setting = config.options[config.orm][:primary_key_type]
-    [setting || :primary_key, setting || :bigint]
+    [ setting || :primary_key, setting || :bigint ]
   end
 end

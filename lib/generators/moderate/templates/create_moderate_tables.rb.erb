@@ -70,12 +70,12 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
       t.timestamps
     end
 
-    add_index :moderate_reports, [:reportable_type, :reportable_id], name: "index_moderate_reports_on_reportable"
-    add_index :moderate_reports, [:reported_user_id, :status], name: "index_moderate_reports_on_reported_user_id_and_status"
-    add_index :moderate_reports, [:reporter_id, :created_at], name: "index_moderate_reports_on_reporter_id_and_created_at"
-    add_index :moderate_reports, [:status, :created_at], name: "index_moderate_reports_on_status_and_created_at"
-    add_index :moderate_reports, [:intake_kind, :created_at], name: "index_moderate_reports_on_intake_kind_and_created_at"
-    add_index :moderate_reports, [:legal_reason, :created_at], name: "index_moderate_reports_on_legal_reason_and_created_at"
+    add_index :moderate_reports, [ :reportable_type, :reportable_id ], name: "index_moderate_reports_on_reportable"
+    add_index :moderate_reports, [ :reported_user_id, :status ], name: "index_moderate_reports_on_reported_user_id_and_status"
+    add_index :moderate_reports, [ :reporter_id, :created_at ], name: "index_moderate_reports_on_reporter_id_and_created_at"
+    add_index :moderate_reports, [ :status, :created_at ], name: "index_moderate_reports_on_status_and_created_at"
+    add_index :moderate_reports, [ :intake_kind, :created_at ], name: "index_moderate_reports_on_intake_kind_and_created_at"
+    add_index :moderate_reports, [ :legal_reason, :created_at ], name: "index_moderate_reports_on_legal_reason_and_created_at"
     add_index :moderate_reports, :notifier_email, name: "index_moderate_reports_on_notifier_email"
     add_index :moderate_reports, :resolved_at, name: "index_moderate_reports_on_resolved_at"
     add_index :moderate_reports, :appeal_deadline_at, name: "index_moderate_reports_on_appeal_deadline_at"
@@ -106,7 +106,7 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
       t.timestamps
     end
 
-    add_index :moderate_blocks, [:blocker_id, :blocked_id], unique: true, name: "index_moderate_blocks_on_blocker_id_and_blocked_id"
+    add_index :moderate_blocks, [ :blocker_id, :blocked_id ], unique: true, name: "index_moderate_blocks_on_blocker_id_and_blocked_id"
     add_index :moderate_blocks, :created_at, name: "index_moderate_blocks_on_created_at"
 
     add_check_constraint :moderate_blocks,
@@ -147,9 +147,9 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
       t.timestamps
     end
 
-    add_index :moderate_flags, [:flaggable_type, :flaggable_id, :field], name: "index_moderate_flags_on_target_and_field"
-    add_index :moderate_flags, [:owner_id, :status], name: "index_moderate_flags_on_owner_id_and_status"
-    add_index :moderate_flags, [:status, :created_at], name: "index_moderate_flags_on_status_and_created_at"
+    add_index :moderate_flags, [ :flaggable_type, :flaggable_id, :field ], name: "index_moderate_flags_on_target_and_field"
+    add_index :moderate_flags, [ :owner_id, :status ], name: "index_moderate_flags_on_owner_id_and_status"
+    add_index :moderate_flags, [ :status, :created_at ], name: "index_moderate_flags_on_status_and_created_at"
 
     # moderate_flags.pending_key (at most one PENDING flag per content + field) is NOT
     # here: the gem's own AddPendingKeyToModerateFlags creates it, for a fresh install
@@ -188,8 +188,8 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
       t.timestamps
     end
 
-    add_index :moderate_appeals, [:report_id, :created_at], name: "index_moderate_appeals_on_report_id_and_created_at"
-    add_index :moderate_appeals, [:status, :created_at], name: "index_moderate_appeals_on_status_and_created_at"
+    add_index :moderate_appeals, [ :report_id, :created_at ], name: "index_moderate_appeals_on_report_id_and_created_at"
+    add_index :moderate_appeals, [ :status, :created_at ], name: "index_moderate_appeals_on_status_and_created_at"
     add_index :moderate_appeals, :appellant_email, name: "index_moderate_appeals_on_appellant_email"
 
     # The 1.0 retention columns (redacted_at, held_until) and moderate_classifications
@@ -209,7 +209,7 @@ class CreateModerateTables < ActiveRecord::Migration<%= migration_version %>
     setting = config.options[config.orm][:primary_key_type]
     primary_key_type = setting || :primary_key
     foreign_key_type = setting || :bigint
-    [primary_key_type, foreign_key_type]
+    [ primary_key_type, foreign_key_type ]
   end
 
   def json_column_type

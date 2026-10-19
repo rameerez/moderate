@@ -101,3 +101,10 @@ Lint/UselessAccessModifier:
 # under a `raise`, or indented under a keyword); the code uses both.
 Layout/LineEndStringConcatenationIndentation:
   Enabled: false
+
+# The gem's own migrations are copied into host apps, many of them on Rails' omakase
+# style, which spaces array brackets (`[ :a, :b ]`); they follow that style, checked by
+# test/generators/omakase_style_test.rb.
+Layout/SpaceInsideArrayLiteralBrackets:
+  Exclude:
+    - "db/migrate/**/*"

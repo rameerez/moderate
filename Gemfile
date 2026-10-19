@@ -17,6 +17,9 @@ group :development do
   gem "rubocop", "~> 1.0"
   gem "rubocop-minitest", "~> 0.35"
   gem "rubocop-performance", "~> 1.0"
+  # The style a Rails "omakase" host enforces: the migrations the gem copies into an
+  # app must pass it (test/generators/omakase_style_test.rb).
+  gem "rubocop-rails-omakase", require: false
   gem "standard"
 end
 
